@@ -1,0 +1,268 @@
+// preload.js - 安全 IPC 桥接
+// 通过 contextBridge 暴露受限 API 给渲染进程
+const { contextBridge, ipcRenderer } = require('electron');
+
+contextBridge.exposeInMainWorld('api', {
+  // 应用信息
+  app: {
+    getInfo: () => ipcRenderer.invoke('app:get-info'),
+    getTheme: () => ipcRenderer.invoke('app:get-theme'),
+    readUsage: () => ipcRenderer.invoke('app:read-usage'),
+    onThemeChanged: (callback) => ipcRenderer.on('app:theme-changed', (_, theme) => callback(theme)),
+    onMemoryTrim: (callback) => ipcRenderer.on('memory:trim', () => callback())
+  },
+  device: {
+    scan: () => ipcRenderer.invoke('device:scan')
+  },
+  overview: {
+    metrics: () => ipcRenderer.invoke('overview:metrics'),
+    hardware: (options = {}) => ipcRenderer.invoke('overview:hardware', options)
+  },
+
+  // 窗口控制（原生 titleBarOverlay 提供 min/max/close，此处保留兼容）
+  window: {
+    minimize: () => ipcRenderer.send('window:minimize'),
+    maximize: () => ipcRenderer.send('window:maximize'),
+    close: () => ipcRenderer.send('window:close'),
+    updateOverlay: (isDark) => ipcRenderer.invoke('window:update-overlay', { isDark }),
+    onResized: (callback) => ipcRenderer.on('window:resized', (_, bounds) => callback(bounds))
+  },
+
+  // 日志
+  log: {
+    write: (level, message) => ipcRenderer.invoke('log:write', { level, message }),
+    read: (date) => ipcRenderer.invoke('log:read', { date }),
+    export: () => ipcRenderer.invoke('log:export')
+  },
+
+  // 清理
+  cleanup: {
+    rules: () => ipcRenderer.invoke('cleanup:rules'),
+    scan: (categories) => ipcRenderer.invoke('cleanup:scan', { categories }),
+    execute: (items, force = false) => ipcRenderer.invoke('cleanup:execute', { items, force }),
+    onScanProgress: (callback) => ipcRenderer.on('cleanup:scan-progress', (_, data) => callback(data))
+  },
+
+  // 右键菜单
+  contextmenu: {
+    scan: () => ipcRenderer.invoke('contextmenu:scan'),
+    // 传递完整扫描项（包含 regPath/source），这样注册表项和“发送到”文件都能正确备份
+    backup: (items) => ipcRenderer.invoke('contextmenu:backup', { items }),
+    remove: (items) => ipcRenderer.invoke('contextmenu:remove', { items }),
+    // 启停切换（Autoruns 模式：勾选=启用，取消=禁用；items: [{name, regPath, source, enabled}]）
+    toggle: (items) => ipcRenderer.invoke('contextmenu:toggle', { items }),
+    restore: () => ipcRenderer.invoke('contextmenu:restore'),
+    // 提取程序图标（CLSID → DLL 图标，返回 {clsid: dataUrl}）
+    icons: (items) => ipcRenderer.invoke('contextmenu:icons', { items }),
+    // 在注册表编辑器中定位到指定注册表项（需要管理员权限时自动提权）
+    openInRegedit: (regPath) => ipcRenderer.invoke('contextmenu:open-in-regedit', { regPath })
+  },
+
+  // 统一弹窗通道（全部应用内弹窗经此 IPC 记录日志，DOM 由渲染层统一服务构建）
+  modal: {
+    open: (info) => ipcRenderer.invoke('modal:open', { ...info }),
+    close: (info) => ipcRenderer.invoke('modal:close', { ...info })
+  },
+
+  // AI 简介设置
+  settings: {
+    load: () => ipcRenderer.invoke('settings:load'),
+    save: (settings) => ipcRenderer.invoke('settings:save', { settings })
+  },
+
+  // 本地内置简介库（离线，随应用分发）
+  intro: {
+    load: () => ipcRenderer.invoke('intro:load')
+  },
+
+  // 大模型管理（独立窗口）：窗口开关；模型配置存取仍走下方 models IPC
+  modelsWindow: {
+    open: () => ipcRenderer.invoke('models:open-window'),
+    close: () => ipcRenderer.invoke('models:close-window')
+  },
+
+  // 大模型管理（设置 → 大模型管理，应用内弹窗）：四个模型项各自独立配置
+  models: {
+    save: (key, config, scope) => ipcRenderer.invoke('models:save', { key, config, scope }),
+    // 设置某个模块使用的模型（optimizer / startup / contextmenu 各自独立）
+    setScope: (scope, key) => ipcRenderer.invoke('models:set-scope', { scope, key }),
+    // 单独测试连通性（发送确认消息，不落盘）
+    test: (key, config) => ipcRenderer.invoke('models:test', { key, config })
+  },
+
+  // 字体管理（设置 → 字体选择，应用内弹窗）
+  fonts: {
+    // 字体清单（5 款系统字体可用性 + 内嵌 MiSans + 已导入字体）与当前配置
+    list: () => ipcRenderer.invoke('fonts:list'),
+    // 导入 1 款外部字体（对话框 → 校验 → 复制副本 → 持久化）
+    importFont: () => ipcRenderer.invoke('fonts:import'),
+    // 删除已导入字体（移除记录 + 删除副本）
+    removeImported: () => ipcRenderer.invoke('fonts:remove-imported'),
+    // 保存字体配置（family / weight / size）
+    saveConfig: (config) => ipcRenderer.invoke('fonts:save-config', { config })
+  },
+
+  // 外观设置：窗口材质切换 + 背景图片导入 / 删除 / 列表
+  appearance: {
+    getMaterial: () => ipcRenderer.invoke('appearance:get-material'),
+    setMaterial: (material) => ipcRenderer.invoke('appearance:set-material', { material }),
+    importBg: () => ipcRenderer.invoke('appearance:bg-import'),
+    deleteBg: (file) => ipcRenderer.invoke('appearance:bg-delete', { file }),
+    listBg: () => ipcRenderer.invoke('appearance:bg-list'),
+    openBgDir: () => ipcRenderer.invoke('appearance:bg-open-dir')
+  },
+
+  // AI 简介获取（按模块隔离：电脑优化中心 / 启动项管理 / 右键管理 各自使用所选模型）
+  aidesc: {
+    get: (name, company, force, scope) => ipcRenderer.invoke('aidesc:get', { name, company, force, scope })
+  },
+
+  // 网速测试
+  netspeed: {
+    ping: () => ipcRenderer.invoke('netspeed:ping'),
+    throughput: (duration) => ipcRenderer.invoke('netspeed:throughput', { duration })
+  },
+  diskbench: {
+    run: (options) => ipcRenderer.invoke('diskbench:run', options),
+    // 测速进度事件（phase: seqwrite/seqread/randread/randwrite, percent: 0-100）
+    onProgress: (cb) => {
+      const handler = (e, d) => cb(d);
+      ipcRenderer.on('diskbench:progress', handler);
+      return () => ipcRenderer.removeListener('diskbench:progress', handler);
+    }
+  },
+
+  // 实时网速监控
+  realtime: {
+    adapters: () => ipcRenderer.invoke('realtime:adapters'),
+    sample: () => ipcRenderer.invoke('realtime:sample'),
+    loss: () => ipcRenderer.invoke('realtime:loss'),
+    // 网速记录报告（存 %APPDATA%\TuneForge\cache\realtime-reports\，7 天自动清理）
+    reportSave: (data) => ipcRenderer.invoke('realtime:report-save', { data }),
+    reportList: () => ipcRenderer.invoke('realtime:report-list'),
+    reportDelete: (name) => ipcRenderer.invoke('realtime:report-delete', { name }),
+    reportClear: () => ipcRenderer.invoke('realtime:report-clear')
+  },
+
+  // 磁盘测速历史记录
+  benchHistory: {
+    add: (record) => ipcRenderer.invoke('bench-history:add', { record }),
+    list: () => ipcRenderer.invoke('bench-history:list'),
+    delete: (id) => ipcRenderer.invoke('bench-history:delete', { id }),
+    clear: () => ipcRenderer.invoke('bench-history:clear')
+  },
+
+  // 权限提升
+  elevate: {
+    status: () => ipcRenderer.invoke('elevate:status'),
+    request: () => ipcRenderer.invoke('elevate:request')
+  },
+
+  // 关闭流程
+  shutdown: {
+    begin: () => ipcRenderer.send('shutdown:begin'),
+    complete: () => ipcRenderer.send('shutdown:complete'),
+    onRequest: (callback) => ipcRenderer.on('app:shutdown', () => callback())
+  },
+
+  // 安装路径绑定
+  paths: {
+    scan: () => ipcRenderer.invoke('paths:scan'),
+    load: () => ipcRenderer.invoke('paths:load'),
+    save: (key, value) => ipcRenderer.invoke('paths:save', { key, value }),
+    browse: (title, defaultPath) => ipcRenderer.invoke('paths:browse', { title, defaultPath }),
+    validate: (dirPath) => ipcRenderer.invoke('paths:validate', { path: dirPath }),
+    // 提取安装目录主程序 exe 图标（dataURL），用于路径绑定弹窗分组标题头
+    appIcon: (installPath, exeCandidates) => ipcRenderer.invoke('paths:app-icon', { installPath, exeCandidates }),
+    // 按绝对路径提取图标（.ico/.exe/.dll），用于固定图标路径兜底（如抖音 app_icon.ico）
+    fileIcon: (filePath) => ipcRenderer.invoke('paths:file-icon', { filePath })
+  },
+
+  // 文件清理（QQ/微信文件目录）
+  fileclean: {
+    scan: (type, customPath) => ipcRenderer.invoke('fileclean:scan', { type, customPath }),
+    readImage: (filePath) => ipcRenderer.invoke('fileclean:read-image', { filePath }),
+    execute: (files) => ipcRenderer.invoke('fileclean:execute', { files }),
+    deleteFile: (filePath) => ipcRenderer.invoke('fileclean:delete-file', { filePath })
+  },
+
+  // 系统维护修复组（P2-16）：任务清单 + 单项执行 + 实时输出
+  maintenance: {
+    tasks: () => ipcRenderer.invoke('maintenance:tasks'),
+    run: (taskId) => ipcRenderer.invoke('maintenance:run', { taskId }),
+    onOutput: (callback) => ipcRenderer.on('maintenance:output', (_, data) => callback(data))
+  },
+
+  // 图片预览（磁盘清理 → 文件清理 → 预览图片，独立窗口）
+  previewWindow: {
+    open: (payload) => ipcRenderer.invoke('preview:open-window', payload),
+    close: () => ipcRenderer.invoke('preview:close-window'),
+    // 独立窗口侧接收主窗口传入的图片数据
+    onData: (callback) => ipcRenderer.on('preview:data', (_, data) => callback(data)),
+    // 预览窗口删除图片后通知主窗口刷新
+    notifyDeleted: (filePath) => ipcRenderer.send('preview:image-deleted', filePath),
+    // 主窗口侧监听：图片预览窗口删除图片后刷新文件列表
+    onImageDeleted: (callback) => ipcRenderer.on('preview:image-deleted', (_, filePath) => callback(filePath))
+  },
+
+  // 内存清理（Mem Reduct 思路：NtSetSystemInformation 清理内存区域 + 进程管理）
+  memory: {
+    info: () => ipcRenderer.invoke('memory:info'),
+    clean: (items) => ipcRenderer.invoke('memory:clean', { items }),
+    // 顽固软件专杀：一次性结束 MuMu/UU/抖音/剪映/WPS/微软电脑管家 后台守护进程
+    stubbornKill: () => ipcRenderer.invoke('memory:stubborn-kill'),
+    processes: () => ipcRenderer.invoke('memory:processes'),
+    kill: (pid) => ipcRenderer.invoke('memory:kill', { pid })
+  },
+
+  // 应用进程管理（内存清理 → 独立窗口）
+  processManager: {
+    openWindow: () => ipcRenderer.invoke('processManager:open-window'),
+    closeWindow: () => ipcRenderer.invoke('processManager:close-window'),
+    // 独立窗口操作完成后向主窗口推送统计（进程总数），供内存清理页进程卡片回显
+    report: (payload) => ipcRenderer.send('processManager:report', { ...payload }),
+    // 主窗口侧监听：进程管理窗口结束进程后的最新统计
+    onUpdate: (callback) => ipcRenderer.on('processManager:update', (_, data) => callback(data))
+  },
+
+  // 外设优化（电脑优化中心-外设调优 → 「更多调优项」独立窗口）
+  peripheralWindow: {
+    openWindow: () => ipcRenderer.invoke('peripheral:open-window'),
+    closeWindow: () => ipcRenderer.invoke('peripheral:close-window'),
+    query: () => ipcRenderer.invoke('peripheral:query'),
+    apply: (options) => ipcRenderer.invoke('peripheral:apply', options)
+  },
+
+  // 快捷指令（侧边栏 → 63 条系统快捷入口；主进程按白名单执行，渲染层只传 id）
+  quickCmds: {
+    run: (id) => ipcRenderer.invoke('quickcmds:run', id)
+  },
+
+  // 优化电脑：执行选项 + 实时进度推送
+  optimizer: {
+    run: (optionId, params) => ipcRenderer.invoke('optimizer:run', { optionId, params }),
+    list: () => ipcRenderer.invoke('optimizer:list'),
+    genAdvice: (optionId) => ipcRenderer.invoke('optimizer:genadvice', { optionId }),
+    checkRestore: () => ipcRenderer.invoke('optimizer:check-restore'),
+    createRestore: () => ipcRenderer.invoke('optimizer:create-restore'),
+    listRestore: () => ipcRenderer.invoke('optimizer:list-restore'),
+    // 安全托底：批量检测注册表优化项是否已生效（只读检测，返回 {id: optimized} 映射）
+    checkOptimized: (ids) => ipcRenderer.invoke('optimizer:check-optimized', { ids }),
+    // 读取当前 SVCHost 拆分阈值并映射为档位（null=系统默认未优化）
+    svcMemCurrent: () => ipcRenderer.invoke('optimizer:svc-mem-current'),
+    // 执行前备份目标注册表键值当前状态（按 optionId 存档）
+    backupReg: (optionId, steps) => ipcRenderer.invoke('optimizer:backup-reg', { optionId, steps }),
+    // 按备份还原注册表键值（无备份返回 missing:true）
+    restoreReg: (optionId) => ipcRenderer.invoke('optimizer:restore-reg', { optionId }),
+    onProgress: (callback) => ipcRenderer.on('optimizer:progress', (_, data) => callback(data))
+  },
+
+  // 启动项管理：扫描 / 启停 / 删除 / 打开所在位置 / 添加
+  startup: {
+    scan: () => ipcRenderer.invoke('startup:scan'),
+    toggle: (items, enable) => ipcRenderer.invoke('startup:toggle', { items, enable }),
+    remove: (items) => ipcRenderer.invoke('startup:delete', { items }),
+    openLocation: (targetPath) => ipcRenderer.invoke('startup:openlocation', { path: targetPath }),
+    add: () => ipcRenderer.invoke('startup:add', {})
+  }
+});

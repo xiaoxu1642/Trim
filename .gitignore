@@ -1,0 +1,22 @@
+# 依赖
+node_modules/
+
+# 构建产物
+build-release/
+build-release-new/
+build-release-v44/
+dist/
+*.exe
+*.blockmap
+
+# 安装器编译缓存
+tuneforge-installer/
+
+# 日志与临时文件
+*.log
+.tmp-ps-syntax-check.ps1
+
+# 编辑器与工具
+.vscode/
+.vexor/
+.workbuddy/

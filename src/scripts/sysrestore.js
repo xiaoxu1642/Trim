@@ -1,0 +1,247 @@
+// sysrestore.js - 系统还原点管理模块（弹窗版）
+// 入口：电脑优化中心右上角「系统还原点」按钮，弹窗展示（样式与「大模型管理」一致）。
+// 通过系统 API（Get-ComputerRestorePoint / SystemRestore WMI）查看、创建与管理还原点。
+(function () {
+  'use strict';
+
+  let loading = false;
+  let backdrop = null;   // 当前弹窗遮罩
+  let escHandler = null;
+
+  function q(sel) { return backdrop ? backdrop.querySelector(sel) : null; }
+
+  function escapeHtml(text) {
+    const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+    return String(text).replace(/[&<>"']/g, m => map[m]);
+  }
+
+  function fmtTime(iso) {
+    if (!iso) return '-';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '-';
+    const p = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  }
+
+  function fmtRelative(iso) {
+    if (!iso) return '-';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '-';
+    const diff = Date.now() - d.getTime();
+    if (diff < 0) return fmtTime(iso);
+    const min = Math.floor(diff / 60000);
+    if (min < 1) return '刚刚';
+    if (min < 60) return `${min} 分钟前`;
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return `${hr} 小时前`;
+    const day = Math.floor(hr / 24);
+    return `${day} 天前`;
+  }
+
+  async function load() {
+    if (loading || !backdrop) return;
+    if (!window.api?.optimizer?.listRestore) {
+      setListError('系统还原点管理仅在 Electron 环境中可用');
+      return;
+    }
+    loading = true;
+    try {
+      const prot = q('#restoreProtection');
+      if (prot) prot.textContent = '检测中…';
+      const resp = await window.api.optimizer.listRestore();
+      if (!resp || !resp.success) {
+        setListError((resp && resp.message) || '读取还原点失败');
+        return;
+      }
+      render(resp.data || {});
+    } catch (e) {
+      setListError(`读取还原点失败: ${e.message}`);
+    } finally {
+      loading = false;
+    }
+  }
+
+  function render(data) {
+    if (!backdrop) return;
+    const rps = Array.isArray(data.restorePoints) ? data.restorePoints : [];
+    const prot = Array.isArray(data.protection) ? data.protection : [];
+    const globalDisabled = !!data.globalDisabled;
+
+    const protEl = q('#restoreProtection');
+    if (globalDisabled) {
+      protEl.textContent = '已禁用';
+      protEl.className = 'summary-value text-danger';
+    } else if (prot.length) {
+      protEl.textContent = '已开启';
+      protEl.className = 'summary-value text-success';
+    } else {
+      protEl.textContent = '已关闭';
+      protEl.className = 'summary-value text-danger';
+    }
+    const cnt = q('#restoreCount');
+    if (cnt) cnt.textContent = rps.length;
+    const recent = q('#restoreRecent');
+    if (recent) recent.textContent = rps.length ? fmtRelative(rps[0].created) : '无';
+    const lc = q('#restoreListCount');
+    if (lc) lc.textContent = `${rps.length} 个`;
+
+    const listEl = q('#restoreList');
+    if (!listEl) return;
+    if (!rps.length) {
+      listEl.innerHTML = window.emptyState
+        ? window.emptyState({ icon: 'shield', title: '暂无还原点', desc: '系统还原点用于系统异常时一键回退，建议优化前先创建', cta: { text: '创建还原点', target: 'btnRestoreCreate' } })
+        : '<div class="empty-state"><p>暂无还原点，点击底部「创建还原点」立即创建一个</p></div>';
+      return;
+    }
+    const protBadges = prot.map(p =>
+      `<span class="restore-vol on">${escapeHtml(p.drive)} 保护开</span>`
+    ).join('');
+
+    listEl.innerHTML = rps.map((rp, i) => `
+      <div class="restore-item">
+        <div class="restore-item-icon">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>
+        </div>
+        <div class="restore-item-info">
+          <div class="restore-item-title">${escapeHtml(rp.desc || ('还原点 ' + (i + 1)))}</div>
+          <div class="restore-item-meta">创建于 ${fmtTime(rp.created)} · ${fmtRelative(rp.created)}</div>
+        </div>
+        <span class="restore-item-seq">#${escapeHtml(String(rp.seq))}</span>
+      </div>
+    `).join('') + (protBadges ? `<div class="restore-vols">${protBadges}</div>` : '');
+  }
+
+  function setListError(msg) {
+    if (!backdrop) return;
+    const prot = q('#restoreProtection');
+    if (prot) { prot.textContent = '未知'; prot.className = 'summary-value'; }
+    const cnt = q('#restoreCount'); if (cnt) cnt.textContent = '-';
+    const recent = q('#restoreRecent'); if (recent) recent.textContent = '-';
+    const lc = q('#restoreListCount'); if (lc) lc.textContent = '0 个';
+    const listEl = q('#restoreList');
+    if (listEl) listEl.innerHTML = `<div class="empty-state"><p>${escapeHtml(msg)}</p></div>`;
+  }
+
+  async function create() {
+    if (!window.api?.optimizer?.createRestore) {
+      window.app?.toast('error', '创建功能仅在 Electron 环境中可用');
+      return;
+    }
+    const ok = await window.app.confirm(
+      '创建系统还原点',
+      '系统还原点用于系统异常时一键回退。\n\n即将为所有已启用保护的磁盘创建还原点，是否继续？',
+      '创建',
+      '取消'
+    );
+    if (!ok) return;
+    const btn = q('#btnRestoreCreate');
+    if (!btn) return;
+    const oldText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '创建中…';
+    try {
+      const resp = await window.api.optimizer.createRestore();
+      if (resp && resp.success) {
+        window.app?.toast('success', '系统还原点创建成功');
+        await load();
+      } else {
+        window.app?.toast('warning', (resp && resp.message) || '创建失败，建议手动创建');
+      }
+    } catch (e) {
+      window.app?.toast('error', `创建失败: ${e.message}`);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = oldText;
+    }
+  }
+
+  function open() {
+    close();
+    backdrop = document.createElement('div');
+    backdrop.className = 'usage-backdrop rt-sr-backdrop';
+    backdrop.id = 'sysRestoreBackdrop';
+    backdrop.innerHTML = `
+      <div class="usage-modal rt-sr-modal" role="dialog" aria-modal="true" aria-labelledby="srTitle">
+        <div class="usage-header">
+          <h2 id="srTitle">系统还原点管理</h2>
+          <button class="usage-close" type="button" title="关闭" aria-label="关闭">&times;</button>
+        </div>
+        <div class="usage-body rt-sr-body">
+          <div class="summary-cards rt-sr-cards">
+            <div class="summary-card">
+              <div class="summary-icon" style="--icon-bg: linear-gradient(135deg, #0EA5E9, #0284C7)">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/></svg>
+              </div>
+              <div class="summary-info">
+                <div class="summary-value" id="restoreProtection">检测中…</div>
+                <div class="summary-label">系统保护状态</div>
+              </div>
+            </div>
+            <div class="summary-card">
+              <div class="summary-icon" style="--icon-bg: linear-gradient(135deg, #16A34A, #15803D)">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M4 6h16v2H4V6zm2-4h12v2H6V2zm10 10H8v2h8v-2zm4-6H4v14h16V6z"/></svg>
+              </div>
+              <div class="summary-info">
+                <div class="summary-value" id="restoreCount">-</div>
+                <div class="summary-label">还原点数量</div>
+              </div>
+            </div>
+            <div class="summary-card">
+              <div class="summary-icon" style="--icon-bg: linear-gradient(135deg, #D97706, #B45309)">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>
+              </div>
+              <div class="summary-info">
+                <div class="summary-value" id="restoreRecent">-</div>
+                <div class="summary-label">最近还原点</div>
+              </div>
+            </div>
+          </div>
+          <div class="rt-sr-panel">
+            <div class="rt-sr-panel-head">
+              <h3>还原点列表</h3>
+              <span class="opt-group-count" id="restoreListCount">0 个</span>
+            </div>
+            <div class="restore-list" id="restoreList">
+              <div class="empty-state"><p>暂无还原点</p></div>
+            </div>
+          </div>
+        </div>
+        <div class="usage-footer">
+          <span class="pw-last-scan">系统还原点用于系统异常时一键回退，建议优化前先创建</span>
+          <span class="model-picker-spacer"></span>
+          <button class="btn btn-secondary" id="btnRestoreRefresh" type="button">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+            刷新
+          </button>
+          <button class="btn btn-accent" id="btnRestoreCreate" type="button">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+            创建还原点
+          </button>
+          <button class="btn btn-primary" id="btnSrClose" type="button">完成</button>
+        </div>
+      </div>`;
+    document.body.appendChild(backdrop);
+
+    backdrop.querySelector('.usage-close').addEventListener('click', close);
+    backdrop.querySelector('#btnSrClose').addEventListener('click', close);
+    backdrop.addEventListener('click', e => { if (e.target === backdrop) close(); });
+    backdrop.querySelector('#btnRestoreRefresh').addEventListener('click', () => load());
+    backdrop.querySelector('#btnRestoreCreate').addEventListener('click', () => create());
+
+    escHandler = (e) => { if (e.key === 'Escape') close(); };
+    document.addEventListener('keydown', escHandler);
+
+    load();
+  }
+
+  function close() {
+    if (escHandler) { document.removeEventListener('keydown', escHandler); escHandler = null; }
+    if (backdrop) { backdrop.remove(); backdrop = null; }
+  }
+
+  function init() {
+    document.getElementById('btnSysRestore')?.addEventListener('click', open);
+  }
+
+  window.sysrestore = { init, open, close, load };
+})();

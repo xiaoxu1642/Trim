@@ -1,0 +1,228 @@
+// pathscan-scripts.js - 安装路径自动扫描 PowerShell 脚本
+// 路径解析优先级（经调研微软官方文档与通行实践确定）：
+//   1. 已知候选目录（各家固定安装位置，命中即最快返回）
+//   2. App Paths 注册表（HKLM/HKCU \...\App Paths\<exe> 默认值直接给出主程序全路径，最精准）
+//   3. 卸载注册表（Uninstall 的 InstallLocation > DisplayIcon > UninstallString，
+//      注意 DisplayIcon 常带图标索引后缀如 "foo.exe,0"，解析时必须剥离）
+//   4. 开始菜单快捷方式（WScript.Shell 解析 .lnk 的 TargetPath，兜底无注册表信息的 excerpts）
+// 参考 lizi/laji-lizi 的软件路径绑定思路，但输出保持当前 Electron IPC 契约。
+
+const SCAN_SCRIPT = `
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+$ErrorActionPreference = 'SilentlyContinue'
+$ProgressPreference = 'SilentlyContinue'
+
+$results = @{}
+$script:inventory = @()
+
+function Normalize-Path([string]$Value) {
+  if ([string]::IsNullOrWhiteSpace($Value)) { return '' }
+  $v = [Environment]::ExpandEnvironmentVariables($Value.Trim().Trim('"'))
+  # 兼容 DisplayIcon / UninstallString 的 "路径,图标索引" 后缀（如 app.exe,0）
+  if ($v -match '^(.*?)\\.(exe|dll|msi|cmd|bat)(?:\\s*,\\s*\\d+)?(?:\\s+.*)?$') { $v = ($Matches[1] + '.' + $Matches[2]) }
+  try { return [IO.Path]::GetFullPath($v).TrimEnd('\\') } catch { return $v.TrimEnd('\\') }
+}
+
+# ---- App Paths 解析：QQ.exe / WeChat.exe 等主程序在此登记全路径 ----
+function Resolve-FromAppPaths([string]$ExeName) {
+  foreach ($root in @('HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths',
+                      'HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\App Paths',
+                      'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths')) {
+    $keyPath = Join-Path $root $ExeName
+    if (-not (Test-Path -LiteralPath $keyPath)) { continue }
+    try {
+      $exe = Normalize-Path ([string](Get-ItemPropertyValue -LiteralPath $keyPath -Name '(default)' -ErrorAction SilentlyContinue))
+      if ($exe -and (Test-Path -LiteralPath $exe -PathType Leaf)) { return (Split-Path -Parent $exe) }
+    } catch {}
+  }
+  return ''
+}
+
+# ---- 开始菜单快捷方式解析：一次构建 名称模式可匹配的 lnk 目标缓存 ----
+$script:startMenuTargets = $null
+function Get-StartMenuTargets {
+  if ($null -ne $script:startMenuTargets) { return $script:startMenuTargets }
+  $map = @{}
+  $sh = New-Object -ComObject WScript.Shell
+  foreach ($root in @(([Environment]::GetFolderPath('Programs')), ([Environment]::GetFolderPath('CommonPrograms')))) {
+    if ([string]::IsNullOrWhiteSpace($root) -or -not (Test-Path -LiteralPath $root)) { continue }
+    foreach ($lnk in @(Get-ChildItem -LiteralPath $root -Filter '*.lnk' -Recurse -ErrorAction SilentlyContinue)) {
+      try {
+        $target = Normalize-Path ([string]$sh.CreateShortcut($lnk.FullName).TargetPath)
+        if ($target -and (Test-Path -LiteralPath $target -PathType Leaf)) { $map[$lnk.BaseName.ToLowerInvariant()] = $target }
+      } catch {}
+    }
+  }
+  $script:startMenuTargets = $map
+  return $map
+}
+
+function Resolve-FromStartMenu([string[]]$Patterns) {
+  $map = Get-StartMenuTargets
+  foreach ($pattern in $Patterns) {
+    $p = $pattern.ToLowerInvariant()
+    foreach ($name in @($map.Keys)) {
+      if ($name -match [regex]::Escape($p)) { return (Split-Path -Parent $map[$name]) }
+    }
+  }
+  return ''
+}
+
+function Resolve-InstallPath([object]$Entry) {
+  $candidates = @()
+  if ($Entry.InstallLocation) { $candidates += [string]$Entry.InstallLocation }
+  if ($Entry.DisplayIcon) { $candidates += [string]$Entry.DisplayIcon }
+  if ($Entry.UninstallString) { $candidates += [string]$Entry.UninstallString }
+  foreach ($candidate in $candidates) {
+    $normalized = Normalize-Path $candidate
+    if (-not $normalized) { continue }
+    if (Test-Path -LiteralPath $normalized -PathType Leaf) { return (Split-Path -Parent $normalized) }
+    if (Test-Path -LiteralPath $normalized -PathType Container) { return $normalized }
+    if ($candidate -match '^\\s*"([^"]+\\.(exe|msi))"') {
+      $exe = Normalize-Path $Matches[1]
+      if (Test-Path -LiteralPath $exe) { return (Split-Path -Parent $exe) }
+    }
+  }
+  return ''
+}
+
+function Add-InventoryEntry([object]$Entry, [string]$Source) {
+  $name = [string]$Entry.DisplayName
+  if ([string]::IsNullOrWhiteSpace($name)) { return }
+  if ([string]$Entry.SystemComponent -eq '1' -or [string]$Entry.ReleaseType -match '(?i)update|hotfix|security') { return }
+  $install = Resolve-InstallPath $Entry
+  if (-not $install) { return }
+  $key = (($name.Trim().ToLowerInvariant()) + '|' + $install.ToLowerInvariant())
+  if ($script:inventoryKeys.ContainsKey($key)) { return }
+  $script:inventoryKeys[$key] = $true
+  $script:inventory += [pscustomobject]@{
+    name = $name.Trim()
+    version = [string]$Entry.DisplayVersion
+    publisher = [string]$Entry.Publisher
+    installPath = $install
+    source = $Source
+    uninstallKey = [string]$Entry.PSPath
+  }
+}
+
+$script:inventoryKeys = @{}
+$uninstallRoots = @(
+  'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',
+  'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',
+  'HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'
+)
+foreach ($root in $uninstallRoots) {
+  foreach ($entry in @(Get-ItemProperty -Path $root -ErrorAction SilentlyContinue)) {
+    Add-InventoryEntry $entry $root
+  }
+}
+
+function Find-InstalledMatch([string[]]$Patterns) {
+  foreach ($entry in @($script:inventory)) {
+    if ($entry.name -match ('(?i)' + (($Patterns | ForEach-Object { [regex]::Escape($_) }) -join '|'))) { return $entry.installPath }
+  }
+  return ''
+}
+
+function First-Existing([string[]]$Candidates) {
+  foreach ($candidate in $Candidates) {
+    if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
+    $normalized = Normalize-Path $candidate
+    if (Test-Path -LiteralPath $normalized -PathType Container) { return $normalized }
+  }
+  return ''
+}
+
+# 应用安装目录：已知目录 → App Paths → 卸载注册表 → 开始菜单快捷方式，多级兜底避免只依赖固定盘符。
+$results.qqInstallPath = First-Existing @(
+  ($env:LOCALAPPDATA + '\\Programs\\Tencent\\QQNT'),
+  ($env:PROGRAMFILES + '\\Tencent\\QQNT'),
+  (\${env:ProgramFiles(x86)} + '\\Tencent\\QQNT'),
+  (Resolve-FromAppPaths 'QQ.exe'),
+  (Find-InstalledMatch @('QQ')),
+  (Resolve-FromStartMenu @('QQ'))
+)
+if (-not $results.qqInstallPath) { $results.qqInstallPath = First-Existing @($env:LOCALAPPDATA + '\\Tencent\\QQNT') }
+
+$results.wechatInstallPath = First-Existing @(
+  ($env:LOCALAPPDATA + '\\Programs\\Tencent\\WeChat'),
+  ($env:PROGRAMFILES + '\\Tencent\\WeChat'),
+  (\${env:ProgramFiles(x86)} + '\\Tencent\\WeChat'),
+  (Resolve-FromAppPaths 'WeChat.exe'),
+  (Resolve-FromAppPaths 'WeChatApp.exe'),
+  (Find-InstalledMatch @('WeChat', '微信')),
+  (Resolve-FromStartMenu @('WeChat', '微信'))
+)
+
+$results.douyinInstallPath = First-Existing @(
+  ($env:LOCALAPPDATA + '\\Douyin'),
+  ($env:LOCALAPPDATA + '\\Programs\\Douyin'),
+  ($env:LOCALAPPDATA + '\\TikTok'),
+  (Resolve-FromAppPaths 'Douyin.exe'),
+  (Find-InstalledMatch @('Douyin', '抖音', 'TikTok')),
+  (Resolve-FromStartMenu @('Douyin', '抖音'))
+)
+
+$results.neteaseMusicInstallPath = First-Existing @(
+  ($env:LOCALAPPDATA + '\\Programs\\Netease\\CloudMusic'),
+  ($env:PROGRAMFILES + '\\CloudMusic'),
+  (\${env:ProgramFiles(x86)} + '\\CloudMusic'),
+  ($env:PROGRAMFILES + '\\Netease\\CloudMusic'),
+  (Resolve-FromAppPaths 'CloudMusic.exe'),
+  (Find-InstalledMatch @('CloudMusic', '网易云音乐')),
+  (Resolve-FromStartMenu @('CloudMusic', '网易云音乐'))
+)
+
+# 用户数据目录。xwechat_files 下按最近修改时间选择用户目录，避免固定 wxid 失效。
+$qqFileCandidates = @(
+  ($env:USERPROFILE + '\\Documents\\Tencent Files'),
+  ($env:USERPROFILE + '\\Documents\\QQ Files'),
+  ($env:APPDATA + '\\Tencent\\QQ\\Files')
+)
+$results.qqFileDir = First-Existing $qqFileCandidates
+
+$wxRootCandidates = @(
+  ($env:USERPROFILE + '\\Documents\\xwechat_files'),
+  ($env:USERPROFILE + '\\Documents\\WeChat Files')
+)
+$wxRoot = First-Existing $wxRootCandidates
+$results.wechatFileDir = $wxRoot
+
+$wxTemp = ''
+if ($wxRoot -and (Split-Path -Leaf $wxRoot) -ne 'xwechat_files' -and (Split-Path -Leaf $wxRoot) -ne 'WeChat Files') {
+  $wxTemp = Join-Path $wxRoot 'temp'
+} else {
+  $wxTemp = Get-ChildItem -Path ($env:USERPROFILE + '\\Documents\\xwechat_files\\*\\temp') -Directory -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
+  if (-not $wxTemp) {
+    $wxTemp = Get-ChildItem -Path ($env:USERPROFILE + '\\Documents\\WeChat Files\\*\\FileStorage\\Cache') -Directory -ErrorAction SilentlyContinue |
+      Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
+  }
+}
+
+# 缓存目录供清理模块复用；找不到时保留空值，绝不写入猜测路径。
+$results.neteaseCacheDir = First-Existing @(
+  ($env:LOCALAPPDATA + '\\NetEase\\CloudMusic\\Cache'),
+  ($env:LOCALAPPDATA + '\\Netease\\CloudMusic\\Cache'),
+  ($env:APPDATA + '\\NetEase\\CloudMusic\\Cache')
+)
+$results.wechatCacheDir = $wxTemp
+$results.douyinCacheDir = First-Existing @(($env:LOCALAPPDATA + '\\Douyin'), ($env:LOCALAPPDATA + '\\TikTok'))
+$results.qqCacheDir = First-Existing @(
+  ($env:LOCALAPPDATA + '\\Tencent\\QQNT\\User Data\\Cache'),
+  ($env:APPDATA + '\\Tencent\\QQ\\Cache'),
+  ($env:APPDATA + '\\Tencent Files\\Cache')
+)
+
+$results.softwareInventory = @($script:inventory | Sort-Object name, installPath)
+$results.scanVersion = 2
+$results.scannedAt = (Get-Date).ToString('o')
+$results | ConvertTo-Json -Compress -Depth 6
+`;
+
+module.exports = {
+  scan() {
+    return SCAN_SCRIPT;
+  }
+};

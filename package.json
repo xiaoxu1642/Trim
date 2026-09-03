@@ -1,0 +1,60 @@
+{
+  "name": "tuneforge",
+  "version": "1.3.0",
+  "description": "TuneForge",
+  "main": "main.js",
+  "author": "xiaoxu",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "test": "node test-features.js",
+    "test:features": "node test-features.js",
+    "build": "electron-builder --win --x64",
+    "build:portable": "electron-builder --win portable --x64",
+    "build:dir": "electron-builder --win --x64 --dir",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "devDependencies": {
+    "electron": "^44.1.1",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.xiaoxu.tuneforge",
+    "productName": "TuneForge",
+    "copyright": "Copyright © 2026 xiaoxu",
+    "directories": {
+      "output": "build-release",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "ico/**/*",
+      "readme.md",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "src/assets/fonts/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "ico/ico/TuneForge.ico",
+      "requestedExecutionLevel": "asInvoker",
+      "artifactName": "TuneForge.exe"
+    }
+  },
+  "dependencies": {
+    "agent-base": "^7.1.0",
+    "debug": "^4.3.7",
+    "http-proxy-agent": "^7.0.2",
+    "https-proxy-agent": "^7.0.6"
+  }
+}
