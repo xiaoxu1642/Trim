@@ -4,17 +4,20 @@
   <meta charset="UTF-8" />
   <meta name="theme-color" content="#f3f3f3" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data: file:; font-src 'self' file:; frame-src https://www.speedtest.cn https://test.ustc.edu.cn;" />
-  <title>TuneForge</title>
-  <link rel="icon" href="../ico/ico/TuneForge.ico" />
+  <title>Trim</title>
+  <link rel="icon" href="./assets/ico/Trim.ico" />
   <link rel="stylesheet" href="styles/main.css" />
+  <link rel="stylesheet" href="styles/ds.css" />
 </head>
-<body class="theme-light">
+<body class="theme-dark">
+  <!-- 首帧前同步主题（外部文件：内联写法被 CSP script-src 'self' 拦截，引导从未生效） -->
+  <script src="scripts/theme-boot.js"></script>
   <!-- 标题栏（原生 titleBarOverlay 提供右上角窗口控制按钮） -->
   <header class="titlebar" id="titlebar">
     <div class="titlebar-left">
-      <div class="app-icon"><img src="../ico/ico/TuneForge.ico" alt="TuneForge" draggable="false"/></div>
+      <div class="app-icon"><img src="./assets/ico/Trim.ico" alt="Trim" draggable="false"/></div>
       <div class="titlebar-text">
-        <div class="titlebar-title">TuneForge</div>
+        <div class="titlebar-title">Trim</div>
       </div>
     </div>
     <!-- 右上角窗口控制按钮由 Windows 原生 titleBarOverlay 渲染 -->
@@ -39,8 +42,10 @@
         </svg>
       </button>
 
+      <div class="nav-scroll">
+      <!-- v2.0 信息架构分组：清理 / 优化 / 工具 / 记录（底部为设置 + 主题） -->
       <div class="nav-section">
-        <div class="nav-section-title">主要</div>
+        <div class="nav-section-title">清理</div>
         <button class="nav-item active" data-page="overview" title="系统概览">
           <svg class="nav-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
             <path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/>
@@ -65,43 +70,23 @@
           </svg>
           <span>系统维护</span>
         </button>
-        <button class="nav-item nav-parent" data-page="optimizer" data-nav-toggle="optcat" title="电脑优化中心">
+      </div>
+
+      <div class="nav-section">
+        <div class="nav-section-title">优化</div>
+        <button class="nav-item" data-page="optimizer" title="电脑优化中心">
           <svg class="nav-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
             <path d="M12 2L4 7v10l8 5 8-5V7l-8-5zm0 3.9l5.5 3.44v6.32L12 18.1l-5.5-3.44V8.34L12 5.9zM11 9h2v4h-2V9zm0 5.5h2v2h-2v-2z"/>
           </svg>
           <span>电脑优化中心</span>
-          <span class="nav-parent-toggle" title="展开/收起分类模块">
-            <svg class="nav-parent-chevron" viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg>
-          </span>
         </button>
-        <div class="nav-submenu" data-nav-submenu="optcat" id="optimizerCatNav">
-          <button class="nav-subitem nav-cat-item" data-optcat="全部"><span class="nav-subdot"></span><span>全部</span></button>
-          <button class="nav-subitem" data-optcat="内存优化"><span class="nav-subdot"></span><span>内存优化</span></button>
-          <button class="nav-subitem" data-optcat="性能调优"><span class="nav-subdot"></span><span>性能调优</span></button>
-          <button class="nav-subitem" data-optcat="音频优化"><span class="nav-subdot"></span><span>音频优化</span></button>
-          <button class="nav-subitem" data-optcat="外设调优"><span class="nav-subdot"></span><span>外设调优</span></button>
-          <button class="nav-subitem" data-optcat="桌面体验"><span class="nav-subdot"></span><span>桌面体验</span></button>
-          <button class="nav-subitem" data-optcat="任务调度"><span class="nav-subdot"></span><span>任务调度</span></button>
-          <button class="nav-subitem" data-optcat="系统服务"><span class="nav-subdot"></span><span>系统服务</span></button>
-          <button class="nav-subitem" data-optcat="隐私防护"><span class="nav-subdot"></span><span>隐私防护</span></button>
-          <button class="nav-subitem" data-optcat="系统调校"><span class="nav-subdot"></span><span>系统调校</span></button>
-          <button class="nav-subitem" data-optcat="系统精简"><span class="nav-subdot"></span><span>系统精简</span></button>
-          <button class="nav-subitem" data-optcat="显卡优化"><span class="nav-subdot"></span><span>显卡优化</span></button>
-          <button class="nav-subitem" data-optcat="浏览器优化"><span class="nav-subdot"></span><span>浏览器优化</span></button>
-        </div>
         <button class="nav-item" data-page="startup" title="启动项管理">
           <svg class="nav-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
             <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
           </svg>
           <span>启动项管理</span>
         </button>
-        <button class="nav-item" data-page="quickcmds" title="快捷指令">
-          <svg class="nav-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-            <path d="M7 2v11h3v9l7-12h-4l4-8z"/>
-          </svg>
-          <span>快捷指令</span>
-        </button>
-        <button class="nav-item nav-parent" data-page="contextmenu" data-nav-toggle="ctxcat" title="右键管理">
+        <button class="nav-item" data-page="contextmenu" title="右键管理">
           <svg class="nav-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
             <path d="M4 8h16v2H4V8zm0 5h16v2H4v-2zm0 5h16v2H4v-2z"/>
             <circle cx="7" cy="9" r="1"/>
@@ -109,30 +94,8 @@
             <circle cx="7" cy="19" r="1"/>
           </svg>
           <span>右键管理</span>
-          <span class="nav-parent-toggle" title="展开/收起分类筛选">
-            <svg class="nav-parent-chevron" viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg>
-          </span>
         </button>
-        <div class="nav-submenu" data-nav-submenu="ctxcat" id="ctxCategoryNav">
-          <button class="nav-subitem nav-cat-item" data-category="全部"><span class="nav-subdot"></span><span>全部</span></button>
-          <button class="nav-subitem nav-cat-item" data-category="文件"><span class="nav-subdot"></span><span>文件</span></button>
-          <button class="nav-subitem nav-cat-item" data-category="文件夹"><span class="nav-subdot"></span><span>文件夹</span></button>
-          <button class="nav-subitem nav-cat-item" data-category="目录"><span class="nav-subdot"></span><span>目录</span></button>
-          <button class="nav-subitem nav-cat-item" data-category="目录背景"><span class="nav-subdot"></span><span>目录背景</span></button>
-          <button class="nav-subitem nav-cat-item" data-category="桌面背景"><span class="nav-subdot"></span><span>桌面背景</span></button>
-          <button class="nav-subitem nav-cat-item" data-category="磁盘分区"><span class="nav-subdot"></span><span>磁盘分区</span></button>
-          <button class="nav-subitem nav-cat-item" data-category="所有对象"><span class="nav-subdot"></span><span>所有对象</span></button>
-          <button class="nav-subitem nav-cat-item" data-category="此电脑"><span class="nav-subdot"></span><span>此电脑</span></button>
-          <button class="nav-subitem nav-cat-item" data-category="回收站"><span class="nav-subdot"></span><span>回收站</span></button>
-          <button class="nav-subitem nav-cat-item" data-category="库"><span class="nav-subdot"></span><span>库</span></button>
-          <div class="nav-sub-separator" role="separator" aria-hidden="true"></div>
-          <button class="nav-subitem nav-cat-item" data-category="新建菜单"><span class="nav-subdot"></span><span>新建菜单</span></button>
-          <button class="nav-subitem nav-cat-item" data-category="发送到"><span class="nav-subdot"></span><span>发送到</span></button>
-          <button class="nav-subitem nav-cat-item" data-category="打开方式"><span class="nav-subdot"></span><span>打开方式</span></button>
-          <div class="nav-sub-separator" role="separator" aria-hidden="true"></div>
-          <button class="nav-subitem nav-cat-item" data-category="Win+X"><span class="nav-subdot"></span><span>Win+X</span></button>
-        </div>
-        <button class="nav-item nav-parent" data-page="netspeed" data-nav-toggle="speed">
+        <button class="nav-item nav-parent" data-page="netspeed" data-nav-toggle="speed" title="测速工具">
           <svg class="nav-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
             <path d="M12 3.77L11.25 4.61C11.25 4.61 9.97 6.06 8.68 7.94C7.39 9.82 6 12.07 6 14.23A6 6 0 0 0 12 20.23A6 6 0 0 0 18 14.23C18 12.07 16.61 9.82 15.32 7.94C14.03 6.06 12.75 4.61 12.75 4.61L12 3.77M12 6.9C12.44 7.42 12.84 7.85 13.68 9.07C14.89 10.83 16 13.07 16 14.23C16 16.45 14.22 18.23 12 18.23S8 16.45 8 14.23C8 13.07 9.11 10.83 10.32 9.07C11.16 7.85 11.56 7.42 12 6.9Z"/>
           </svg>
@@ -145,13 +108,24 @@
           <button class="nav-subitem" data-page="diskbench"><span class="nav-subdot"></span><span>磁盘测速</span></button>
           <button class="nav-subitem active" data-page="netspeed"><span class="nav-subdot"></span><span>网络测速</span></button>
         </div>
-        <button class="nav-item" data-page="logs">
+        <button class="nav-item" data-page="quickcmds" title="快捷指令">
+          <svg class="nav-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+            <path d="M7 2v11h3v9l7-12h-4l4-8z"/>
+          </svg>
+          <span>快捷指令</span>
+        </button>
+      </div>
+
+      <div class="nav-section">
+        <div class="nav-section-title">记录</div>
+        <button class="nav-item" data-page="logs" title="操作日志">
           <svg class="nav-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
             <path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zM8 12h8v2H8v-2zm0 4h8v2H8v-2zm0-8h5v2H8V8z"/>
           </svg>
           <span>日志</span>
         </button>
       </div>
+      </div><!-- /.nav-scroll -->
 
       <div class="sidebar-footer">
         <button class="nav-item sidebar-settings-btn" data-page="settings" title="设置">
@@ -161,7 +135,7 @@
           <span>设置</span>
         </button>
         <div class="theme-toggle">
-          <button class="theme-btn" id="themeToggle" title="切换主题">
+          <button class="theme-btn" id="themeToggle" title="切换深浅主题" aria-label="切换深浅主题">
             <svg class="sun-icon" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
               <path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5s5-2.24 5-5s-2.24-5-5-5zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1zM5.99 4.58a.996.996 0 0 0-1.41 0c-.39.39-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41L5.99 4.58zm12.37 12.37a.996.996 0 0 0-1.41 0c-.39.39-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0a.996.996 0 0 0 0-1.41l-1.06-1.06zm1.06-10.96c.39-.39.39-1.03 0-1.41a.996.996 0 0 0-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06zM7.05 18.36c.39-.39.39-1.03 0-1.41a.996.996 0 0 0-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06z"/>
             </svg>
@@ -182,60 +156,60 @@
             <h1 class="page-title">系统概览</h1>
             <p class="page-subtitle">实时掌握本机资源占用、磁盘空间与硬件配置</p>
           </div>
-          <div class="page-actions">
-            <button class="btn btn-secondary" id="btnOverviewRefresh">
+        </div>
+
+        <!-- 实时资源卡片：健康度主卡 + CPU / 内存 / 磁盘 三张资源卡 -->
+        <div class="summary-cards overview-metrics" id="overviewMetrics">
+          <!-- 系统健康度主卡：按当前产品要求仅显示状态文案 -->
+          <div class="summary-card overview-card health-card" id="ovHealthCard">
+            <div class="health-meta">
+              <div class="health-title">系统健康度</div>
+              <div class="health-status" id="ovHealthAdvice">状态良好</div>
+            </div>
+          </div>
+
+          <!-- CPU 使用率 -->
+          <div class="summary-card overview-card overview-res-card">
+            <div class="ov-res-head">
+              <span class="ov-res-label">CPU 使用率</span>
+            </div>
+            <div class="ov-res-value" id="ovCpuValue">--</div>
+            <div class="progress-bar overview-bar"><div class="progress-fill" id="ovCpuBar"></div></div>
+            <div class="ov-res-sub" id="ovCpuSub"></div>
+          </div>
+
+          <!-- 内存使用（可点击跳转内存清理） -->
+          <div class="summary-card overview-card overview-res-card overview-jump-card" data-jump="memoryclean" title="点击前往「内存清理」页面" tabindex="0" role="button" aria-label="内存使用，点击前往内存清理">
+            <div class="ov-res-head">
+              <span class="ov-res-label">内存使用</span>
+              <svg class="ov-res-chevron" viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+            </div>
+            <div class="ov-res-value" id="ovMemValue">--</div>
+            <div class="progress-bar overview-bar"><div class="progress-fill" id="ovMemBar"></div></div>
+            <div class="ov-res-sub" id="ovMemSub"></div>
+          </div>
+
+          <!-- 磁盘（可点击跳转磁盘清理） -->
+          <div class="summary-card overview-card overview-res-card overview-jump-card" data-jump="cleanup" title="点击前往「磁盘清理」页面" tabindex="0" role="button" aria-label="磁盘占用，点击前往磁盘清理">
+            <div class="ov-res-head">
+              <span class="ov-res-label" id="ovDiskLabel">磁盘</span>
+              <svg class="ov-res-chevron" viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+            </div>
+            <div class="ov-res-value" id="ovDiskValue">--</div>
+            <div class="progress-bar overview-bar"><div class="progress-fill" id="ovDiskBar"></div></div>
+            <div class="ov-res-sub" id="ovDiskSub"></div>
+          </div>
+        </div>
+
+        <!-- 硬件信息（刷新按钮与标题同行，窗口界面升级3） -->
+        <div class="overview-section">
+          <div class="overview-section-head">
+            <h2 class="overview-section-title">硬件信息</h2>
+            <button class="btn btn-secondary btn-small" id="btnOverviewRefresh" title="重新读取系统指标与硬件信息" aria-label="刷新系统概览信息">
               <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
               <span>刷新信息</span>
             </button>
           </div>
-        </div>
-
-        <!-- 实时资源卡片 -->
-        <div class="summary-cards overview-metrics">
-          <div class="summary-card overview-card">
-            <div class="summary-icon" style="--icon-bg: linear-gradient(135deg, #0EA5E9, #0284C7)">
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M9 3v18h6V3H9zm-5 2v14h2V5H4zm14 0v14h2V5h-2z"/></svg>
-            </div>
-            <div class="summary-info">
-              <div class="summary-value" id="ovCpuValue">--</div>
-              <div class="summary-label">CPU 使用率</div>
-              <div class="progress-bar overview-bar"><div class="progress-fill" id="ovCpuBar"></div></div>
-            </div>
-          </div>
-          <div class="summary-card overview-card overview-jump-card" data-jump="memoryclean" title="点击前往「内存清理」页面">
-            <div class="summary-icon overview-jump-icon" id="ovMemJump">
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zM4 12c0-4.41 3.59-8 8-8 1.85 0 3.55.63 4.9 1.69L5.69 16.9C4.63 15.55 4 13.85 4 12zm8 8c-1.85 0-3.55-.63-4.9-1.69L18.31 7.1C19.37 8.45 20 10.15 20 12c0 4.41-3.59 8-8 8z"/></svg>
-            </div>
-            <div class="summary-info">
-              <div class="summary-value" id="ovMemValue">--</div>
-              <div class="summary-label">内存使用</div>
-              <div class="progress-bar overview-bar"><div class="progress-fill" id="ovMemBar"></div></div>
-            </div>
-          </div>
-          <div class="summary-card overview-card">
-            <div class="summary-icon" style="--icon-bg: linear-gradient(135deg, #D97706, #B45309)">
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>
-            </div>
-            <div class="summary-info">
-              <div class="summary-value" id="ovUptimeValue">--</div>
-              <div class="summary-label">开机时长</div>
-            </div>
-          </div>
-          <div class="summary-card overview-card overview-jump-card" data-jump="cleanup" title="点击前往「磁盘清理」页面">
-            <div class="summary-icon overview-jump-icon" id="ovDiskJump">
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm2 3v2h12V7H6zm0 4v2h8v-2H6zm0 4v2h12v-2H6z"/></svg>
-            </div>
-            <div class="summary-info">
-              <div class="summary-value" id="ovDiskValue">--</div>
-              <div class="summary-label" id="ovDiskLabel">磁盘使用</div>
-              <div class="progress-bar overview-bar"><div class="progress-fill" id="ovDiskBar"></div></div>
-            </div>
-          </div>
-        </div>
-
-        <!-- 硬件信息 -->
-        <div class="overview-section">
-          <h2 class="overview-section-title">硬件信息</h2>
           <div class="device-info-table" id="ovHardwareRows"></div>
         </div>
       </div>
@@ -245,33 +219,118 @@
         <div class="page-header">
           <div>
             <h1 class="page-title">磁盘清理</h1>
-            <p class="page-subtitle">智能扫描 C 盘各类缓存、临时文件、冗余组件</p>
-          </div>
-          <div class="page-actions">
-            <button class="btn btn-secondary" id="btnSelectAll">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
-              <span id="btnSelectAllText">全选</span>
-            </button>
-            <button class="btn btn-primary" id="btnScan">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
-              <span>扫描大小</span>
-            </button>
-            <button class="btn btn-accent" id="btnClean" disabled>
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M19 4h-3.5l-1-1h-5l-1 1H5v2h14V4zM6 7v12c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6z"/></svg>
-              <span>开始清理</span>
-            </button>
-            <div class="clean-inline-opts" id="cleanInlineOpts">
-              <label class="clean-opt" title="清理时跳过「占用中/被锁定」文件的重试，最大程度清空目标目录（删除操作不可撤销）">
-                <input type="checkbox" id="optForceDelete" /><span>强制删除</span>
-              </label>
-              <label class="clean-opt" title="清理后自动重建被删除的空目录，避免依赖该目录的应用（如微信）因目录缺失而出错">
-                <input type="checkbox" id="optAutoRebuild" checked /><span>自动重建目录</span>
-              </label>
-            </div>
-            <span class="clean-header-sep"></span>
+            <p class="page-subtitle" id="cleanupSubtitle">智能扫描 C 盘各类缓存、临时文件、冗余组件</p>
           </div>
         </div>
 
+        <!-- 磁盘清理分段式页面切换：五合一子视图（大标题下方；各子视图操作按钮与分段栏同行右对齐，窗口界面升级3） -->
+        <div class="cleanup-toolbar">
+        <div class="filter-tabs cleanup-tabs" id="cleanupTabs" role="tablist" aria-label="磁盘清理子功能">
+          <button class="filter-tab active" data-cleanup-view="cleanup" data-subtitle="智能扫描 C 盘各类缓存、临时文件、冗余组件" role="tab" aria-selected="true">主要</button>
+          <button class="filter-tab" data-cleanup-view="cleanup-dups" data-subtitle="基于内容指纹扫描重复文件，仅删除多余副本、保留一份" role="tab" aria-selected="false">重复文件查找</button>
+          <button class="filter-tab" data-cleanup-view="cleanup-big" data-subtitle="按体积从大到小列出占用空间最大的文件" role="tab" aria-selected="false">大文件查找</button>
+          <button class="filter-tab" data-cleanup-view="cleanup-empty" data-subtitle="扫描 0 字节文件与不含任何子项的空目录" role="tab" aria-selected="false">空文件与空目录</button>
+          <button class="filter-tab" data-cleanup-view="cleanup-appdata" data-subtitle="统计 AppData 下各应用一级目录占用，识别可清理的大体积目录" role="tab" aria-selected="false">AppData 瘦身</button>
+        </div>
+
+        <!-- 各子视图操作行：随分段切换显示，与分段栏保持齐平（窗口界面升级3） -->
+        <div class="cleanup-toolbar-actions active" data-actions-for="cleanup">
+          <button class="btn btn-secondary" id="btnSelectAll">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+            <span id="btnSelectAllText">全选</span>
+          </button>
+          <button class="btn btn-primary" id="btnScan">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+            <span>扫描大小</span>
+          </button>
+          <button class="btn btn-accent" id="btnClean" disabled>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M19 4h-3.5l-1-1h-5l-1 1H5v2h14V4zM6 7v12c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6z"/></svg>
+            <span>开始清理</span>
+          </button>
+          <div class="clean-inline-opts" id="cleanInlineOpts">
+            <label class="clean-opt" title="清理时跳过「占用中/被锁定」文件的重试，最大程度清空目标目录（删除操作不可撤销）">
+              <input type="checkbox" id="optForceDelete" /><span>强制删除</span>
+            </label>
+            <label class="clean-opt" title="清理后自动重建被删除的空目录，避免依赖该目录的应用（如微信）因目录缺失而出错">
+              <input type="checkbox" id="optAutoRebuild" checked /><span>自动重建目录</span>
+            </label>
+          </div>
+        </div>
+        <div class="cleanup-toolbar-actions" data-actions-for="cleanup-dups">
+          <button class="btn btn-secondary" id="dupBtnSelect">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+            <span>勾选重复项</span>
+          </button>
+          <button class="btn btn-primary" id="dupBtnScan">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+            <span>开始扫描</span>
+          </button>
+          <button class="btn btn-accent" id="dupBtnDelete" disabled>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+            <span>删除选中</span>
+          </button>
+          <button class="btn btn-secondary" type="button" data-finder-manifest>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm4 18H6V4h7v5h5v11z"/></svg>
+            <span>已删除清单</span>
+          </button>
+        </div>
+        <div class="cleanup-toolbar-actions" data-actions-for="cleanup-big">
+          <button class="btn btn-secondary" id="bigBtnSelect">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+            <span>全选</span>
+          </button>
+          <button class="btn btn-primary" id="bigBtnScan">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+            <span>开始扫描</span>
+          </button>
+          <button class="btn btn-accent" id="bigBtnDelete" disabled>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+            <span>删除选中</span>
+          </button>
+          <button class="btn btn-secondary" type="button" data-finder-manifest>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm4 18H6V4h7v5h5v11z"/></svg>
+            <span>已删除清单</span>
+          </button>
+        </div>
+        <div class="cleanup-toolbar-actions" data-actions-for="cleanup-empty">
+          <button class="btn btn-secondary" id="emptyBtnSelect">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+            <span>全选</span>
+          </button>
+          <button class="btn btn-primary" id="emptyBtnScan">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+            <span>开始扫描</span>
+          </button>
+          <button class="btn btn-accent" id="emptyBtnDelete" disabled>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+            <span>删除选中</span>
+          </button>
+          <button class="btn btn-secondary" type="button" data-finder-manifest>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm4 18H6V4h7v5h5v11z"/></svg>
+            <span>已删除清单</span>
+          </button>
+        </div>
+        <div class="cleanup-toolbar-actions" data-actions-for="cleanup-appdata">
+          <button class="btn btn-secondary" id="appdataBtnSelect">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+            <span>全选</span>
+          </button>
+          <button class="btn btn-primary" id="appdataBtnScan">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+            <span>开始统计</span>
+          </button>
+          <button class="btn btn-accent" id="appdataBtnDelete" disabled>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+            <span>删除选中</span>
+          </button>
+          <button class="btn btn-secondary" type="button" data-finder-manifest>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm4 18H6V4h7v5h5v11z"/></svg>
+            <span>已删除清单</span>
+          </button>
+        </div>
+        </div><!-- /.cleanup-toolbar -->
+
+        <div class="cleanup-view active" data-cleanup-panel="cleanup">
         <!-- 总览卡片 -->
         <div class="summary-cards">
           <div class="summary-card">
@@ -304,7 +363,7 @@
         </div>
 
         <!-- 进度条 -->
-        <div class="progress-section" id="progressSection" style="display:none">
+        <div class="progress-section" id="progressSection" role="status" aria-live="polite" aria-busy="false" style="display:none">
           <div class="progress-header">
             <span class="progress-label" id="progressLabel">扫描中...</span>
             <span class="progress-value" id="progressValue">0%</span>
@@ -318,7 +377,95 @@
         <div class="category-list" id="categoryList">
           <!-- 由 JS 动态生成 -->
         </div>
+      </div><!-- /.cleanup-view[main] -->
+
+      <!-- ============================ 磁盘清理 · 重复文件查找（子视图） ============================ -->
+      <div class="cleanup-view" data-cleanup-panel="cleanup-dups">
+        <div class="finder-toolbar card">
+          <label class="opt-inline" title="默认 = Downloads、Desktop、Documents、Pictures 与 C:\yule，不存在的目录自动跳过">扫描目录
+            <input type="text" class="finder-path input-style" id="dupPath" value="默认" placeholder="填「默认」使用内置目录，或逗号分隔自定义目录">
+          </label>
+          <label class="opt-inline" title="仅影响内容指纹比对；同名与相似文档检测不受此限制">最小文件
+            <select class="input-style" id="dupMinSize">
+              <option value="0">无限制</option>
+              <option value="1048576">1 MB</option>
+              <option value="5242880">5 MB</option>
+              <option value="10485760" selected>10 MB</option>
+              <option value="104857600">100 MB</option>
+            </select>
+          </label>
+        </div>
+        <div class="progress-section" id="dupProgressSection" style="display:none">
+          <div class="progress-header"><span class="progress-label" id="dupProgressLabel">扫描中...</span><span class="progress-value" id="dupProgressValue">0%</span></div>
+          <div class="progress-bar"><div class="progress-fill" id="dupProgressFill"></div></div>
+        </div>
+        <div class="summary-cards">
+          <div class="summary-card"><div class="summary-icon" style="--icon-bg: linear-gradient(135deg, #0EA5E9, #0284C7)"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg></div><div class="summary-info"><div class="summary-value" id="dupGroupCount">0</div><div class="summary-label">重复分组</div></div></div>
+          <div class="summary-card"><div class="summary-icon" style="--icon-bg: linear-gradient(135deg, #6B46C1, #553C9A)"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2z"/></svg></div><div class="summary-info"><div class="summary-value" id="dupSize">0 B</div><div class="summary-label">可释放空间</div></div></div>
+        </div>
+        <div class="table-card" id="dupTable"></div>
       </div>
+
+      <!-- ============================ 磁盘清理 · 大文件查找（子视图） ============================ -->
+      <div class="cleanup-view" data-cleanup-panel="cleanup-big">
+        <div class="finder-toolbar card">
+          <label class="opt-inline">扫描目录
+            <input type="text" class="finder-path input-style" id="bigPath" value="C:" placeholder="逗号分隔多个目录">
+          </label>
+          <label class="opt-inline">数量上限
+            <select class="input-style" id="bigCount">
+              <option value="20">20</option>
+              <option value="50" selected>50</option>
+              <option value="100">100</option>
+              <option value="200">200</option>
+            </select>
+          </label>
+        </div>
+        <div class="progress-section" id="bigProgressSection" style="display:none">
+          <div class="progress-header"><span class="progress-label" id="bigProgressLabel">扫描中...</span><span class="progress-value" id="bigProgressValue">0%</span></div>
+          <div class="progress-bar"><div class="progress-fill" id="bigProgressFill"></div></div>
+        </div>
+        <div class="table-card" id="bigTable"></div>
+      </div>
+
+      <!-- ============================ 磁盘清理 · 空文件与空目录（子视图） ============================ -->
+      <div class="cleanup-view" data-cleanup-panel="cleanup-empty">
+        <div class="finder-toolbar card">
+          <label class="opt-inline">扫描目录
+            <input type="text" class="finder-path input-style" id="emptyPath" value="%USERPROFILE%,C:\ProgramData" placeholder="逗号分隔多个目录">
+          </label>
+        </div>
+        <div class="progress-section" id="emptyProgressSection" style="display:none">
+          <div class="progress-header"><span class="progress-label" id="emptyProgressLabel">扫描中...</span><span class="progress-value" id="emptyProgressValue">0%</span></div>
+          <div class="progress-bar"><div class="progress-fill" id="emptyProgressFill"></div></div>
+        </div>
+        <div class="summary-cards">
+          <div class="summary-card"><div class="summary-icon" style="--icon-bg: linear-gradient(135deg, #0EA5E9, #0284C7)"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 18c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6z"/></svg></div><div class="summary-info"><div class="summary-value" id="emptyCount">0</div><div class="summary-label">空文件</div></div></div>
+          <div class="summary-card"><div class="summary-icon" style="--icon-bg: linear-gradient(135deg, #6B46C1, #553C9A)"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z"/></svg></div><div class="summary-info"><div class="summary-value" id="emptyDirCount">0</div><div class="summary-label">空目录</div></div></div>
+        </div>
+        <div class="table-card" id="emptyTable"></div>
+      </div>
+
+      <!-- ============================ 磁盘清理 · AppData 瘦身（子视图） ============================ -->
+      <div class="cleanup-view" data-cleanup-panel="cleanup-appdata">
+        <div class="finder-toolbar card">
+          <label class="opt-inline">最小目录
+            <select class="input-style" id="appdataMinSize">
+              <option value="10">10 MB</option>
+              <option value="50">50 MB</option>
+              <option value="100" selected>100 MB</option>
+              <option value="512">512 MB</option>
+            </select>
+          </label>
+          <span class="opt-hint">AppData 含正在运行的应用数据，删除前请确认应用已退出。</span>
+        </div>
+        <div class="progress-section" id="appdataProgressSection" style="display:none">
+          <div class="progress-header"><span class="progress-label" id="appdataProgressLabel">统计中...</span><span class="progress-value" id="appdataProgressValue">0%</span></div>
+          <div class="progress-bar"><div class="progress-fill" id="appdataProgressFill"></div></div>
+        </div>
+        <div class="table-card" id="appdataTable"></div>
+      </div><!-- /.cleanup-view[appdata] -->
+      </div><!-- /#page-cleanup（磁盘清理五合一：五个子视图收拢于此） -->
 
       <!-- 大文件查找 / 磁盘健康度功能已移除 -->
       <!-- 系统维护修复组页面（P2-16） -->
@@ -346,7 +493,7 @@
             <span class="maint-batch-progress-text" id="maintBatchProgressText"></span>
           </div>
         </div>
-        <div class="maint-tabs" id="maintTabs"><!-- 分类计数标签：由 JS 生成 --></div>
+        <div class="filter-tabs maint-cat-tabs" id="maintTabs"><!-- 分类计数标签：由 JS 生成（窗口界面升级3 收编进分段体系） --></div>
         <div class="maint-list" id="maintList"><!-- 任务卡片：由 JS 生成 --></div>
         <div class="maint-output" id="maintOutput" style="display:none">
           <div class="maint-output-header">
@@ -365,19 +512,19 @@
             <p class="page-subtitle">查看内存使用情况，按区域清理工作集与系统缓存，并管理运行中的进程 · 点击各条目即可看到简介</p>
           </div>
           <div class="page-actions">
-            <button class="btn btn-secondary" id="btnMemAiIntro" title="选择「内存清理」生成 AI 简介所用的模型（与其他模块相互独立）">
+            <button class="btn btn-secondary" id="btnMemAiIntro" data-tip="选择「内存清理」生成 AI 简介所用的模型（与其他模块相互独立）">
               <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm3.5 6.5c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2zm-11 0c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2zM12 19c-3.87 0-7-3.13-7-7h2c0 2.76 2.24 5 5 5s5-2.24 5-5h2c0 3.87-3.13 7-7 7z"/></svg>
               联网 AI 简介
             </button>
-            <button class="btn btn-secondary" id="btnMemProcesses" title="刷新当前运行的进程列表">
+            <button class="btn btn-secondary" id="btnMemProcesses" data-tip="刷新当前运行的进程列表">
               <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-1.41 6L13 13.59 10.91 11.5 6.5 15.91 8.41 17.83l3.5-3.5 2.09 2.09L20 9.41 17.59 7z"/></svg>
               刷新进程
             </button>
-            <button class="btn btn-secondary" id="btnMemRefresh" title="重新读取内存与系统缓存信息">
+            <button class="btn btn-secondary" id="btnMemRefresh" data-tip="重新读取内存与系统缓存信息">
               <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
               刷新信息
             </button>
-            <button class="btn btn-accent" id="btnMemClean" title="清理勾选的内存区域（危险区域需二次确认）">
+            <button class="btn btn-accent" id="btnMemClean" data-tip="清理勾选的内存区域（危险区域需二次确认）">
               <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M19 4h-3.5l-1-1h-5l-1 1H5v2h14V4zM6 7v12c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6z"/></svg>
               开始清理
             </button>
@@ -395,6 +542,7 @@
               <div class="summary-label">物理内存使用率</div>
               <div class="progress-bar overview-bar"><div class="progress-fill" id="memUseBar"></div></div>
             </div>
+            <span class="mem-ring-slot" id="memUseRingSlot" aria-hidden="false"></span>
           </div>
           <div class="summary-card">
             <div class="summary-icon" style="--icon-bg: linear-gradient(135deg, #16A34A, #15803D)">
@@ -480,7 +628,7 @@
               <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm3.5 6.5c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2zm-11 0c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2zM12 19c-3.87 0-7-3.13-7-7h2c0 2.76 2.24 5 5 5s5-2.24 5-5h2c0 3.87-3.13 7-7 7z"/></svg>
               联网 AI 简介
             </button>
-            <button class="btn btn-secondary" id="btnSysRestore" title="查看系统保护状态、创建与管理系统还原点">
+            <button class="btn btn-secondary" id="btnSysRestore" data-tip="查看系统保护状态、创建与管理系统还原点">
               <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>
               系统还原点
             </button>
@@ -490,6 +638,9 @@
             </button>
           </div>
         </div>
+
+        <!-- 优化分类分段栏（原侧边栏分类子菜单收拢于此，由 optimizer.js 按 OPT_CATEGORIES 渲染） -->
+        <div class="filter-tabs optimizer-cats filter-tabs--scroll" id="optimizerCatNav" role="tablist" aria-label="优化分类"></div>
 
         <!-- 管理员提醒（可选，交由 JS 控制） -->
         <div class="optimizer-banner" id="optimizerBanner" style="display:none"></div>
@@ -505,7 +656,7 @@
         <div class="page-header">
           <div>
             <h1 class="page-title">右键菜单管理 <span class="page-summary" id="contextSummary"></span></h1>
-            <p class="page-subtitle">勾选=启用，取消勾选=禁用（可逆，参照 Autoruns）；点击条目可查看详情与简介，删除入口在详情弹窗内</p>
+            <p class="page-subtitle">勾选=启用，取消勾选=禁用（可逆，可随时改回）；点击条目可查看详情与简介，删除入口在详情弹窗内</p>
           </div>
           <div class="page-actions">
             <button class="btn btn-secondary" id="btnRestoreMenu">
@@ -521,6 +672,25 @@
               联网 AI 简介
             </button>
           </div>
+        </div>
+
+        <!-- 右键菜单分类分段栏（原侧边栏分类树收拢于此，位于筛选标签上方） -->
+        <div class="filter-tabs ctx-cats filter-tabs--scroll" id="ctxCategoryNav" role="tablist" aria-label="右键菜单分类">
+          <button class="filter-tab" data-category="全部">全部</button>
+          <button class="filter-tab active" data-category="文件">文件</button>
+          <button class="filter-tab" data-category="文件夹">文件夹</button>
+          <button class="filter-tab" data-category="目录">目录</button>
+          <button class="filter-tab" data-category="目录背景">目录背景</button>
+          <button class="filter-tab" data-category="桌面背景">桌面背景</button>
+          <button class="filter-tab" data-category="磁盘分区">磁盘分区</button>
+          <button class="filter-tab" data-category="所有对象">所有对象</button>
+          <button class="filter-tab" data-category="此电脑">此电脑</button>
+          <button class="filter-tab" data-category="回收站">回收站</button>
+          <button class="filter-tab" data-category="库">库</button>
+          <button class="filter-tab" data-category="新建菜单">新建菜单</button>
+          <button class="filter-tab" data-category="发送到">发送到</button>
+          <button class="filter-tab" data-category="打开方式">打开方式</button>
+          <button class="filter-tab" data-category="Win+X">Win+X</button>
         </div>
 
         <!-- 筛选标签 -->
@@ -767,7 +937,7 @@
           <div>
             <h1 class="page-title">快捷指令</h1>
             <p class="page-subtitle">63 条 Windows 系统快捷入口 · 一键打开常用工具与设置
-              <span class="qc-admin-note" title="建议以管理员身份运行 TuneForge，确保全部快捷指令正常打开">默认以管理员模式启动</span>
+              <span class="qc-admin-note" title="建议以管理员身份运行 Trim，确保全部快捷指令正常打开">默认以管理员模式启动</span>
             </p>
           </div>
         </div>
@@ -778,7 +948,7 @@
           </div>
           <span class="opt-group-count" id="qcCount">0 项</span>
         </div>
-        <div class="maint-tabs" id="qcTabs"><!-- 分类标签：由 JS 生成 --></div>
+        <div class="filter-tabs qc-tabs" id="qcTabs"><!-- 分类标签：由 JS 生成（窗口界面升级3 收编进分段体系） --></div>
         <div class="qc-grid" id="qcList"><!-- 指令卡片：由 JS 生成 --></div>
       </div>
 
@@ -787,7 +957,7 @@
         <div class="page-header">
           <div>
             <h1 class="page-title">操作日志</h1>
-            <p class="page-subtitle">所有操作的详细记录，存储于 %APPDATA%\TuneForge\logs\</p>
+            <p class="page-subtitle">所有操作的详细记录，存储于 %APPDATA%\Trim\logs\</p>
           </div>
           <div class="page-actions">
             <button class="btn btn-secondary" id="btnRefreshLog">
@@ -872,6 +1042,11 @@
                 <div class="appearance-card-head">
                   <h4>窗口材质</h4>
                   <p>选择窗口背景的视觉材质效果</p>
+                  <!-- 材质总开关（Motion.Lab toggle-flip 滑动开关改）：关闭 = 暂停原生材质并回落不透明表面，记忆所选材质 -->
+                  <div class="mt-switch on" id="materialMasterToggle" role="switch" aria-checked="true" tabindex="0"
+                       aria-label="窗口材质总开关" data-tip="窗口材质总开关：关闭后窗口恢复不透明表面，重新开启回到所选材质">
+                    <span class="mt-switch-track"><span class="mt-switch-knob"></span></span>
+                  </div>
                 </div>
                 <div class="material-grid">
                   <div class="material-card" data-material="mica">
@@ -894,7 +1069,13 @@
                     <span class="material-name">细亚克力</span>
                     <span class="material-desc">更透亮的磨砂</span>
                   </div>
+                  <div class="material-card" data-material="none">
+                    <span class="material-swatch" style="background:linear-gradient(145deg,#2B2F3A 0%,#171A21 100%)"></span>
+                    <span class="material-name">无材质</span>
+                    <span class="material-desc">关闭原生材质</span>
+                  </div>
                 </div>
+                <p class="appearance-hint">材质同时作用于主窗口与大模型管理 / 外设优化 / 进程管理窗口；切换后若观感未刷新，重启应用完全生效</p>
               </div>
               <div class="appearance-card">
                 <div class="appearance-card-head">
@@ -925,10 +1106,24 @@
                   <p>自定义界面强调色</p>
                 </div>
                 <div class="accent-row">
-                  <input type="color" id="accentColor" value="#D3D4FA" title="选择强调色" />
+                  <input type="color" id="accentColor" value="#8B8EE0" title="选择强调色" aria-label="选择界面强调色" />
                   <button class="btn btn-secondary btn-small" id="btnAccentReset" title="恢复默认强调色">恢复默认</button>
                 </div>
                 <p class="appearance-hint">强调色管按钮、高亮与选中态</p>
+              </div>
+              <div class="appearance-card mouse-trail-card">
+                <div class="appearance-card-head">
+                  <h4>鼠标拖尾</h4>
+                  <p>在软件范围内显示轻量指针轨迹</p>
+                </div>
+                <div class="mouse-trail-row">
+                  <span class="mouse-trail-label">启用鼠标拖尾</span>
+                  <label class="toggle-switch" for="mouseTrailToggle" title="开启后指针移动会留下淡紫色光点轨迹">
+                    <input type="checkbox" id="mouseTrailToggle" />
+                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                  </label>
+                </div>
+                <p class="appearance-hint">仅作用于当前窗口，可随时关闭</p>
               </div>
               <div class="appearance-card">
                 <div class="appearance-card-head">
@@ -952,6 +1147,22 @@
                   </select>
                 </div>
                 <p class="appearance-hint">玻璃皮肤配合预设背景/自定义色调更有层次感，可与导入的图片背景叠加使用</p>
+              </div>
+              <div class="appearance-card">
+                <div class="appearance-card-head">
+                  <h4>切换动效</h4>
+                  <p>液态玻璃：按钮 · 分段栏 · 弹层</p>
+                </div>
+                <div class="skin-row">
+                  <span class="skin-row-label">效果</span>
+                  <select id="liquidMotionSelect" title="切换全局液态玻璃效果强度">
+                    <option value="full">完整液态玻璃</option>
+                    <option value="standard">标准液态玻璃</option>
+                    <option value="frost">磨砂玻璃</option>
+                    <option value="off">关闭</option>
+                  </select>
+                </div>
+                <p class="appearance-hint">「完整」= 折射 + 色散 + 指针弹性形变（弹层含 WebGL 高光）；「标准」= 折射无色散；「磨砂」= 仅毛玻璃；按钮均为浅色玻璃底，不使用主题色</p>
               </div>
             </div>
           </div>
@@ -1016,12 +1227,17 @@
     </div>
   </div>
 
+  <script src="scripts/mouse-trail.js"></script>
   <script src="scripts/theme.js"></script>
   <script src="scripts/tilt.js"></script>
-  <script src="scripts/jello.js"></script>
   <script src="scripts/modal.js"></script>
   <script src="scripts/xtable.js"></script>
+  <script src="scripts/icon-fallback.js"></script>
+  <script src="scripts/ds.js"></script>
+  <script src="scripts/liquid-glass.js"></script>
+  <script src="scripts/spotlight.js"></script>
   <script src="scripts/cleanup.js"></script>
+  <script src="scripts/finder.js"></script>
   <script src="scripts/intro.js"></script>
   <script src="scripts/pathbinding.js"></script>
   <script src="scripts/modelpicker.js"></script>

@@ -1,6 +1,6 @@
 // 优化电脑 选项目录 + 进度型 PowerShell 生成器
 // 来源目录：old\zhenghe（已按功能去重整合，剔除二进制 exe）
-// TuneForge.bat (内置性能调优集（2353 行）) 已全量嵌入，按分组分类；
+// Trim.bat (内置性能调优集（2353 行）) 已全量嵌入，按分组分类；
 // 脚本中的 wmic 循环改写为 Get-CimInstance / Get-PnpDevice（Win11 27H2 无 wmic），
 // 外部工具（nvidiaProfileInspector / OOSU10 / 电源计划 / DevManView）改为下载后静默执行，
 // 脚本自身语法 bug（seplatformtick、GpuEnergyDr、Microsoftd、智能引号 MTU、
@@ -98,7 +98,7 @@ const OPTIONS = [
   },
   {
     id: 'tf_ntfs', group: '启动与响应', title: 'NTFS 文件系统调优', risk: 'medium',
-    desc: 'TuneForge fsutil 五项：memoryusage=2、mftzone=4、disablelastaccess=1、disabledeletenotify=0（开启删除通知/TRIM）、encryptpagingfile=0。',
+    desc: 'Trim fsutil 五项：memoryusage=2、mftzone=4、disablelastaccess=1、disabledeletenotify=0（开启删除通知/TRIM）、encryptpagingfile=0。',
     steps: [
       { label: 'NTFS 内存占用 2', cmd: 'fsutil behavior set memoryusage 2' },
       { label: 'MFT 区域 4', cmd: 'fsutil behavior set mftzone 4' },
@@ -109,7 +109,7 @@ const OPTIONS = [
   },
   {
     id: 'tf_hibern_off', group: '启动与响应', title: '关闭休眠与快速启动', risk: 'medium',
-    desc: 'TuneForge：powercfg /h off、HiberbootEnabled=0、HibernateEnabled=0、关闭睡眠可靠性诊断与 SleepStudy，彻底关闭休眠文件与快速启动。',
+    desc: 'Trim：powercfg /h off、HiberbootEnabled=0、HibernateEnabled=0、关闭睡眠可靠性诊断与 SleepStudy，彻底关闭休眠文件与快速启动。',
     steps: [
       { label: '关闭休眠', cmd: 'powercfg /h off' },
       {
@@ -130,7 +130,7 @@ const OPTIONS = [
   },
   {
     id: 'tf_core_misc', group: '启动与响应', title: '核心响应性杂项', risk: 'medium',
-    desc: 'TuneForge 核心键集合：Win32PrioritySeparation=38、LargeSystemCache=1、菜单延迟 0、HwSchMode=2（硬件调度）、DistributeTimers=1、禁用 FTH、MoveImages=0、DisablePagingExecutive=1、DpiMapIommuContiguous=1、关闭自动维护、IE DEP 关闭。',
+    desc: 'Trim 核心键集合：Win32PrioritySeparation=38、LargeSystemCache=1、菜单延迟 0、HwSchMode=2（硬件调度）、DistributeTimers=1、禁用 FTH、MoveImages=0、DisablePagingExecutive=1、DpiMapIommuContiguous=1、关闭自动维护、IE DEP 关闭。',
     steps: [
       {
         label: '核心响应性注册表', reg: regBlock({
@@ -167,7 +167,7 @@ const OPTIONS = [
   },
   {
     id: 'tf_timer_coal', group: '启动与响应', title: '合并计时器与现代待机', risk: 'medium',
-    desc: 'TuneForge：7 条路径 CoalescingTimerInterval=0，关闭 PlatformAoAc/ModernSleep/CsEnabled，EnergyEstimation/EventProcessor 关闭，PowerThrottlingOff=1，降低定时器合并带来的延迟。',
+    desc: 'Trim：7 条路径 CoalescingTimerInterval=0，关闭 PlatformAoAc/ModernSleep/CsEnabled，EnergyEstimation/EventProcessor 关闭，PowerThrottlingOff=1，降低定时器合并带来的延迟。',
     steps: [
       {
         label: 'CoalescingTimerInterval / ModernSleep / PowerThrottling', reg: regBlock({
@@ -309,7 +309,7 @@ const OPTIONS = [
   },
   {
     id: 'tf_gamemode', group: '游戏与多媒体', title: '开启游戏模式', risk: 'low',
-    desc: 'TuneForge：AllowAutoGameMode=1、AutoGameModeEnabled=1，让 Windows 游戏模式自动提升游戏进程优先级。',
+    desc: 'Trim：AllowAutoGameMode=1、AutoGameModeEnabled=1，让 Windows 游戏模式自动提升游戏进程优先级。',
     steps: [
       {
         label: 'Game Mode 开启', reg: regBlock({
@@ -323,7 +323,7 @@ const OPTIONS = [
   },
   {
     id: 'tf_gamebar', group: '游戏与多媒体', title: '关闭游戏栏后台捕获', risk: 'low',
-    desc: 'TuneForge：AppCaptureEnabled=0、PresenceWriter ActivationType=0，关闭后台游戏录制与游戏状态写入器。',
+    desc: 'Trim：AppCaptureEnabled=0、PresenceWriter ActivationType=0，关闭后台游戏录制与游戏状态写入器。',
     steps: [
       {
         label: 'AppCapture / PresenceWriter', reg: regBlock({
@@ -342,7 +342,7 @@ const OPTIONS = [
   },
   {
     id: 'tf_fso', group: '游戏与多媒体', title: '全屏优化(FSO)行为', risk: 'low',
-    desc: 'TuneForge GameConfigStore：GameDVR_DSEBehavior=0、FSEBehaviorMode=0、EFSEFeatureFlags=0、DXGIHonorFSEWindowsCompatible=0、HonorUserFSEBehaviorMode=1（与内置「关闭游戏DVR」取值不同，保持原调优值）。',
+    desc: 'Trim GameConfigStore：GameDVR_DSEBehavior=0、FSEBehaviorMode=0、EFSEFeatureFlags=0、DXGIHonorFSEWindowsCompatible=0、HonorUserFSEBehaviorMode=1（与内置「关闭游戏DVR」取值不同，保持原调优值）。',
     steps: [
       {
         label: 'FSO GameConfigStore', reg: regBlock({
@@ -359,7 +359,7 @@ const OPTIONS = [
   },
   {
     id: 'tf_gpu_latency', group: '游戏与多媒体', title: 'GPU 延迟容忍度调优', risk: 'medium',
-    desc: 'TuneForge Latency Tolerance：DXGKrnl MonitorLatencyTolerance/MonitorRefreshLatencyTolerance=1，Control\\Power 9 键=1，GraphicsDrivers\\Power 24 键=1（含 DefaultD3TransitionLatency*、DefaultLatencyTolerance*、Miracast 等）。',
+    desc: 'Trim Latency Tolerance：DXGKrnl MonitorLatencyTolerance/MonitorRefreshLatencyTolerance=1，Control\\Power 9 键=1，GraphicsDrivers\\Power 24 键=1（含 DefaultD3TransitionLatency*、DefaultLatencyTolerance*、Miracast 等）。',
     steps: [
       {
         label: 'DXGKrnl / Control Power 延迟键', reg: regBlock({
@@ -390,7 +390,7 @@ const OPTIONS = [
   },
   {
     id: 'tf_ifeo_perf', group: '游戏与多媒体', title: '进程 CPU/IO 优先级（IFEO PerfOptions）', risk: 'high',
-    desc: 'TuneForge：dwm/ntoskrnl/csrss Cpu=4/Io=3，lsass Cpu=1/Io=0/PagePriority=0，SearchIndexer/svchost/TrustedInstaller/wuauclt/audiodg Cpu=1/2，在 SOFTWARE 与 WOW6432Node 两个蜂巢写入 PerfOptions。',
+    desc: 'Trim：dwm/ntoskrnl/csrss Cpu=4/Io=3，lsass Cpu=1/Io=0/PagePriority=0，SearchIndexer/svchost/TrustedInstaller/wuauclt/audiodg Cpu=1/2，在 SOFTWARE 与 WOW6432Node 两个蜂巢写入 PerfOptions。',
     steps: [
       {
         label: 'IFEO PerfOptions（双蜂巢）', reg: regBlock({
@@ -519,7 +519,7 @@ const OPTIONS = [
   },
   {
     id: 'tf_mmagent', group: '系统服务与内存', title: '关闭内存压缩与页合并', risk: 'medium',
-    desc: 'TuneForge：Disable-MMAgent -MemoryCompression 与 -PageCombining，同时关闭内存压缩和页面合并（比内置项多 PageCombining）。',
+    desc: 'Trim：Disable-MMAgent -MemoryCompression 与 -PageCombining，同时关闭内存压缩和页面合并（比内置项多 PageCombining）。',
     steps: [
       { label: '关闭内存压缩', pwsh: 'Disable-MMAgent -MemoryCompression -ErrorAction SilentlyContinue' },
       { label: '关闭页面合并', pwsh: 'Disable-MMAgent -PageCombining -ErrorAction SilentlyContinue' }
@@ -541,7 +541,7 @@ const OPTIONS = [
   },
   {
     id: 'tf_drv_disable', group: '系统服务与内存', title: '禁用高风险驱动服务', risk: 'high',
-    desc: 'TuneForge DisableDrivers（21 项 Start=4）：acpipagr、AcpiPmi、Beep、CAD、GpuEnergyDrv、CLFS、CSC、luafv、RasAcd/Rasl2tp/RasPppoe/RasSstp、tcpipreg、dam、PEAUTH、QWAVEdrv、cdrom、fileinfo、FileCrypt。可能影响光驱/VPN，高风险（已剔除 IPv6 相关驱动 Tcpip6/wanarpv6，遵守项目硬约束）。',
+    desc: 'Trim DisableDrivers（21 项 Start=4）：acpipagr、AcpiPmi、Beep、CAD、GpuEnergyDrv、CLFS、CSC、luafv、RasAcd/Rasl2tp/RasPppoe/RasSstp、tcpipreg、dam、PEAUTH、QWAVEdrv、cdrom、fileinfo、FileCrypt。可能影响光驱/VPN，高风险（已剔除 IPv6 相关驱动 Tcpip6/wanarpv6，遵守项目硬约束）。',
     steps: [
       { label: '驱动服务 Start=4', pwsh: [
         '$drv = @("acpipagr","AcpiPmi","Beep","CAD","GpuEnergyDrv","CLFS","CSC","luafv","RasAcd","Rasl2tp","RasPppoe","RasSstp","tcpipreg","dam","PEAUTH","QWAVEdrv","cdrom","fileinfo","FileCrypt")',
@@ -644,7 +644,7 @@ const OPTIONS = [
   },
   {
     id: 'tf_defender', group: '安全与隐私', title: '关闭 Defender 与 SmartScreen', risk: 'high',
-    desc: 'TuneForge：禁用 Microsoft Defender 反间谍/实时保护/云上报/SmartScreen/Edge 钓鱼过滤，并停用 Sense、WinDefend、WdNisSvc、SecurityHealthService、wscsvc（高风险，系统将无杀毒防护）。',
+    desc: 'Trim：禁用 Microsoft Defender 反间谍/实时保护/云上报/SmartScreen/Edge 钓鱼过滤，并停用 Sense、WinDefend、WdNisSvc、SecurityHealthService、wscsvc（高风险，系统将无杀毒防护）。',
     steps: [
       { label: 'Defender 策略与服务', reg: regBlock({
         'HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows Defender\\Reporting': { 'DisableGenericRePorts': 'dword:00000001', 'DisableEnhancedNotifications': 'dword:00000001' },
@@ -673,7 +673,7 @@ const OPTIONS = [
   },
   {
     id: 'tf_privacy', group: '安全与隐私', title: '系统隐私设置', risk: 'medium',
-    desc: 'TuneForge 隐私大项：关闭内容推荐/广告 ID、开始菜单建议、操作中心通知、跨设备同步(CDP)、定制化体验、反馈频次、锁屏建议、错误报告(WER)、实验性体验、TaggedEnergy，并停用 GpuEnergyDrv（麦克风/摄像头权限保留允许）。',
+    desc: 'Trim 隐私大项：关闭内容推荐/广告 ID、开始菜单建议、操作中心通知、跨设备同步(CDP)、定制化体验、反馈频次、锁屏建议、错误报告(WER)、实验性体验、TaggedEnergy，并停用 GpuEnergyDrv（麦克风/摄像头权限保留允许）。',
     steps: [
       { label: '隐私注册表键', reg: regBlock({
         'HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager': {
@@ -763,7 +763,7 @@ const OPTIONS = [
   // ---------- 显卡优化 ----------
   {
     id: 'tf_gpu_msi', group: '显卡优化', title: '显卡启用 MSI 中断模式', risk: 'medium',
-    desc: 'TuneForge：遍历所有 PCI 显卡（wmic Win32_VideoController 已改写为 Get-CimInstance），在其 Enum 设备参数下开启 MSISupported=1 并将 Affinity Policy 的 DevicePriority=0，降低显卡中断延迟（极少数老驱动可能不兼容）。',
+    desc: 'Trim：遍历所有 PCI 显卡（wmic Win32_VideoController 已改写为 Get-CimInstance），在其 Enum 设备参数下开启 MSISupported=1 并将 Affinity Policy 的 DevicePriority=0，降低显卡中断延迟（极少数老驱动可能不兼容）。',
     steps: [
       { label: 'GPU MSI + DevicePriority', pwsh: [
         'Get-CimInstance Win32_VideoController | Where-Object { $_.PNPDeviceID -like "PCI*" } | ForEach-Object {',
@@ -778,7 +778,7 @@ const OPTIONS = [
   },
   {
     id: 'tf_nvidia_telemetry', group: '显卡优化', title: 'NVIDIA：关闭遥测与自动更新', risk: 'low',
-    desc: 'TuneForge：删除开机启动 NvBackend，OptInOrOutPreference=0，FTS EnableRID66610/64640/44231=0，并禁用 7 个 NvTm/NvDriverUpdateCheck/GeForce Experience SelfUpdate 计划任务（仅 NVIDIA 系统有对应项，缺失自动跳过）。',
+    desc: 'Trim：删除开机启动 NvBackend，OptInOrOutPreference=0，FTS EnableRID66610/64640/44231=0，并禁用 7 个 NvTm/NvDriverUpdateCheck/GeForce Experience SelfUpdate 计划任务（仅 NVIDIA 系统有对应项，缺失自动跳过）。',
     steps: [
       { label: 'NVIDIA 遥测注册表', reg: regBlock({
         'HKEY_LOCAL_MACHINE\\SOFTWARE\\NVIDIA Corporation\\NvControlPanel2\\Client': { 'OptInOrOutPreference': 'dword:00000000' },
@@ -795,7 +795,7 @@ const OPTIONS = [
   // ---------- 键鼠与外设 ----------
   {
     id: 'tf_keys_sticky', group: '键鼠与外设', title: '彻底禁用粘滞/筛选/切换键', risk: 'low',
-    desc: 'TuneForge KBM：StickyKeys Flags="506"、Keyboard Response(筛选键) Flags="122"、ToggleKeys Flags="58"，连按 Shift 8 秒等误触发快捷键全部失效。',
+    desc: 'Trim KBM：StickyKeys Flags="506"、Keyboard Response(筛选键) Flags="122"、ToggleKeys Flags="58"，连按 Shift 8 秒等误触发快捷键全部失效。',
     steps: [
       { label: '辅助功能热键 Flags', reg: regBlock({
         'HKEY_CURRENT_USER\\Control Panel\\Accessibility\\StickyKeys': { 'Flags': '506' },
@@ -806,7 +806,7 @@ const OPTIONS = [
   },
   {
     id: 'tf_usb_msi', group: '键鼠与外设', title: 'USB 控制器启用 MSI 中断', risk: 'medium',
-    desc: 'TuneForge：遍历所有 PCI USB 控制器（wmic Win32_USBController 已改写为 Get-CimInstance），开启 MSISupported=1、DevicePriority=0，降低 USB 轮询中断延迟（电竞鼠标/键盘推荐）。',
+    desc: 'Trim：遍历所有 PCI USB 控制器（wmic Win32_USBController 已改写为 Get-CimInstance），开启 MSISupported=1、DevicePriority=0，降低 USB 轮询中断延迟（电竞鼠标/键盘推荐）。',
     steps: [
       { label: 'USB MSI + DevicePriority', pwsh: [
         'Get-CimInstance Win32_USBController | Where-Object { $_.PNPDeviceID -like "PCI*" } | ForEach-Object {',
@@ -821,7 +821,7 @@ const OPTIONS = [
   },
   {
     id: 'tf_usb_power', group: '键鼠与外设', title: '关闭 USB 选择性暂停', risk: 'low',
-    desc: 'TuneForge：所有 USB 控制器 Device Parameters 下 AllowIdleIrpInD3/D3ColdSupported/DeviceSelectiveSuspended/EnableSelectiveSuspend/EnhancedPowerManagementEnabled/SelectiveSuspendEnabled/SelectiveSuspendOn 全部=0，Services\\USB DisableSelectiveSuspend=1，杜绝鼠标键盘间歇掉线。',
+    desc: 'Trim：所有 USB 控制器 Device Parameters 下 AllowIdleIrpInD3/D3ColdSupported/DeviceSelectiveSuspended/EnableSelectiveSuspend/EnhancedPowerManagementEnabled/SelectiveSuspendEnabled/SelectiveSuspendOn 全部=0，Services\\USB DisableSelectiveSuspend=1，杜绝鼠标键盘间歇掉线。',
     steps: [
       { label: 'USB 省电键=0', pwsh: [
         '$keys = @("AllowIdleIrpInD3","D3ColdSupported","DeviceSelectiveSuspended","EnableSelectiveSuspend","EnhancedPowerManagementEnabled","SelectiveSuspendEnabled","SelectiveSuspendOn")',
@@ -852,7 +852,7 @@ const OPTIONS = [
   },
   {
     id: 'tf_keyboard', group: '键鼠与外设', title: '键盘：零延迟 + 队列深度', risk: 'low',
-    desc: 'TuneForge：KeyboardDelay="0"、KeyboardSpeed="31"（控制面板里最短重复延迟/最快重复速度），mouclass MouseDataQueueSize=16、kbdclass KeyboardDataQueueSize=16、kernel DebugPollInterval=1000，减少输入排队延迟。',
+    desc: 'Trim：KeyboardDelay="0"、KeyboardSpeed="31"（控制面板里最短重复延迟/最快重复速度），mouclass MouseDataQueueSize=16、kbdclass KeyboardDataQueueSize=16、kernel DebugPollInterval=1000，减少输入排队延迟。',
     steps: [
       { label: '键盘/鼠标类参数', reg: regBlock({
         'HKEY_CURRENT_USER\\Control Panel\\Keyboard': { 'KeyboardDelay': '0', 'KeyboardSpeed': '31' },
@@ -864,7 +864,7 @@ const OPTIONS = [
   },
   {
     id: 'tf_dev_disable', group: '键鼠与外设', title: '禁用 24 个冗余板载设备', risk: 'high',
-    desc: 'TuneForge DisableDevices（DevManView 已改写为 Disable-PnpDevice，按设备名匹配）：高精度事件定时器(HPET)、GS 波表合成、RRAS 根枚举、Intel ME/MEI/SMBus、SM Bus、Amdlog、AMD PSP、系统扬声器、复合总线枚举、虚拟驱动器枚举、Hyper-V 虚拟化基础结构、NDIS 虚拟网卡枚举、远程桌面重定向总线、UMBus、7 个 WAN Miniport 等（已剔除 IPv6 相关虚拟适配器，遵守项目硬约束）。禁用 HPET/ME 属高风险，可能影响设备管理或虚拟化。',
+    desc: 'Trim DisableDevices（DevManView 已改写为 Disable-PnpDevice，按设备名匹配）：高精度事件定时器(HPET)、GS 波表合成、RRAS 根枚举、Intel ME/MEI/SMBus、SM Bus、Amdlog、AMD PSP、系统扬声器、复合总线枚举、虚拟驱动器枚举、Hyper-V 虚拟化基础结构、NDIS 虚拟网卡枚举、远程桌面重定向总线、UMBus、7 个 WAN Miniport 等（已剔除 IPv6 相关虚拟适配器，遵守项目硬约束）。禁用 HPET/ME 属高风险，可能影响设备管理或虚拟化。',
     steps: [
       { label: '按名称禁用设备', pwsh: [
         '$names = @("High Precision Event Timer","Microsoft GS Wavetable Synth","Microsoft RRAS Root Enumerator","Intel Management Engine","Intel Management Engine Interface","Intel SMBus","SM Bus Controller","Amdlog","AMD PSP","System Speaker","Composite Bus Enumerator","Microsoft Virtual Drive Enumerator","Microsoft Hyper-V Virtualization Infrastructure Driver","NDIS Virtual Network Adapter Enumerator","Remote Desktop Device Redirector Bus","UMBus Root Bus Enumerator","WAN Miniport (IP)","WAN Miniport (IKEv2)","WAN Miniport (L2TP)","WAN Miniport (PPPOE)","WAN Miniport (PPTP)","WAN Miniport (SSTP)","WAN Miniport (Network Monitor)")',
@@ -874,7 +874,7 @@ const OPTIONS = [
   },
   {
     id: 'tf_dev_audio', group: '键鼠与外设', title: '禁用高清音频控制器', risk: 'high',
-    desc: 'TuneForge 可选项：禁用 "High Definition Audio Controller"（HDMI/DP 声卡与板载声卡会消失，仅在使用独立 USB 声卡且想彻底禁用板载音频时使用）。',
+    desc: 'Trim 可选项：禁用 "High Definition Audio Controller"（HDMI/DP 声卡与板载声卡会消失，仅在使用独立 USB 声卡且想彻底禁用板载音频时使用）。',
     steps: [
       { label: '禁用 HD Audio Controller', pwsh: [
         'Get-PnpDevice -ErrorAction SilentlyContinue | Where-Object { $_.FriendlyName -eq "High Definition Audio Controller" -and $_.Status -eq "OK" } | Disable-PnpDevice -Confirm:$false -ErrorAction SilentlyContinue'
@@ -883,7 +883,7 @@ const OPTIONS = [
   },
   {
     id: 'tf_dev_printer', group: '键鼠与外设', title: '禁用打印队列设备', risk: 'high',
-    desc: 'TuneForge 可选项：禁用 "Root Print Queue" 打印队列根设备（无打印机的机器可禁用；有打印机请勿使用）。',
+    desc: 'Trim 可选项：禁用 "Root Print Queue" 打印队列根设备（无打印机的机器可禁用；有打印机请勿使用）。',
     steps: [
       { label: '禁用 Root Print Queue', pwsh: [
         'Get-PnpDevice -ErrorAction SilentlyContinue | Where-Object { $_.FriendlyName -eq "Root Print Queue" -and $_.Status -eq "OK" } | Disable-PnpDevice -Confirm:$false -ErrorAction SilentlyContinue'
@@ -892,9 +892,9 @@ const OPTIONS = [
   },
   {
     id: 'tf_pccleaner', group: '系统精简', title: 'PCCleaner 深度清理', risk: 'medium',
-    desc: 'TuneForge PCCleaner 完整清单：Windows Temp、Prefetch、%temp%、系统盘 .tmp/._mp/.log/.gid/.chk/.old、回收站、Windows .bak、缩略图 db、CBS/DISM 日志、历史/Cookies/Recent/打印后台缓存（日志文件会一并删除）。',
+    desc: 'Trim PCCleaner 完整清单：Windows Temp、Prefetch、%temp%、系统盘 .tmp/._mp/.log/.gid/.chk/.old、回收站、Windows .bak、缩略图 db、CBS/DISM 日志、历史/Cookies/Recent/打印后台缓存（日志文件会一并删除）。',
     steps: [
-      { label: 'TuneForge 清理路径清单', pwsh: [
+      { label: 'Trim 清理路径清单', pwsh: [
         '$paths = @("C:\\Windows\\Temp","C:\\Windows\\tmp","C:\\Windows\\Prefetch",$env:TEMP,"C:\\Windows\\history","C:\\Windows\\cookies","C:\\Windows\\recent","C:\\Windows\\spool\\printers","C:\\Windows\\Logs\\CBS","C:\\Windows\\Logs\\DISM")',
         'foreach ($p in $paths) { if (Test-Path $p) { Get-ChildItem -Path $p -Recurse -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue } }',
         '$patterns = @("*.tmp","*._mp","*.log","*.gid","*.chk","*.old","*.bak","ff*.tmp")',
@@ -907,7 +907,7 @@ const OPTIONS = [
   // ---------- 系统精简 ----------
   {
     id: 'tf_appx', group: '系统精简', title: '移除 25 个内置 UWP 应用', risk: 'high',
-    desc: 'TuneForge Debloat：按名称通配移除所有用户下的预装 AppX——3D Builder、Bing 全家桶（资讯/财经/体育/天气）、CommsPhone、Drawboard PDF、Facebook、Getstarted、Messaging、Office Hub、OneNote、人脉、Skype、纸牌合集、Sway、Twitter、闹钟时钟、手机、地图、反馈中心、录音机、邮件日历、Zune（Groove/影视）等。移除后部分应用需从商店重装。',
+    desc: 'Trim Debloat：按名称通配移除所有用户下的预装 AppX——3D Builder、Bing 全家桶（资讯/财经/体育/天气）、CommsPhone、Drawboard PDF、Facebook、Getstarted、Messaging、Office Hub、OneNote、人脉、Skype、纸牌合集、Sway、Twitter、闹钟时钟、手机、地图、反馈中心、录音机、邮件日历、Zune（Groove/影视）等。移除后部分应用需从商店重装。',
     steps: [
       { label: '移除预装 AppX 清单', pwsh: [
         '$apps = @("*3DBuilder*","*bing*","*bingfinance*","*bingsports*","*BingWeather*","*CommsPhone*","*Drawboard PDF*","*Facebook*","*Getstarted*","*Microsoft.Messaging*","*MicrosoftOfficeHub*","*Office.OneNote*","*OneNote*","*people*","*SkypeApp*","*solit*","*Sway*","*Twitter*","*WindowsAlarms*","*WindowsPhone*","*WindowsMaps*","*WindowsFeedbackHub*","*WindowsSoundRecorder*","*windowscommunicationsapps*","*zune*")',
@@ -917,7 +917,7 @@ const OPTIONS = [
   },
   {
     id: 'tf_cortana', group: '系统精简', title: '禁用 Cortana 与网页搜索', risk: 'medium',
-    desc: 'TuneForge DisableCortana：写入 Windows Search 策略（AllowCortana/AllowCloudSearch/AllowCortanaAboveLock/AllowSearchToUseLocation/ConnectedSearchUseWeb/ConnectedSearchUseWebOverMeteredConnections=0，DisableWebSearch=1——已修正 TuneForge 原版此处反写成 0 的 bug），并卸载 Cortana AppX（Microsoft.549981C3F5F10）。',
+    desc: 'Trim DisableCortana：写入 Windows Search 策略（AllowCortana/AllowCloudSearch/AllowCortanaAboveLock/AllowSearchToUseLocation/ConnectedSearchUseWeb/ConnectedSearchUseWebOverMeteredConnections=0，DisableWebSearch=1——已修正 Trim 原版此处反写成 0 的 bug），并卸载 Cortana AppX（Microsoft.549981C3F5F10）。',
     steps: [
       {
         label: 'Cortana / 网页搜索策略', reg: regBlock({
@@ -939,7 +939,7 @@ const OPTIONS = [
   },
   {
     id: 'tf_onedrive', group: '系统精简', title: '彻底卸载 OneDrive', risk: 'high',
-    desc: 'TuneForge DisableOneDrive：运行 OneDriveSetup /UNINSTALL，删除 OneDriveTemp、用户/本机/ProgramData 下的 OneDrive 数据目录，清空资源管理器左栏 OneDrive 入口 CLSID 属性（HKCR 与 Wow6432Node 双 hive），并写入禁用文件同步的组策略（DisableFileSync/DisableFileSyncNGSC=1）。',
+    desc: 'Trim DisableOneDrive：运行 OneDriveSetup /UNINSTALL，删除 OneDriveTemp、用户/本机/ProgramData 下的 OneDrive 数据目录，清空资源管理器左栏 OneDrive 入口 CLSID 属性（HKCR 与 Wow6432Node 双 hive），并写入禁用文件同步的组策略（DisableFileSync/DisableFileSyncNGSC=1）。',
     steps: [
       { label: '运行 OneDrive 卸载器', pwsh: [
         '$setup = Join-Path $env:SystemRoot "SYSWOW64\\ONEDRIVESETUP.EXE"',
@@ -964,7 +964,7 @@ const OPTIONS = [
   },
   {
     id: 'tf_oosu', group: '系统精简', title: 'OOSU 隐私工具静默导入', risk: 'medium',
-    desc: 'TuneForge RunOOSU：下载 O&O ShutUp10 便携版到临时目录，并下载 ANCELOOSUIMPORT.cfg 配置到 C 盘，静默导入配置后退出（需要联网下载，配置由 TuneForge 官方仓库提供）。',
+    desc: 'Trim RunOOSU：下载 O&O ShutUp10 便携版到临时目录，并下载 ANCELOOSUIMPORT.cfg 配置到 C 盘，静默导入配置后退出（需要联网下载，配置由 Trim 官方仓库提供）。',
     steps: [
       { label: '下载 OOSU 与配置', pwsh: [
         '$oosu = Join-Path $env:TEMP "OOSU10.exe"',
@@ -977,7 +977,7 @@ const OPTIONS = [
       ].join('\n') }
     ]
   },
-  // ---------- 音频优化（对齐 TuneForge BuildAudioModule） ----------
+  // ---------- 音频优化（对齐 Trim BuildAudioModule） ----------
   {
     id: 'audio_disable_enhancements', group: '音频优化', title: '关闭音频增强', risk: 'medium',
     desc: '为所有播放设备关闭系统音频增强处理（Enhancements），减少额外音效加工，让游戏与媒体声音更干净稳定。',
@@ -1101,7 +1101,7 @@ const OPTIONS = [
       }
     ]
   },
-  // ---------- 桌面体验（对齐 TuneForge BuildExplorerModule） ----------
+  // ---------- 桌面体验（对齐 Trim BuildExplorerModule） ----------
   {
     id: 'desktop_show_ext', group: '桌面体验', title: '显示文件扩展名', risk: 'medium',
     desc: 'HideFileExt=0，使所有文件始终显示其扩展名，防止伪装成文档的恶意程序。',
@@ -1270,7 +1270,7 @@ const OPTIONS = [
       }
     ]
   },
-  // ---------- 任务调度（对齐 TuneForge BuildTasksModule） ----------
+  // ---------- 任务调度（对齐 Trim BuildTasksModule） ----------
   {
     id: 'tasks_disable_ceip', group: '任务调度', title: 'CEIP Consolidator 任务排查', risk: 'medium',
     desc: '停用 \\Microsoft\\Windows\\Customer Experience Improvement Program\\Consolidator 计划任务；需确认客户体验数据、诊断反馈取舍。',
@@ -1377,7 +1377,7 @@ const OPTIONS = [
       ].join('\n') }
     ]
   },
-  // ---------- 外设调优新增（对齐 TuneForge BuildPeripheralModule） ----------
+  // ---------- 外设调优新增（对齐 Trim BuildPeripheralModule） ----------
   {
     id: 'peripheral_inactive_scroll', group: '外设调优', title: '关闭非活动窗口滚动', risk: 'medium',
     desc: 'MouseWheelRouting=0，滚动仅作用于当前活动窗口，避免误滚动到背景窗口；多窗口用户慎用。',
@@ -1426,7 +1426,7 @@ const OPTIONS = [
       }) }
     ]
   },
-  // ---------- 隐私防护新增（对齐 TuneForge BuildPrivacyModule；相机/麦克风/联系人按需排除） ----------
+  // ---------- 隐私防护新增（对齐 Trim BuildPrivacyModule；相机/麦克风/联系人按需排除） ----------
   {
     id: 'privacy_advertising_id', group: '隐私防护', title: '广告 ID 个性化排查', risk: 'medium',
     desc: 'AdvertisingInfo Enabled=0 并重置 AdvertisingInfo Id，关闭广告个性化；需确认是否依赖个性化广告或应用推荐体验。',
@@ -1510,7 +1510,7 @@ const OPTIONS = [
   },
   {
     id: 'privacy_permissions_tune', group: '隐私防护', title: '各类权限精调', risk: 'medium',
-    desc: '按 TuneForge 缺失项合并精调 20+ 项权限与数据收集开关：应用访问（文件系统/文档/日历/联系人/位置拒绝）、活动收集、应用启动跟踪、写作习惯、键入文本、输入个性化、键入见解、OOBE 隐私体验、通讯录收集、自动连接热点、.NET/PowerShell 遥测环境变量（机器级）、启用剪贴板历史、停用 SMS 路由器服务（原「网站语言跟踪」「Bing 搜索」「定向广告」「兼容性遥测」「页面预测」「设置应用建议」「赞助商应用」「搜索历史」已被现有优化项覆盖，不再重复写入）。',
+    desc: '按 Trim 缺失项合并精调 20+ 项权限与数据收集开关：应用访问（文件系统/文档/日历/联系人/位置拒绝）、活动收集、应用启动跟踪、写作习惯、键入文本、输入个性化、键入见解、OOBE 隐私体验、通讯录收集、自动连接热点、.NET/PowerShell 遥测环境变量（机器级）、启用剪贴板历史、停用 SMS 路由器服务（原「网站语言跟踪」「Bing 搜索」「定向广告」「兼容性遥测」「页面预测」「设置应用建议」「赞助商应用」「搜索历史」已被现有优化项覆盖，不再重复写入）。',
     steps: [
       { label: '应用访问权限（ConsentStore=Deny）', reg: regBlock({
         'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\documentsLibrary': { 'Value': '"Deny"' },
@@ -1553,7 +1553,7 @@ const OPTIONS = [
       { label: '停用 SMS 路由器服务', service: 'MessagingService', disable: true }
     ]
   },
-  // ==================== 系统服务（对齐 TuneForge BuildServicesModule 独立策略）====================
+  // ==================== 系统服务（对齐 Trim BuildServicesModule 独立策略）====================
   {
     id: 'svc_connected_devices_manual', group: '系统服务', title: '跨设备平台服务设为手动', risk: 'medium',
     desc: 'CDPSvc / CDPUserSvc Start=3，让跨设备、手机连接和附近共享相关服务按需启动；不承诺固定资源收益，需要这些体验时可恢复原启动类型。',
@@ -1607,7 +1607,7 @@ const OPTIONS = [
       { label: 'bthserv Start=4', pwsh: '$p = "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\bthserv"; if (Test-Path $p) { New-ItemProperty -Path $p -Name Start -Value 4 -PropertyType DWord -Force | Out-Null; Stop-Service -Name bthserv -Force -ErrorAction SilentlyContinue }' }
     ]
   },
-  // ==================== 系统调校补齐（对齐 TuneForge BuildSystemModule）====================
+  // ==================== 系统调校补齐（对齐 Trim BuildSystemModule）====================
   {
     id: 'power_aspm_off', group: '系统调校', title: '禁用 PCI-E ASPM 节能', risk: 'medium',
     desc: '电源方案与设备级关闭 PCIe 链路节能(ASPM)，可能减少显卡、硬盘或网卡从低功耗状态唤醒时的卡顿。',
@@ -1638,7 +1638,7 @@ const OPTIONS = [
     ]
   },
   // 注：「清空待机列表（StandbyList）」已移除，功能由「内存清理」覆盖。
-  // ==================== 性能调优补齐（对齐 TuneForge BuildPerformanceModule）====================
+  // ==================== 性能调优补齐（对齐 Trim BuildPerformanceModule）====================
   {
     id: 'perf_uwp_background_off', group: '性能调优', title: 'UWP 后台运行排查', risk: 'medium',
     desc: 'GlobalUserDisabled=1，请求限制通用应用后台运行；需确认通知、同步和后台刷新需求，不承诺固定资源收益。',
@@ -1762,7 +1762,7 @@ const OPTIONS = [
   },
   {
     id: 'perf_exploit_protection_off', group: '性能调优', title: '关闭 Exploit Protection（乱序内存）', risk: 'high',
-    desc: '写入内核 MitigationOptions 二进制值（22,22,22,00,00,02,00,00,00,02,00,00,00,00,00,00，与 TuneForge「关闭Exploit Protection（乱序内存）」一致），关闭一系列漏洞利用缓解（含 SEHOP/强制 ASLR 等），可小幅提升部分应用的内存分配性能，但显著降低漏洞利用防护（高风险，需确认后执行）。',
+    desc: '写入内核 MitigationOptions 二进制值（22,22,22,00,00,02,00,00,00,02,00,00,00,00,00,00，与 Trim「关闭Exploit Protection（乱序内存）」一致），关闭一系列漏洞利用缓解（含 SEHOP/强制 ASLR 等），可小幅提升部分应用的内存分配性能，但显著降低漏洞利用防护（高风险，需确认后执行）。',
     steps: [
       {
         label: 'MitigationOptions (Binary)', pwsh: [

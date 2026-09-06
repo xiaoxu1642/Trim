@@ -10,7 +10,7 @@ const DIAG_PREFIX = '@@DIAG@@';
 // 依赖脚本已设置 $ErrorActionPreference = 'SilentlyContinue'：
 // trap 仅捕获终止性错误，非终止错误仍按原逻辑静默继续，行为兼容。
 const PS_PREAMBLE = `
-# ---- TuneForge 诊断四元组 (P1-11) ----
+# ---- Trim 诊断四元组 (P1-11) ----
 function Write-TFDiag {
   param([string]$Stage, [string]$Mutation, [string]$Detail)
   try {

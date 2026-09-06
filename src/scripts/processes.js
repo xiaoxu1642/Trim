@@ -165,20 +165,14 @@
     root.__pmClick = onClick;
     root.addEventListener('click', onClick);
 
-    // 懒加载应用图标：优先取进程 exe 图标；提取失败回退到随包内置兜底图标（TuneForge.ico）。
-    // 用 MutationObserver 监听虚拟窗口，滚动新渲染出的行也能吃到图标。
+    // 懒加载应用图标：优先取进程 exe 图标；提取失败回退到随包内置兜底图标（Trim.ico，
+    // B2：统一走 icon-fallback 共享兜底）。用 MutationObserver 监听虚拟窗口，
+    // 滚动新渲染出的行也能吃到图标。
     if (opts.icons !== false && window.api?.paths?.fileIcon) {
       if (root.__pmIconMO) { root.__pmIconMO.disconnect(); root.__pmIconMO = null; }
-      let fallbackUrl = null;
-      const getFallback = async () => {
-        if (fallbackUrl !== null) return fallbackUrl;
-        fallbackUrl = null;
-        try {
-          const r = await window.api.paths.fileIcon('ico/ico/TuneForge.ico');
-          if (r && r.success && r.dataUrl) fallbackUrl = r.dataUrl;
-        } catch (e) { /* 获取失败维持 null */ }
-        return fallbackUrl;
-      };
+      const getFallback = () => window.iconFallback
+        ? window.iconFallback.getFallbackUrl()
+        : Promise.resolve(null);
       const apply = (img, url) => { if (url) img.src = url; else img.style.display = 'none'; };
       const scan = (hosts) => hosts.forEach(img => {
         if (img.dataset.loaded) return;

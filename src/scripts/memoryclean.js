@@ -67,6 +67,7 @@
   function applyLayout() {
     const el = document.querySelector('.mem-metrics');
     if (el) el.classList.toggle('overview-maximized', maximized);
+    fitMemValue();
   }
   if (window.api?.window?.onResized) {
     window.api.window.onResized((bounds) => {
@@ -94,15 +95,41 @@
     }
   }
 
+  // 数值过长（如 10.3 GB / 15.7 GB 在四联卡宽度下折成三行）时自动缩小字号，
+  // 最多两行封顶（CSS 侧另有 -webkit-line-clamp 兜底）；显示/尺寸变化经 ResizeObserver 重算
+  function fitMemValue() {
+    const el = $('memUseValue');
+    if (!el) return;
+    el.style.fontSize = '';
+    const cs = getComputedStyle(el);
+    const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.2;
+    const twoLines = lh * 2 + 1;
+    let size = parseFloat(cs.fontSize);
+    let guard = 8;
+    while (guard-- > 0 && el.scrollHeight > twoLines && size > 12) {
+      size -= 1;
+      el.style.fontSize = size + 'px';
+    }
+  }
+  if (window.ResizeObserver) {
+    const fitTarget = document.getElementById('memUseValue');
+    if (fitTarget) new ResizeObserver(() => fitMemValue()).observe(fitTarget);
+  }
+
   function renderInfo(d) {
     const total = Number(d.total) || 0;
     const free = Number(d.free) || 0;
     const used = Number(d.used) || 0;
     const load = Number(d.load) || 0;
 
+    // 环形进度已展示百分比（用户要求去掉重复：文字只保留字节数）；
+    // ds 未加载（无环）时保留百分比前缀作为降级展示。
+    const hasRing = ensureRing();
     const v = $('memUseValue');
-    if (v) v.textContent = fmtPercent(load) + ' · ' + fmtBytes(used) + ' / ' + fmtBytes(total);
+    if (v) v.textContent = (hasRing ? '' : fmtPercent(load) + ' · ') + fmtBytes(used) + ' / ' + fmtBytes(total);
+    fitMemValue();
     setBar($('memUseBar'), load);
+    if (hasRing) setRingValue(load);
 
     const f = $('memFreeValue');
     if (f) f.textContent = fmtBytes(free);
@@ -116,6 +143,22 @@
 
     const c = $('memCacheValue');
     if (c) c.textContent = fmtBytes(Number(d.cache) || 0);
+  }
+
+  // 指标卡环形进度（design-system ds.progress.circle）：与线形进度同阈值变色
+  let memRing = null;
+  function ensureRing() {
+    if (memRing) return true;
+    const slot = $('memUseRingSlot');
+    if (!slot || !window.ds?.progress) return false; // ds.js 未加载时优雅降级为无线环
+    memRing = window.ds.progress.circle({ size: 48, stroke: 5, label: '物理内存使用率' });
+    slot.appendChild(memRing.el);
+    return true;
+  }
+  function setRingValue(load) {
+    const p = Math.max(0, Math.min(100, Number(load) || 0));
+    const color = p >= 90 ? '#DC2626' : p >= 70 ? '#D97706' : '';
+    memRing.set(p, Math.round(p) + '%', color);
   }
 
   // ==================== 清理区域表格（点击条目弹简介） ====================
@@ -257,13 +300,13 @@
     // 危险区域二次确认（修改列表 / 备用列表全部）
     const dangerous = regions.filter(r => r.risk === 'high');
     if (dangerous.length) {
-      const ok = await window.app.confirm(
+      const ok = await window.app.confirmDanger(
         '高危内存清理确认',
         `以下区域属于高危操作，可能导致系统短暂卡顿或需要重新读取数据：\n\n` +
-        dangerous.map(r => `· ${r.name}`).join('\n') +
-        `\n\n是否继续执行？`,
+        dangerous.map(r => `· ${r.name}`).join('\n'),
         '仍然清理',
-        '取消'
+        '取消',
+        '此操作可能影响正在运行的应用，请确认已了解风险。'
       );
       if (!ok) return;
     }

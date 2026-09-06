@@ -1,5 +1,5 @@
 // contextmenu.js - 右键菜单管理模块（列表条目 + 详情弹窗 + AI 简介）
-// 交互模式对齐 Autoruns：勾选=启用，取消=禁用（可逆，直接写注册表/文件属性）；
+// 交互模式：勾选=启用，取消=禁用（可逆，直接写注册表/文件属性）；
 // 删除为行内「备份并删除」按钮，操作不可逆。
 (function () {
   'use strict';
@@ -10,6 +10,7 @@
   let hasScanned = false;
   let iconMap = {};        // clsid -> dataUrl
   let detailItem = null;   // 当前详情弹窗展示的条目
+  let detailTrap = null;   // 详情弹窗焦点陷阱（ds.focusTrap）
   let kanbanMasonry = null; // 瀑布流布局引擎（resize 防抖 + FLIP）
 
   // 11 个分类定义（顺序固定）
@@ -36,7 +37,7 @@
   };
 
   // ==================== 侧边栏分类筛选（叠加生效，切换时保留勾选） ====================
-  // 侧边栏分组选项 -> 条目匹配函数（「全部」为 Autoruns Everything 式汇总视图；
+  // 侧边栏分组选项 -> 条目匹配函数（「全部」为扁平汇总视图；
   // 标准分类直接匹配，特殊分类按注册表路径正则匹配）
   const SIDEBAR_CATEGORY_MATCH = {
     '全部': () => true,
@@ -61,14 +62,19 @@
   // 每个分类一列（白色圆角卡片），条目竖排：复选框(启用/禁用) + 序号 + 名称(可换行不截断) + 类型/状态标签；
   // 列头 = 分类名 + 项数徽章；列底 = 「全选本类」；窗口不够宽时容器横向滚动。
 
+  // 阶段三：类型/状态徽章统一 design-system（ds-badge sm 紧凑变体）
   function typeBadgeHtml(item) {
     const disabled = item.enabled === false
-      ? ' <span class="badge off" title="已禁用（取消勾选即可重新启用）">已禁用</span>'
+      ? ' ' + (window.ds
+        ? window.ds.badgeHtml('neutral', '已禁用', { small: true, title: '已禁用（取消勾选即可重新启用）' })
+        : '<span class="badge off" title="已禁用（取消勾选即可重新启用）">已禁用</span>')
       : '';
-    if (item.risk === 'protected') return '<span class="badge protected">系统保护</span>' + disabled;
-    return (item.isThirdParty
-      ? '<span class="badge third-party">第三方</span>'
-      : '<span class="badge system">系统原生</span>') + disabled;
+    const risk = item.risk === 'protected'
+      ? (window.ds ? window.ds.badgeHtml('bad', '系统保护', { small: true }) : '<span class="badge protected">系统保护</span>')
+      : (item.isThirdParty
+        ? (window.ds ? window.ds.badgeHtml('warn', '第三方', { small: true }) : '<span class="badge third-party">第三方</span>')
+        : (window.ds ? window.ds.badgeHtml('ok', '系统原生', { small: true }) : '<span class="badge system">系统原生</span>'));
+    return risk + disabled;
   }
 
   // 是否支持启停切换（UWP 无公开可逆禁用机制）
@@ -77,7 +83,7 @@
     return !['packagedcom', 'uwp-contract'].includes(item.source);
   }
 
-  // 模拟数据（用于浏览器预览模式；enabled 模拟 Autoruns 式启停状态）
+  // 模拟数据（用于浏览器预览模式；enabled 模拟启停状态）
   const MOCK_ITEMS = [
     { name: 'WinRAR', clsid: '{B41DB860-8EE4-11D2-9906-E49FADC173CA}', company: 'win.rar GmbH', location: 'HKCR\\*\\shellex\\ContextMenuHandlers', isThirdParty: true, isProtected: false, risk: 'high', category: '文件', source: 'shellex', enabled: true },
     { name: 'Notepad++', clsid: '{00F29236-0000-0000-0000-000000000000}', company: 'Don Ho', location: 'HKCR\\*\\shellex\\ContextMenuHandlers', isThirdParty: true, isProtected: false, risk: 'high', category: '文件', source: 'shellex', enabled: true },
@@ -147,10 +153,12 @@
     return String(value ?? '').replace(/[&<>"']/g, ch => map[ch]);
   }
 
-  // 默认占位图标（无程序图标时使用）
+  // 默认占位图标（无程序图标时使用）。带 data-icon-fallback 标记，
+  // 由 icon-fallback 共享兜底升级为 Trim.ico（B2：全场景统一兜底）；
+  // Trim.ico 也提取失败时保留本问号占位。
   function placeholderIconHtml(size) {
     const s = size || 28;
-    return `<span class="ctx-item-icon-placeholder"><svg viewBox="0 0 24 24" width="${s}" height="${s}" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z"/></svg></span>`;
+    return `<span class="ctx-item-icon-placeholder" data-icon-fallback data-icon-size="${s}"><svg viewBox="0 0 24 24" width="${s}" height="${s}" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z"/></svg></span>`;
   }
 
   // 条目程序图标（有则展示提取的 DLL 图标，无则占位）
@@ -319,6 +327,11 @@
     `;
     document.body.appendChild(backdrop);
 
+    // B2：详情弹窗无真实图标时，占位符升级为统一的 Trim.ico 兜底图标
+    if (window.iconFallback?.applyFallbacks) {
+      window.iconFallback.applyFallbacks(backdrop.querySelector('#ctxDetailIconWrap'));
+    }
+
     // 简介面板：打开即展示本地内置简介；联网 AI 简介须再次点击「获取AI简介」才请求大模型
     if (window.intro?.mountIntroPanel) {
       window.intro.mountIntroPanel({
@@ -341,6 +354,14 @@
       if (e.target === backdrop) closeDetail();
     });
     document.addEventListener('keydown', detailKeyHandler);
+
+    // 阶段三：详情弹窗接入统一焦点管理（ds.focusTrap）——焦点入弹窗、Tab 陷阱、
+    // closeDetail 时归还触发元素；Esc 关闭沿用上方 detailKeyHandler
+    if (window.ds?.focusTrap) {
+      detailTrap = window.ds.focusTrap(backdrop.querySelector('.ctx-detail-modal'), {
+        initialFocus: '#ctxDetailClose'
+      });
+    }
 
     // 注册表路径：点击打开 regedit 并定位（需要时自动提权）
     const regJump = backdrop.querySelector('#ctxRegJump');
@@ -388,6 +409,7 @@
     const backdrop = document.getElementById('ctxDetailBackdrop');
     if (backdrop) backdrop.remove();
     document.removeEventListener('keydown', detailKeyHandler);
+    if (detailTrap) { detailTrap.release(); detailTrap = null; }
     detailItem = null;
   }
 
@@ -434,7 +456,7 @@
     if (countEl) countEl.textContent = items.filter(it => it.enabled === false).length;
   }
 
-  // ==================== 启停切换（Autoruns 模式：勾选=启用，取消=禁用） ====================
+  // ==================== 启停切换（勾选=启用，取消=禁用） ====================
   // 统一批量通道：按 regPath 回写实际生效结果（权限不足 / 路径失效的项保持原状）
   async function applyToggles(payloads) {
     if (!payloads.length) return;
@@ -461,7 +483,7 @@
         if (results.length === 0) continue;
         const r = byPath[key];
         if (r && r.status === 'ok') {
-          // 重命名类切换（shellex '-' 前缀 / Autoruns 前缀还原）后更新条目路径，
+          // 重命名类切换（shellex '-' 前缀 / 禁用前缀还原）后更新条目路径，
           // 保证不重新扫描的情况下反向切换仍能定位到键
           if (r.newRegPath) p.item.regPath = r.newRegPath;
           p.item.enabled = p.enabled;
@@ -668,8 +690,6 @@
     document.querySelectorAll('#ctxCategoryNav [data-category]').forEach(el => {
       el.addEventListener('click', () => {
         const cat = el.dataset.category;
-        // 展开分类树后点击子项，需切到右键管理页面才能看到表格
-        window.app?.switchPage('contextmenu');
         if (cat === currentCategory) return; // 点击当前激活项不重复刷新
         setCategory(cat);
         if (hasScanned && items.length) {

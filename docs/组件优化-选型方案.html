@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="theme-dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Trim 2.0 组件优化选型方案 · antd vs shadcn/ui</title>
+<style>
+  /* ===== Trim Fluent tokens（与 src/styles/main.css 同源，碳墨×薰衣草）===== */
+  :root, .theme-dark {
+    --bg-app:#0F1115; --bg-card:#171A21; --bg-card-hover:#242936; --bg-elevated:#1D212B;
+    --bg-input:#242936; --bg-hover:#242936;
+    --fg-primary:#F4F6FA; --fg-secondary:#C3C9D4; --fg-tertiary:#8B93A5;
+    --border-default:rgba(255,255,255,.07); --border-strong:rgba(255,255,255,.13);
+    --accent:#8B8EE0; --accent-hover:#A6A9F2; --accent-soft:rgba(139,142,224,.16);
+    --accent-glow:rgba(139,142,224,.32); --accent-text:#171832;
+    --success:#34C77B; --warning:#F5A524; --danger:#F0524D;
+    --success-soft:rgba(52,199,123,.14); --warning-soft:rgba(245,165,36,.14); --danger-soft:rgba(240,82,77,.14);
+    --radius-btn:8px; --radius-medium:10px; --radius-large:14px;
+  }
+  .theme-light {
+    --bg-app:#F5F6F8; --bg-card:#FFFFFF; --bg-card-hover:#F0F1F4; --bg-elevated:#F0F1F4;
+    --bg-input:#E9EBEF; --bg-hover:#E9EBEF;
+    --fg-primary:#1C1E24; --fg-secondary:#4B505B; --fg-tertiary:#6A7080;
+    --border-default:rgba(20,24,40,.09); --border-strong:rgba(20,24,40,.16);
+    --accent:#5E62C6; --accent-hover:#4F53B4; --accent-soft:rgba(94,98,198,.12);
+    --accent-glow:rgba(94,98,198,.28); --accent-text:#FFFFFF;
+    --success:#1F9D63; --warning:#C77F0A; --danger:#E23D3A;
+    --success-soft:rgba(31,157,99,.12); --warning-soft:rgba(199,127,10,.12); --danger-soft:rgba(226,61,58,.1);
+  }
+  * { box-sizing:border-box; }
+  html { scroll-behavior:smooth; }
+  body {
+    margin:0; background:var(--bg-app); color:var(--fg-primary);
+    font-family:'MiSans','Segoe UI Variable','Segoe UI','Microsoft YaHei',system-ui,sans-serif;
+    font-size:14px; line-height:1.65; transition:background .2s,color .2s;
+  }
+  .wrap { max-width:1180px; margin:0 auto; padding:28px 24px 80px; }
+
+  /* ===== 头部 ===== */
+  header.hero { padding:34px 0 20px; border-bottom:1px solid var(--border-default); margin-bottom:26px; }
+  .hero h1 { font-size:26px; margin:0 0 8px; letter-spacing:.2px; }
+  .hero h1 em { font-style:normal; color:var(--accent); }
+  .hero .sub { color:var(--fg-tertiary); font-size:13.5px; }
+  .chips { display:flex; flex-wrap:wrap; gap:8px; margin-top:16px; }
+  .chip { font-size:12px; padding:4px 12px; border-radius:999px; border:1px solid var(--border-strong); color:var(--fg-secondary); background:var(--bg-card); }
+  .chip b { color:var(--accent); font-weight:600; }
+  .toolbar { position:fixed; top:18px; right:22px; z-index:50; display:flex; gap:8px; }
+
+  /* ===== 通用卡片/标题 ===== */
+  .card { background:var(--bg-card); border:1px solid var(--border-default); border-radius:var(--radius-large); padding:22px 24px; margin:14px 0; }
+  h2.sec { font-size:19px; margin:38px 0 6px; display:flex; align-items:center; gap:10px; }
+  h2.sec .idx { font-size:12px; color:var(--accent); background:var(--accent-soft); border-radius:6px; padding:2px 8px; font-weight:600; }
+  p.sec-desc { color:var(--fg-tertiary); margin:0 0 14px; font-size:13px; }
+  h3 { font-size:15px; margin:18px 0 8px; }
+
+  /* ===== 结论横幅 ===== */
+  .verdict { border:1px solid var(--accent); box-shadow:0 0 0 1px var(--accent-soft), 0 8px 28px var(--accent-glow); }
+  .verdict .tag { display:inline-block; font-size:12px; font-weight:600; color:var(--accent-text); background:var(--accent); border-radius:6px; padding:3px 10px; margin-bottom:10px; }
+  .verdict p { margin:6px 0; color:var(--fg-secondary); }
+  .verdict b { color:var(--fg-primary); }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  @media (max-width:860px){ .grid2{ grid-template-columns:1fr; } }
+  .lib-card { border:1px solid var(--border-default); border-radius:var(--radius-medium); padding:16px 18px; background:var(--bg-elevated); }
+  .lib-card h4 { margin:0 0 8px; font-size:14.5px; display:flex; align-items:center; gap:8px; }
+  .lib-card .role { font-size:11px; padding:2px 8px; border-radius:999px; font-weight:600; }
+  .role.main { background:var(--success-soft); color:var(--success); }
+  .role.ref { background:var(--warning-soft); color:var(--warning); }
+  .lib-card ul { margin:8px 0 0; padding-left:18px; color:var(--fg-secondary); }
+  .lib-card li { margin:3px 0; }
+  .kpis { display:flex; gap:10px; flex-wrap:wrap; margin-top:12px; }
+  .kpi { flex:1; min-width:130px; background:var(--bg-elevated); border:1px solid var(--border-default); border-radius:var(--radius-medium); padding:12px 14px; }
+  .kpi .v { font-size:20px; font-weight:700; color:var(--accent); }
+  .kpi .k { font-size:12px; color:var(--fg-tertiary); }
+
+  /* ===== 表格 ===== */
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th { text-align:left; color:var(--fg-tertiary); font-weight:600; font-size:12px; padding:8px 10px; border-bottom:1px solid var(--border-strong); white-space:nowrap; }
+  td { padding:9px 10px; border-bottom:1px solid var(--border-default); color:var(--fg-secondary); vertical-align:top; }
+  tr:last-child td { border-bottom:none; }
+  td .comp { color:var(--fg-primary); font-weight:600; }
+  .fit { display:inline-flex; gap:3px; align-items:center; }
+  .fit i { width:8px; height:8px; border-radius:50%; background:var(--bg-input); display:inline-block; }
+  .fit i.on { background:var(--accent); box-shadow:0 0 4px var(--accent-glow); }
+  .pill { display:inline-block; font-size:11.5px; padding:2px 9px; border-radius:999px; font-weight:600; white-space:nowrap; }
+  .pill.low { background:var(--success-soft); color:var(--success); }
+  .pill.mid { background:var(--warning-soft); color:var(--warning); }
+  .pill.high { background:var(--danger-soft); color:var(--danger); }
+  .pill.native { background:var(--accent-soft); color:var(--accent); }
+  .pill.react { background:var(--danger-soft); color:var(--danger); }
+
+  /* ===== 模块区 ===== */
+  .module { margin:20px 0; }
+  .mod-head { display:flex; align-items:baseline; gap:10px; margin:26px 0 8px; }
+  .mod-head .no { color:var(--accent); font-weight:700; font-size:13px; }
+  .mod-head h3 { margin:0; font-size:16px; }
+  .mod-head .now { font-size:12px; color:var(--fg-tertiary); }
+  .mod-verdict { background:var(--bg-elevated); border-left:3px solid var(--accent); border-radius:0 var(--radius-small,6px) var(--radius-small,6px) 0; padding:10px 14px; font-size:13px; color:var(--fg-secondary); margin-top:10px; }
+  .mod-verdict b { color:var(--accent); }
+  nav.mods { position:sticky; top:0; z-index:40; background:color-mix(in srgb, var(--bg-app) 86%, transparent); backdrop-filter:blur(14px); border-bottom:1px solid var(--border-default); padding:8px 0; margin-bottom:8px; }
+  nav.mods .inner { max-width:1180px; margin:0 auto; padding:0 24px; display:flex; gap:6px; overflow-x:auto; }
+  nav.mods a { flex-shrink:0; color:var(--fg-tertiary); text-decoration:none; font-size:12.5px; padding:5px 11px; border-radius:999px; border:1px solid transparent; }
+  nav.mods a:hover, nav.mods a.on { color:var(--accent); background:var(--accent-soft); }
+
+  /* ===== 映射代码块 ===== */
+  pre { background:var(--bg-elevated); border:1px solid var(--border-default); border-radius:var(--radius-medium); padding:14px 16px; overflow-x:auto; font-size:12.5px; line-height:1.7; color:var(--fg-secondary); }
+  pre b { color:var(--accent); font-weight:600; }
+  code.inl { background:var(--bg-elevated); border:1px solid var(--border-default); border-radius:4px; padding:1px 6px; font-size:12.5px; color:var(--accent); }
+
+  /* ===== 路线时间线 ===== */
+  .phase { display:flex; gap:14px; margin:12px 0; }
+  .phase .dot { flex-shrink:0; width:34px; height:34px; border-radius:10px; background:var(--accent-soft); color:var(--accent); font-weight:700; display:flex; align-items:center; justify-content:center; font-size:14px; }
+  .phase .body { flex:1; }
+  .phase .body b { color:var(--fg-primary); }
+  .phase .body p { margin:4px 0 0; color:var(--fg-tertiary); font-size:13px; }
+
+  /* ===== 实机演示区 ===== */
+  .demo-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:14px; }
+  .demo { background:var(--bg-elevated); border:1px solid var(--border-default); border-radius:var(--radius-medium); padding:18px; }
+  .demo h5 { margin:0 0 4px; font-size:13.5px; }
+  .demo .src { font-size:11.5px; color:var(--fg-tertiary); margin-bottom:12px; }
+  .demo .stage { display:flex; align-items:center; gap:14px; flex-wrap:wrap; min-height:52px; }
+
+  /* Fluent 按钮（与主程序 .btn 同风格：8px 圆角 + ripple + 强调色） */
+  .btn { position:relative; overflow:hidden; border:1px solid var(--border-strong); background:var(--bg-input); color:var(--fg-primary); border-radius:var(--radius-btn); padding:7px 16px; font-size:13px; font-family:inherit; cursor:pointer; transition:background .15s; }
+  .btn:hover { background:var(--bg-hover); }
+  .btn.primary { background:var(--accent); color:var(--accent-text); border-color:transparent; font-weight:600; }
+  .btn.primary:hover { background:var(--accent-hover); }
+  .btn.danger { background:var(--danger); color:#fff; border-color:transparent; font-weight:600; }
+  .btn-ripple { position:absolute; border-radius:50%; background:currentColor; opacity:.25; transform:scale(0); pointer-events:none; animation:ripple .48s cubic-bezier(.4,0,.2,1) forwards; }
+  @keyframes ripple { to { transform:scale(2.6); opacity:0; } }
+  @media (prefers-reduced-motion: reduce) { .btn-ripple { display:none !important; } html { scroll-behavior:auto; } .bar-fill { transition:none !important; } }
+
+  /* Fluent Switch */
+  .switch { position:relative; width:40px; height:20px; display:inline-block; }
+  .switch input { position:absolute; opacity:0; inset:0; margin:0; cursor:pointer; }
+  .switch .track { position:absolute; inset:0; border-radius:999px; background:var(--bg-input); border:1px solid var(--border-strong); transition:background .15s,border-color .15s; }
+  .switch .thumb { position:absolute; top:3px; left:3px; width:14px; height:14px; border-radius:50%; background:var(--fg-tertiary); transition:left .15s cubic-bezier(.4,0,.2,1),background .15s; pointer-events:none; }
+  .switch input:checked ~ .track { background:var(--accent); border-color:transparent; }
+  .switch input:checked ~ .thumb { left:23px; background:var(--accent-text); }
+  .switch input:focus-visible ~ .track { outline:2px solid var(--accent); outline-offset:2px; }
+
+  /* Fluent Progress */
+  .prog { flex:1; min-width:160px; height:6px; border-radius:999px; background:var(--bg-input); overflow:hidden; }
+  .bar-fill { height:100%; width:0; border-radius:999px; background:linear-gradient(90deg,var(--accent),var(--accent-hover)); box-shadow:0 0 8px var(--accent-glow); transition:width .3s cubic-bezier(.4,0,.2,1); }
+  .prog-tag { font-size:12px; color:var(--fg-tertiary); min-width:36px; text-align:right; }
+
+  /* Fluent Slider */
+  .slider { -webkit-appearance:none; appearance:none; flex:1; min-width:150px; height:4px; border-radius:999px; background:linear-gradient(90deg,var(--accent) var(--val,50%),var(--bg-input) var(--val,50%)); outline:none; }
+  .slider::-webkit-slider-thumb { -webkit-appearance:none; width:18px; height:18px; border-radius:50%; background:var(--fg-primary); border:4px solid var(--accent); box-shadow:0 1px 4px rgba(0,0,0,.4); cursor:pointer; }
+  .slider::-moz-range-thumb { width:10px; height:10px; border-radius:50%; background:var(--fg-primary); border:4px solid var(--accent); cursor:pointer; }
+  .slider-val { font-size:12.5px; color:var(--fg-secondary); min-width:40px; text-align:right; font-variant-numeric:tabular-nums; }
+
+  /* 徽章 */
+  .badge { display:inline-flex; align-items:center; gap:5px; font-size:11.5px; padding:2px 10px; border-radius:999px; font-weight:600; }
+  .badge::before { content:''; width:6px; height:6px; border-radius:50%; background:currentColor; }
+  .badge.ok { background:var(--success-soft); color:var(--success); }
+  .badge.warn { background:var(--warning-soft); color:var(--warning); }
+  .badge.bad { background:var(--danger-soft); color:var(--danger); }
+
+  /* 红色二次确认弹窗 */
+  .dlg-mask { position:fixed; inset:0; background:var(--bg-app); opacity:0; pointer-events:none; transition:opacity .18s; z-index:100; display:flex; align-items:center; justify-content:center; }
+  .theme-dark .dlg-mask { background:rgba(0,0,0,.55); }
+  .theme-light .dlg-mask { background:rgba(20,24,40,.38); }
+  .dlg-mask.open { opacity:1; pointer-events:auto; }
+  .dlg { width:min(420px,92vw); background:var(--bg-card); border:1px solid var(--border-strong); border-radius:var(--radius-large); padding:22px; box-shadow:0 18px 50px rgba(0,0,0,.45); transform:translateY(10px) scale(.98); transition:transform .18s cubic-bezier(.4,0,.2,1); }
+  .dlg-mask.open .dlg { transform:none; }
+  .dlg .dlg-icon { width:40px; height:40px; border-radius:10px; background:var(--danger-soft); color:var(--danger); display:flex; align-items:center; justify-content:center; margin-bottom:12px; }
+  .dlg h4 { margin:0 0 6px; font-size:15.5px; }
+  .dlg p { margin:0 0 16px; color:var(--fg-secondary); font-size:13px; }
+  .dlg .ops { display:flex; justify-content:flex-end; gap:10px; }
+  footer { margin-top:44px; padding-top:16px; border-top:1px solid var(--border-default); color:var(--fg-tertiary); font-size:12px; }
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <button class="btn" id="btnTheme">🌙 / ☀️ 主题</button>
+</div>
+
+<div class="wrap">
+  <header class="hero">
+    <h1>Trim 2.0 组件优化选型方案 · <em>antd vs shadcn/ui</em></h1>
+    <div class="sub">面向 11 个核心模块的组件筛选、Fluent 契合度评估与原生落地路线 · 2026-09-06 · 依据 docs/组件优化.md</div>
+    <div class="chips">
+      <span class="chip"><b>11</b> 个核心模块</span>
+      <span class="chip"><b>2</b> 库逐项对比</span>
+      <span class="chip">运行时新增依赖 <b>0</b></span>
+      <span class="chip">落地方式：<b>原生 JS 重写</b>为主</span>
+      <span class="chip">硬约束：Fluent · Mica/Acrylic · ripple · 红色确认 · WCAG</span>
+    </div>
+  </header>
+
+  <nav class="mods"><div class="inner" id="modNav"></div></nav>
+
+  <!-- ============ ① 整体结论 ============ -->
+  <h2 class="sec" id="verdict"><span class="idx">①</span>整体结论（结论先行）</h2>
+  <p class="sec-desc">如果只能选一个库作为主要参考——选 shadcn/ui。antd 降级为「个别复杂交互的逻辑参考」；两者都不作为运行时依赖引入。</p>
+  <div class="card verdict">
+    <span class="tag">最终建议</span>
+    <p><b>主要参考：shadcn/ui</b>——把它的组件源码当作「行为规格说明书」：Radix 原语里最难写对的焦点陷阱、键盘导航、ARIA 标注、受控状态机，正是自研组件最容易缺失的部分；而它的视觉层（Tailwind class）则整体丢弃，替换为 Trim 已有的 Fluent token 体系。源码进仓库、无运行时黑盒、MIT 协议，与「原生 JS 重写」路线完全同构。</p>
+    <p><b>逻辑参考：antd</b>——不引入代码，只在设计个别复杂交互时翻它的文档与源码：Progress（line/circle/dashboard 三态）、Table 虚拟滚动与列交互、Notification 队列策略、Segmented 分段器。antd 的 Ant Design 视觉语言与 Win11 Fluent 差异大，改皮成本高于收益。</p>
+    <p><b>明确不做</b>：不引入 React / ReactDOM / Tailwind 运行时。Trim 是无框架 Electron 应用，已有 800+ 行自研 Fluent token 与 xtable 虚拟列表、modal.confirm 红色确认、ripple 动效（且已遵守 prefers-reduced-motion）——引入 React 换不来用户可见价值，还与 Mica/Acrylic 透明窗口的渲染路径叠加风险。</p>
+    <div class="kpis">
+      <div class="kpi"><div class="v">≈ 0 KB</div><div class="k">shadcn/ui 参考重写后的运行时新增（源码归仓库，无 npm 运行时）</div></div>
+      <div class="kpi"><div class="v">≈ 40-60 KB gz</div><div class="k">若引入 React 局部渲染的最低代价（react+react-dom），评估结论：不值得</div></div>
+      <div class="kpi"><div class="v">≈ 180 KB+ gz</div><div class="k">antd v5 按需引入 + React 的现实代价，且需整皮重绘为 Fluent</div></div>
+      <div class="kpi"><div class="v">5 件套</div><div class="k">第一期原生重写的高频交互：Dialog / Switch / Progress / Slider / Badge</div></div>
+    </div>
+  </div>
+  <div class="grid2">
+    <div class="lib-card">
+      <h4>shadcn/ui <span class="role main">主要参考</span></h4>
+      <ul>
+        <li><b>源码可复制</b>：组件代码直接进你的仓库，可任意改造成 Fluent tokens，无版本升级绑架。</li>
+        <li><b>Radix 行为层</b>：焦点陷阱、roving tabindex、ARIA、弹出层定位——系统工具高频交互的「正确性底座」。</li>
+        <li><b>Token 同构</b>：CSS 变量风格与 Trim 的 main.css 自定义属性体系一一对应，映射成本极低。</li>
+        <li><b>视觉层丢弃重写</b>：Tailwind class → Fluent token，无「网页后台感」，可保 8px 圆角的系统工具气质。</li>
+      </ul>
+    </div>
+    <div class="lib-card">
+      <h4>Ant Design (antd) <span class="role ref">逻辑参考</span></h4>
+      <ul>
+        <li><b>优点</b>：Progress/Statistic/Table(virtual)/Notification/Segmented 的交互模型成熟，文档全。</li>
+        <li><b>不引入原因</b>：必须捆绑 React 运行时；Ant 视觉语言（大圆角卡片、蓝白后台风）与 Fluent 冲突，重绘工作量&gt;自研。</li>
+        <li><b>用法</b>：只在设计评审时对照其 API 设计（如 confirm 的 promise 化、进度多形态），代码不进仓库。</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ============ ② token 映射 ============ -->
+  <h2 class="sec" id="tokens"><span class="idx">②</span>shadcn/ui → Trim Fluent token 映射</h2>
+  <p class="sec-desc">重写任何组件前先建立这层映射；之后每个抄来的行为都自动获得 Trim 的深浅色与 WCAG 对比度（浅色三级字已按审查意见调整至 #6A7080，4.58:1）。</p>
+  <div class="card">
+<pre>
+<b>/* shadcn/ui 默认 CSS 变量        →  Trim Fluent token（main.css 已存在）*/</b>
+--background            →  --bg-app        (#0F1115 深色 / #F5F6F8 浅色)
+--card                  →  --bg-card       (#171A21 / #FFFFFF)
+--foreground            →  --fg-primary    (#F4F6FA / #1C1E24)
+--muted-foreground      →  --fg-tertiary   (#8B93A5 / #6A7080 ← 本次审查修正值)
+--primary               →  --accent        (#8B8EE0 薰衣草紫 / #5E62C6)
+--primary-foreground    →  --accent-text   (#171832 / #FFFFFF)
+--destructive           →  --danger        (#F0524D / #E23D3A)
+--border                →  --border-default(rgba 白 7% / rgba 黑 9%)
+--radius                →  --radius-btn = 8px（保持系统工具感，<b>不放大</b>）
+</pre>
+  </div>
+
+  <!-- ============ ③ 高频交互最优解 ============ -->
+  <h2 class="sec" id="highfreq"><span class="idx">③</span>高频交互：两库最优解对照</h2>
+  <p class="sec-desc">系统工具最高频的五类交互，antd 与 shadcn/ui 各自的最优解，以及 Trim 的落地决策。</p>
+  <div class="card" style="overflow-x:auto">
+    <table>
+      <thead><tr><th>交互</th><th>antd 最优解</th><th>shadcn/ui 最优解</th><th>Trim 落地决策</th></tr></thead>
+      <tbody>
+        <tr><td><span class="comp">二次确认弹窗</span></td><td>Modal.confirm（命令式、返回 Promise，高危变体 okButtonProps 染红）</td><td>AlertDialog（声明式，Radix 焦点陷阱 + aria-modal，destructive 变体）</td><td><b>保留自研 modal.confirm / confirmDanger</b>（P1-A2 已统一），抄 Radix 的<b>焦点陷阱与焦点归还</b>——顺带解决审查遗留项 B10</td></tr>
+        <tr><td><span class="comp">进度条</span></td><td>Progress（line/circle/dashboard 三形态 + 动态色标，形态最全）</td><td>Progress（Radix 薄封装，仅 line，行为层可靠）</td><td>自研 setProgress 保持；<b>形态学参考 antd</b>（环形仪表给内存/测速页），实现用原生 SVG stroke-dashoffset</td></tr>
+        <tr><td><span class="comp">开关 Switch</span></td><td>Switch（受控、loading 态）</td><td>Switch（input[checkbox] + Radix，源码 30 行）</td><td><b>shadcn 源码直译原生</b>（见 §⑤ 实机演示），替换设置页现有开关样式</td></tr>
+        <tr><td><span class="comp">滑块 Slider</span></td><td>Slider（刻度 mark、tooltip、双端 range，功能更全）</td><td>Slider（Radix，键盘步进/RTL 完整）</td><td>Trim 使用场景浅（外观设置），<b>input[type=range] Fluent 化</b>即可，键盘行为参考 Radix</td></tr>
+        <tr><td><span class="comp">列表管理</span></td><td>Table（虚拟滚动、列排序/固定、行选择最成熟）</td><td>Table（headless 标记结构，可配 TanStack）</td><td><b>保持自研 xtable 虚拟列表</b>（300ms 轮询已在 B7 改为 ResizeObserver）；列交互规范参考 antd</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ============ ④ 模块明细（数据驱动渲染） ============ -->
+  <h2 class="sec" id="modules"><span class="idx">④</span>11 个核心模块逐项对比</h2>
+  <p class="sec-desc">每模块给出两库推荐组件、Fluent 契合度（1-5）、Fluent 化定制难度与落地方式。「现有自研」列是重写的起点——多数模块已有可用的原生底座。</p>
+  <div id="modRoot"></div>
+
+  <!-- ============ ⑤ 实机演示 ============ -->
+  <h2 class="sec" id="demo"><span class="idx">⑤</span>Fluent 重生组件 · 实机演示</h2>
+  <p class="sec-desc">下面每个控件都是<b>本页面内的纯原生 HTML/CSS/JS 实现</b>（shadcn 行为 + Trim Fluent token），即方案落地后的真实形态；右上角切换主题可验证深浅色适配。ripple 在系统开启「减弱动效」时完全不创建节点（页面内 media query 已演示该约束）。</p>
+  <div class="card demo-grid">
+    <div class="demo">
+      <h5>红色二次确认弹窗 Dialog</h5>
+      <div class="src">参考：shadcn AlertDialog（焦点陷阱 + Esc 关闭 + 焦点归还）· 对应审查 A2/B10</div>
+      <div class="stage"><button class="btn danger" id="btnDlg">删除所选（高危操作）</button></div>
+    </div>
+    <div class="demo">
+      <h5>开关 Switch</h5>
+      <div class="src">参考：shadcn Switch 源码直译 · 30 行原生实现</div>
+      <div class="stage">
+        <label class="switch"><input type="checkbox" checked aria-label="演示开关"><span class="track"></span><span class="thumb"></span></label>
+        <span style="color:var(--fg-secondary)" id="swLabel">开机自动扫描：开</span>
+      </div>
+    </div>
+    <div class="demo">
+      <h5>进度条 Progress</h5>
+      <div class="src">参考：antd 形态 + 原生实现 · 减弱动效时无过渡</div>
+      <div class="stage">
+        <div class="prog"><div class="bar-fill" id="barFill"></div></div>
+        <span class="prog-tag" id="barTag">0%</span>
+        <button class="btn" id="btnBar">模拟进度</button>
+      </div>
+    </div>
+    <div class="demo">
+      <h5>滑块 Slider</h5>
+      <div class="src">参考：Radix 键盘行为 + input[type=range] Fluent 化</div>
+      <div class="stage">
+        <input type="range" class="slider" id="sld" min="0" max="100" value="60" aria-label="演示滑块">
+        <span class="slider-val" id="sldVal">60</span>
+      </div>
+    </div>
+    <div class="demo">
+      <h5>风险徽章 Badge</h5>
+      <div class="src">参考：shadcn Badge → Fluent 语义色</div>
+      <div class="stage">
+        <span class="badge ok">系统原生</span>
+        <span class="badge warn">可禁用</span>
+        <span class="badge bad">高危项</span>
+      </div>
+    </div>
+    <div class="demo">
+      <h5>Ripple 按钮波纹</h5>
+      <div class="src">与主程序 app.js setupButtonMotion 同实现 · 减弱动效不建 DOM</div>
+      <div class="stage"><button class="btn primary" id="btnRipple">点我试波纹</button></div>
+    </div>
+  </div>
+
+  <!-- ============ ⑥ 落地路线 ============ -->
+  <h2 class="sec" id="phases"><span class="idx">⑥</span>落地路线（获批后执行）</h2>
+  <p class="sec-desc">三个阶段全部为原生实现，设计产物沉淀进仓库的 design-system/ 目录；不新增任何 npm 运行时依赖。</p>
+  <div class="card">
+    <div class="phase"><div class="dot">1</div><div class="body"><b>高频五件套（约 2 天）</b><p>Dialog（含红色确认 + 焦点陷阱，顺带关闭审查项 B10）、Switch、Progress（线/环）、Slider、Badge——按 shadcn/Radix 行为规格直译为原生 Fluent 组件，进 design-system/，并回替换现有页面。</p></div></div>
+    <div class="phase"><div class="dot">2</div><div class="body"><b>行为层补齐（约 2-3 天）</b><p>Tooltip、DropdownMenu、Accordion、Empty 状态、Skeleton 骨架屏；统一弹出层定位与 Esc/外点关闭规范；全部接入 --fg-tertiary 等已修正的 WCAG token。</p></div></div>
+    <div class="phase"><div class="dot">3</div><div class="body"><b>模块换肤收口（按模块排期）</b><p>11 个模块逐个迁移到新组件（顺序建议：设置 → 启动项 → 右键 → 优化中心 → 清理 → 其余）；xtable/modal 等成熟自研底座保留，只做行为增强；每模块迁移后跑一遍深浅色 + 减弱动效 + 1294×870 最小窗口三查。</p></div></div>
+  </div>
+
+  <footer>
+    依据：docs/组件优化.md（任务书） · docs/Trim-2.0-专项代码审查报告.md（B10/B13 等关联项） · src/styles/main.css（Fluent token 事实源） · 本方案为纯方案文档，未对项目源码做任何改动 · 2026-09-06
+  </footer>
+</div>
+
+<!-- 红色二次确认弹窗 -->
+<div class="dlg-mask" id="dlgMask" role="dialog" aria-modal="true" aria-labelledby="dlgTitle">
+  <div class="dlg">
+    <div class="dlg-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L1 21h22L12 2zm1 14h-2v2h2v-2zm0-6h-2v4h2v-4z"/></svg></div>
+    <h4 id="dlgTitle">确认删除所选启动项？</h4>
+    <p>该项将从开机自启中移除并备份到桌面（不可逆操作）。此弹窗为纯原生实现：Tab 焦点被限制在弹窗内、默认聚焦「取消」、关闭后焦点归还触发按钮——即 shadcn AlertDialog 的行为规格。</p>
+    <div class="ops">
+      <button class="btn" id="dlgCancel">取消</button>
+      <button class="btn danger" id="dlgOk">确认删除</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* ===== 主题切换（与 Trim 同款 token 类名） ===== */
+  var root = document.documentElement;
+  try {
+    if (localStorage.getItem('plan-theme') === 'light') root.className = 'theme-light';
+  } catch (e) {}
+  document.getElementById('btnTheme').addEventListener('click', function () {
+    var light = root.className !== 'theme-light';
+    root.className = light ? 'theme-light' : 'theme-dark';
+    try { localStorage.setItem('plan-theme', light ? 'light' : 'dark'); } catch (e) {}
+  });
+
+  /* ===== ripple（与主程序同实现，减弱动效不建节点） ===== */
+  document.addEventListener('pointerdown', function (ev) {
+    var btn = ev.target.closest && ev.target.closest('.btn');
+    if (!btn || reduced) return;
+    var r = btn.getBoundingClientRect();
+    var s = document.createElement('span');
+    s.className = 'btn-ripple';
+    var d = Math.max(r.width, r.height);
+    s.style.width = s.style.height = d + 'px';
+    s.style.left = (ev.clientX - r.left - d / 2) + 'px';
+    s.style.top = (ev.clientY - r.top - d / 2) + 'px';
+    btn.appendChild(s);
+    setTimeout(function () { s.remove(); }, 520);
+  });
+
+  /* ===== 红色确认弹窗：焦点陷阱 + 焦点归还 ===== */
+  var mask = document.getElementById('dlgMask');
+  var lastFocus = null;
+  function openDlg(trigger) {
+    lastFocus = trigger;
+    mask.classList.add('open');
+    var focusables = mask.querySelectorAll('button');
+    (focusables[0] || mask).focus();
+    mask.querySelector('#dlgCancel').focus();
+  }
+  function closeDlg() {
+    mask.classList.remove('open');
+    if (lastFocus) lastFocus.focus();
+  }
+  document.getElementById('btnDlg').addEventListener('click', function () { openDlg(this); });
+  document.getElementById('dlgCancel').addEventListener('click', closeDlg);
+  document.getElementById('dlgOk').addEventListener('click', function () { closeDlg(); });
+  mask.addEventListener('click', function (e) { if (e.target === mask) closeDlg(); });
+  document.addEventListener('keydown', function (e) {
+    if (!mask.classList.contains('open')) return;
+    if (e.key === 'Escape') { closeDlg(); return; }
+    if (e.key === 'Tab') {
+      var f = Array.prototype.filter.call(mask.querySelectorAll('button'), function (n) { return !n.disabled; });
+      if (!f.length) return;
+      var first = f[0], last = f[f.length - 1];
+      if (e.shiftKey && document.activeElement === first) { last.focus(); e.preventDefault(); }
+      else if (!e.shiftKey && document.activeElement === last) { first.focus(); e.preventDefault(); }
+    }
+  });
+
+  /* ===== Switch 标签 / 进度 / 滑块演示 ===== */
+  var sw = document.querySelector('.switch input');
+  var swLabel = document.getElementById('swLabel');
+  sw.addEventListener('change', function () {
+    swLabel.textContent = '开机自动扫描：' + (sw.checked ? '开' : '关');
+  });
+  var bar = document.getElementById('barFill'), barTag = document.getElementById('barTag');
+  document.getElementById('btnBar').addEventListener('click', function () {
+    var p = 0;
+    var t = setInterval(function () {
+      p = Math.min(100, p + 8 + Math.round(Math.random() * 12));
+      bar.style.width = p + '%'; barTag.textContent = p + '%';
+      if (p >= 100) clearInterval(t);
+    }, 220);
+  });
+  var sld = document.getElementById('sld'), sldVal = document.getElementById('sldVal');
+  function syncSld() {
+    sldVal.textContent = sld.value;
+    sld.style.setProperty('--val', sld.value + '%');
+  }
+  sld.addEventListener('input', syncSld); syncSld();
+
+  /* ===== 模块数据（每模块：两库推荐 + 契合度/难度/落地/体积） ===== */
+  var LIB = { a: 'antd', s: 'shadcn/ui' };
+  var MODULES = [
+    { id: 'm-overview', name: '系统概览', now: '现有自研：指标卡 + 环形/条形指标（原生 SVG/CSS）', goal: '硬件信息与系统健康度一览，卡片化指标展示',
+      rows: [
+        { comp: 'Statistic + Progress(circle/dashboard)', lib: LIB.a, use: '指标数值卡与环形仪表的形态参考', fit: 3, diff: '中', land: 0, size: '仅参考形态；antd 需捆绑 React，不值得' },
+        { comp: 'Card + Progress + Skeleton + Tooltip', lib: LIB.s, use: '卡片容器、加载骨架、悬浮提示', fit: 4, diff: '低', land: 0, size: '源码直译 ≈ 每个 1-2KB 原生 CSS' }
+      ],
+      verdict: '指标卡继续自研（已有底座），Skeleton/Tooltip 按 shadcn 行为补齐；环形仪表形态参考 antd dashboard，实现走 SVG。' },
+    { id: 'm-clean', name: '磁盘清理', now: '现有自研：分类清单 + setProgress + 结果列表 + 回收站删除（A3）', goal: '分类勾选 → 扫描进度 → 清理进度 → 结果反馈',
+      rows: [
+        { comp: 'Tree(checkbox) + Progress + List', lib: LIB.a, use: '分类勾选树与进度', fit: 2, diff: '高', land: 0, size: 'Tree 视觉偏网页后台，Fluent 化成本高' },
+        { comp: 'Checkbox + Accordion + Progress + ScrollArea', lib: LIB.s, use: '分组折叠、勾选、滚动容器', fit: 4, diff: '中', land: 0, size: 'Radix 键盘/ARIA 规格可直接翻译' }
+      ],
+      verdict: '分类清单沿用自研；重点抄 Accordion 的键盘行为与 Checkbox 三态（全选/半选）。进度条接 §⑤ 的 Progress 组件。' },
+    { id: 'm-mem', name: '内存清理', now: '现有自研：占用仪表 + 一键清理 + 释放反馈', goal: '大号占用仪表 + 单动作 + 结果反馈',
+      rows: [
+        { comp: 'Progress(circle) + Statistic + Button', lib: LIB.a, use: '环形占用仪表形态', fit: 3, diff: '中', land: 0, size: 'SVG stroke-dashoffset 原生实现，0 依赖' },
+        { comp: 'Card + Progress + Toast(sonner 行为)', lib: LIB.s, use: '结果容器与反馈', fit: 4, diff: '低', land: 0, size: 'Toast 队列逻辑 ≈ 3KB 原生 JS' }
+      ],
+      verdict: '仪表用原生 SVG 环形（antd 形态参考）；清理完成的 Toast 按自研 toast 扩展，无需新组件。' },
+    { id: 'm-opt', name: '电脑优化中心', now: '现有自研：看板瀑布流（xtable kanbanMasonry，B7 已改 ResizeObserver）+ confirmDanger', goal: '优化项看板、风险标注、批量执行、进度与红色确认',
+      rows: [
+        { comp: 'Modal.confirm + Badge/Tag + Progress', lib: LIB.a, use: '确认与风险标签', fit: 2, diff: '高', land: 0, size: 'Ant 视觉冲突大，不引入' },
+        { comp: 'AlertDialog + Badge + Alert + Progress', lib: LIB.s, use: '红色确认（destructive）+ 风险提示条', fit: 5, diff: '低', land: 0, size: 'AlertDialog 行为规格直译，同时解决 B10 焦点陷阱' }
+      ],
+      verdict: '看板布局保持自研 masonry；红色确认沿用 confirmDanger 并吸收 Radix 焦点管理；风险徽章用 §⑤ Badge 三态（ok/warn/bad）。' },
+    { id: 'm-startup', name: '启动项管理', now: '现有自研：列表 + 启停/删除 + 批量操作（B2 已接统一图标兜底）', goal: '自启项列表管理：启用/禁用开关、备份删除、批量操作',
+      rows: [
+        { comp: 'Switch + List + Popconfirm', lib: LIB.a, use: '启停开关与行内确认', fit: 3, diff: '中', land: 0, size: 'Popconfirm 交互可参考，组件不引入' },
+        { comp: 'Switch + Table + DropdownMenu + AlertDialog', lib: LIB.s, use: '开关、行菜单、删除确认', fit: 5, diff: '低', land: 0, size: 'Switch 源码直译（§⑤ 实机可验）' }
+      ],
+      verdict: '本模块是 shadcn 五件套的最佳试点：Switch 直译替换、删除走 AlertDialog（备份语义写进确认文案），列表沿用现有结构。' },
+    { id: 'm-ctx', name: '右键管理', now: '现有自研：分类看板 + 详情弹窗（B2 已接 Trim.ico 兜底）', goal: '按分类浏览/搜索右键项，详情查看与启停、删除',
+      rows: [
+        { comp: 'Collapse + Modal + Tag', lib: LIB.a, use: '分类折叠与详情', fit: 2, diff: '高', land: 0, size: 'Collapse 视觉网页后台感强' },
+        { comp: 'Accordion + Dialog + Tooltip', lib: LIB.s, use: '分类折叠、详情弹窗、路径悬浮', fit: 4, diff: '中', land: 0, size: 'Accordion 键盘导航规格直接翻译' }
+      ],
+      verdict: '详情弹窗沿用自研 ctx-detail（B2 兜底已就位），补 Tooltip 展示完整命令行；分类筛选保持现有看板。' },
+    { id: 'm-bench', name: '磁盘 / 网络测速', now: '现有自研：canvas 折线/仪表 + 分步进度（diskbench/netspeed）', goal: '测速执行、实时曲线、结果卡片',
+      rows: [
+        { comp: 'Progress + Statistic + Descriptions', lib: LIB.a, use: '结果数值与键值对布局参考', fit: 3, diff: '中', land: 0, size: '图表库（@ant-design/charts）体积大，明确不用' },
+        { comp: 'Tabs + Card + Progress', lib: LIB.s, use: '磁盘/网络测速分页与结果卡', fit: 4, diff: '低', land: 0, size: 'Tabs 原生 radio+CSS 即可实现' }
+      ],
+      verdict: '曲线维持 canvas 自绘；Tabs 分页器按 shadcn 结构原生重写；结果键值对布局参考 antd Descriptions 的排版。' },
+    { id: 'm-rt', name: '实时网速悬浮窗', now: '现有自研：置顶小窗 + canvas 迷你曲线（realtime.js）', goal: '桌面常驻小窗显示实时上下行',
+      rows: [
+        { comp: 'Tooltip', lib: LIB.a, use: '悬浮明细', fit: 2, diff: '低', land: 0, size: '小窗场景组件库均过重' },
+        { comp: 'Tooltip + HoverCard', lib: LIB.s, use: '悬浮显示进程级明细', fit: 3, diff: '低', land: 0, size: '原生 title/自绘 tooltip 即可' }
+      ],
+      verdict: '唯一约束是"小而轻"：不引任何库；如需悬浮明细，按 HoverCard 行为写 20 行原生浮层。' },
+    { id: 'm-rp', name: '系统还原点', now: '现有自研：还原点列表 + 创建 + DMTF 时间解析（B3 已修）', goal: '还原点列表、创建入口、优化前检查警示',
+      rows: [
+        { comp: 'Timeline + Modal.confirm + Alert', lib: LIB.a, use: '还原点历史时间轴形态', fit: 3, diff: '中', land: 0, size: 'Timeline 形态可参考，原生 ul/li 即可' },
+        { comp: 'AlertDialog + Card + Badge + Empty', lib: LIB.s, use: '创建确认、空状态', fit: 4, diff: '低', land: 0, size: '复用 §⑤ Dialog 与 Empty' }
+      ],
+      verdict: '列表保持自研；「创建还原点」红色确认复用统一 Dialog；5 天内已有点的静默逻辑已按 B3 修正，无需组件介入。' },
+    { id: 'm-log', name: '操作日志', now: '现有自研：xtable 虚拟列表 + 级别筛选 + 导出', goal: '大列表浏览、日期/级别筛选、搜索、导出',
+      rows: [
+        { comp: 'Table(virtual) + DatePicker + Segmented', lib: LIB.a, use: '虚拟表格与分段筛选器的交互规范参考', fit: 3, diff: '高', land: 0, size: 'antd Table 全家桶不值得；仅借鉴交互' },
+        { comp: 'Table(headless) + Select + Input', lib: LIB.s, use: '表格标记结构与筛选控件', fit: 4, diff: '低', land: 0, size: 'xtable 已覆盖，无需新代码' }
+      ],
+      verdict: 'xtable 虚拟列表是项目已有强项，保持；Segmented 分段筛选的键盘行为按 antd 规范补齐即可。' },
+    { id: 'm-set', name: '全局设置', now: '现有自研：外观（材质/强调色/背景图 pathbinding.js）+ 各功能开关', goal: '材质选择、强调色、开关与滑块类偏好',
+      rows: [
+        { comp: 'Switch + Slider + Select + Radio', lib: LIB.a, use: '表单控件全家桶', fit: 3, diff: '中', land: 0, size: 'antd Form 体系与自研设置层冲突，不引入' },
+        { comp: 'Switch + Slider + Select + Separator', lib: LIB.s, use: '同上但源码可直译', fit: 5, diff: '低', land: 0, size: '五件套试点模块，全部原生' }
+      ],
+      verdict: '设置页是五件套第一落地页：Switch/Slider 直译替换；材质选择用原生卡片单选组（保持 Mica/Acrylic 实时预览）。' }
+  ];
+
+  /* ===== 渲染模块区 ===== */
+  function fitDots(n) {
+    var h = '<span class="fit" title="' + n + ' / 5">';
+    for (var i = 1; i <= 5; i++) h += '<i class="' + (i <= n ? 'on' : '') + '"></i>';
+    return h + '</span>';
+  }
+  function diffPill(d) { return '<span class="pill ' + (d === '低' ? 'low' : d === '中' ? 'mid' : 'high') + '">' + d + '</span>'; }
+  var root2 = document.getElementById('modRoot');
+  var nav = document.getElementById('modNav');
+  MODULES.forEach(function (m, idx) {
+    nav.insertAdjacentHTML('beforeend', '<a href="#' + m.id + '">' + (idx + 1) + '. ' + m.name + '</a>');
+    var rows = m.rows.map(function (r) {
+      return '<tr><td><span class="comp">' + r.comp + '</span></td>' +
+        '<td>' + r.lib + '</td><td>' + r.use + '</td>' +
+        '<td>' + fitDots(r.fit) + '</td><td>' + diffPill(r.diff) + '</td>' +
+        '<td>' + (r.land === 0 ? '<span class="pill native">借鉴交互 · 原生重写</span>' : '<span class="pill react">引入 React 局部使用</span>') + '</td>' +
+        '<td>' + r.size + '</td></tr>';
+    }).join('');
+    root2.insertAdjacentHTML('beforeend',
+      '<div class="module card" id="' + m.id + '">' +
+        '<div class="mod-head" style="margin-top:0"><span class="no">' + String(idx + 1).padStart(2, '0') + '</span><h3>' + m.name + '</h3></div>' +
+        '<div class="now" style="font-size:12.5px;color:var(--fg-tertiary);margin-bottom:4px">' + m.goal + ' · ' + m.now + '</div>' +
+        '<div style="overflow-x:auto"><table><thead><tr><th>推荐组件</th><th>库</th><th>用在哪 / 解决什么</th><th>Fluent 契合</th><th>定制难度</th><th>落地方式</th><th>体积 / 性能与替代</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+        '<div class="mod-verdict"><b>最终建议</b> ▸ ' + m.verdict + '</div>' +
+      '</div>');
+  });
+
+  /* 导航 scroll-spy */
+  var links = Array.prototype.slice.call(nav.querySelectorAll('a'));
+  var io = new IntersectionObserver(function (ents) {
+    ents.forEach(function (en) {
+      if (en.isIntersecting) {
+        links.forEach(function (a) { a.classList.toggle('on', a.getAttribute('href') === '#' + en.target.id); });
+      }
+    });
+  }, { rootMargin: '-20% 0px -70% 0px' });
+  MODULES.forEach(function (m) { var el = document.getElementById(m.id); if (el) io.observe(el); });
+})();
+</script>
+</body>
+</html>

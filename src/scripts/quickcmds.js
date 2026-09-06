@@ -47,7 +47,7 @@
     const all = data.CMDS || [];
     el.innerHTML = cats.map(c => {
       const n = c === '全部' ? all.length : all.filter(x => x.cat === c).length;
-      return `<button class="maint-tab${c === activeCat ? ' active' : ''}" data-qcat="${escapeHtml(c)}">${escapeHtml(c)}<span class="maint-tab-count">${n}</span></button>`;
+      return `<button class="filter-tab${c === activeCat ? ' active' : ''}" data-qcat="${escapeHtml(c)}">${escapeHtml(c)}<span class="maint-tab-count">${n}</span></button>`;
     }).join('');
     el.querySelectorAll('[data-qcat]').forEach(btn => {
       btn.addEventListener('click', () => {

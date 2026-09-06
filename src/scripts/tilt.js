@@ -19,7 +19,8 @@
   ].join(',');
 
   // 启动项管理页的「启动项列表」面板不倾斜（需求指定），同页统计卡不受影响
-  var EXCLUDE_CONTAINS = '#startupList';
+  // 磁盘清理各扫描结果表格（重复文件/大文件/空文件/AppData 瘦身）不加入 3D 倾斜
+  var EXCLUDE_CONTAINS = '#startupList, .finder-table';
 
   var MAX_ANGLE = 7;        // 最大角度（°）
   var PERSPECTIVE = 900;    // 透视距离（px）

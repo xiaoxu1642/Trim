@@ -1,0 +1,15 @@
+C:\kaifa\TuneForge\native-scanner\target\debug\deps\blake3-117b8a6267f25464.d: C:\Users\CHENG\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\blake3-1.8.7\src\lib.rs C:\Users\CHENG\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\blake3-1.8.7\src\guts.rs C:\Users\CHENG\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\blake3-1.8.7\src\hazmat.rs C:\Users\CHENG\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\blake3-1.8.7\src\platform.rs C:\Users\CHENG\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\blake3-1.8.7\src\ffi_avx2.rs C:\Users\CHENG\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\blake3-1.8.7\src\ffi_avx512.rs C:\Users\CHENG\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\blake3-1.8.7\src\portable.rs C:\Users\CHENG\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\blake3-1.8.7\src\ffi_sse2.rs C:\Users\CHENG\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\blake3-1.8.7\src\ffi_sse41.rs C:\Users\CHENG\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\blake3-1.8.7\src\io.rs C:\Users\CHENG\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\blake3-1.8.7\src\join.rs
+
+C:\kaifa\TuneForge\native-scanner\target\debug\deps\libblake3-117b8a6267f25464.rmeta: C:\Users\CHENG\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\blake3-1.8.7\src\lib.rs C:\Users\CHENG\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\blake3-1.8.7\src\guts.rs C:\Users\CHENG\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\blake3-1.8.7\src\hazmat.rs C:\Users\CHENG\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\blake3-1.8.7\src\platform.rs C:\Users\CHENG\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\blake3-1.8.7\src\ffi_avx2.rs C:\Users\CHENG\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\blake3-1.8.7\src\ffi_avx512.rs C:\Users\CHENG\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\blake3-1.8.7\src\portable.rs C:\Users\CHENG\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\blake3-1.8.7\src\ffi_sse2.rs C:\Users\CHENG\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\blake3-1.8.7\src\ffi_sse41.rs C:\Users\CHENG\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\blake3-1.8.7\src\io.rs C:\Users\CHENG\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\blake3-1.8.7\src\join.rs
+
+C:\Users\CHENG\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\blake3-1.8.7\src\lib.rs:
+C:\Users\CHENG\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\blake3-1.8.7\src\guts.rs:
+C:\Users\CHENG\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\blake3-1.8.7\src\hazmat.rs:
+C:\Users\CHENG\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\blake3-1.8.7\src\platform.rs:
+C:\Users\CHENG\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\blake3-1.8.7\src\ffi_avx2.rs:
+C:\Users\CHENG\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\blake3-1.8.7\src\ffi_avx512.rs:
+C:\Users\CHENG\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\blake3-1.8.7\src\portable.rs:
+C:\Users\CHENG\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\blake3-1.8.7\src\ffi_sse2.rs:
+C:\Users\CHENG\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\blake3-1.8.7\src\ffi_sse41.rs:
+C:\Users\CHENG\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\blake3-1.8.7\src\io.rs:
+C:\Users\CHENG\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\blake3-1.8.7\src\join.rs:

@@ -10,7 +10,7 @@ $options = '__OPTIONS_JSON__' | ConvertFrom-Json
 $root = [string]$options.path
 if (-not (Test-Path -LiteralPath $root)) { throw '测试磁盘路径不存在' }
 # 测试文件存放在测试路径下的专用子目录，测试完毕后删除
-$tempDir = Join-Path $root 'TuneForge-DiskBench'
+$tempDir = Join-Path $root 'Trim-DiskBench'
 New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
 $block = [Math]::Max(4096, [int]$options.blockSize)
 # 时长仅允许 4/8/16 秒，异常值回落 8 秒

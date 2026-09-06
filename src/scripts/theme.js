@@ -63,7 +63,7 @@
       defs.style.position = 'absolute';
       defs.innerHTML = '<defs><linearGradient id="ringGradient" x1="0%" y1="0%" x2="100%" y2="100%">' +
         '<stop offset="0%" stop-color="#8B8EE0"/>' +
-        '<stop offset="100%" stop-color="#D3D4FA"/>' +
+        '<stop offset="100%" stop-color="#A6A9F2"/>' +
         '</linearGradient></defs>';
       defs.id = 'ringGradientDef';
       document.body.appendChild(defs);
@@ -126,14 +126,16 @@
     if (IS_ELECTRON && window.api?.app?.getInfo) {
       try {
         const info = await window.api.app.getInfo();
-        if (info.micaEnabled) {
-          applyMicaMode(true);
-          // 同步当前窗口材质到 body[data-material]，供 CSS 做材质差异化着色
-          try {
-            const resp = await window.api?.appearance?.getMaterial?.();
-            if (resp && resp.material) document.body.dataset.material = resp.material;
-          } catch (e) {}
-        }
+        // 无论系统是否支持 DWM 材质，都同步渲染层状态：不支持时仍使用
+        // 对应的 CSS 表面作为可读回退，支持时再叠加原生 Mica/Acrylic。
+        applyMicaMode(Boolean(info.micaEnabled));
+        try {
+          const resp = await window.api?.appearance?.getMaterial?.();
+          if (resp && resp.material) {
+            // 材质总开关关闭时按「无材质」落 dataset，与手动选择 none 观感一致（窗口界面升级3）
+            document.body.dataset.material = resp.materialEnabled === false ? 'none' : resp.material;
+          }
+        } catch (e) {}
       } catch (e) {
         // 忽略
       }

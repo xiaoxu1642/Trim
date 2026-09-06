@@ -349,14 +349,20 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
   function applyAccent(color) {
     const root = document.documentElement;
     if (color) {
-      // 仅覆盖 --accent，hover/press/light 由 CSS color-mix 自动派生；
-      // 前景文字色按 WCAG 相对亮度自动选定（亮 accent → 深字，暗 accent → 白字），
-      // 保证按钮等实底组件在任何自定义色下对比度 ≥ 4.5:1。
+      // 前景文字色按 WCAG 相对亮度自动选定；交互态与 soft/glow 同步派生，
+      // 避免自定义色只影响按钮底色，其他高亮仍停留在默认薰衣草色。
       root.style.setProperty('--accent', color);
+      root.style.setProperty('--accent-hover', `color-mix(in srgb, ${color} 82%, white)`);
+      root.style.setProperty('--accent-press', `color-mix(in srgb, ${color} 82%, black)`);
+      root.style.setProperty('--accent-light', `color-mix(in srgb, ${color} 16%, transparent)`);
+      root.style.setProperty('--accent-soft', `color-mix(in srgb, ${color} 16%, transparent)`);
+      root.style.setProperty('--accent-glow', `color-mix(in srgb, ${color} 32%, transparent)`);
+      root.style.setProperty('--border-accent', color);
       root.style.setProperty('--accent-text', readableAccentText(color));
     } else {
-      root.style.removeProperty('--accent');
-      root.style.removeProperty('--accent-text');
+      for (const name of ['--accent', '--accent-hover', '--accent-press', '--accent-light', '--accent-soft', '--accent-glow', '--border-accent', '--accent-text']) {
+        root.style.removeProperty(name);
+      }
     }
   }
 
@@ -450,7 +456,11 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
     const val = document.getElementById('bgOpacityVal');
     if (currentRow) currentRow.style.display = ap.bgPath ? 'flex' : 'none';
     if (thumb && ap.bgPath) thumb.src = 'file:///' + String(ap.bgPath).replace(/\\/g, '/').replace(/^\//, '');
-    if (slider) slider.value = ap.bgOpacity == null ? 15 : ap.bgOpacity;
+    if (slider) {
+      slider.value = ap.bgOpacity == null ? 15 : ap.bgOpacity;
+      // 编程式赋值不触发 input 事件，手动同步轨道填充（ds.slider）
+      window.ds?.slider?.sync?.(slider);
+    }
     if (val) val.textContent = (ap.bgOpacity == null ? 15 : ap.bgOpacity) + '%';
   }
 
@@ -467,15 +477,52 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
     document.getElementById('systemInfoToggle')?.addEventListener('click', () => {
       if (!sec) return;
       const open = sec.classList.toggle('collapsed') === false;
-      if (chevron) chevron.textContent = open ? '▴' : '▾';
+      if (chev) chev.textContent = open ? '▴' : '▾';
       try { localStorage.setItem('winclean-systeminfo-open', open ? '1' : '0'); } catch (e) {}
     });
+    // 阶段三：折叠区补齐 ARIA（不改视觉逻辑，ds.accordion 只同步 aria-expanded/hidden）
+    if (sec) window.ds?.accordion?.enhance(document.getElementById('systemInfoToggle'), sec);
 
-    // 窗口材质四卡片：点击切换 + 高亮 + IPC 应用（即时生效并持久化）
+    // 窗口材质五卡片：点击切换 + 高亮 + IPC 应用（即时生效并持久化）
     const materialCards = document.querySelectorAll('.material-card');
     function refreshMaterialCards(current) {
       materialCards.forEach(c => c.classList.toggle('selected', c.dataset.material === current));
     }
+    // 材质总开关（窗口界面升级3，Motion.Lab toggle-flip 滑动开关）：
+    // 关闭 = 各窗口即按「无材质」观感回落不透明；所选材质保留，重开即恢复
+    const materialMaster = document.getElementById('materialMasterToggle');
+    let materialOn = true;
+    function syncMaterialMaster(on) {
+      materialMaster?.classList.toggle('on', on);
+      materialMaster?.setAttribute('aria-checked', on ? 'true' : 'false');
+      materialMaster?.closest('.appearance-card')?.classList.toggle('material-off', !on);
+    }
+    materialMaster?.addEventListener('click', async () => {
+      const next = !materialOn;
+      materialOn = next;
+      syncMaterialMaster(next);
+      try {
+        const resp = await window.api?.appearance?.setMaterialEnabled?.(next);
+        if (resp && resp.success) {
+          if (resp.material) document.body.dataset.material = resp.material;
+          const ap2 = loadAppearance();
+          ap2.materialEnabled = next;
+          saveAppearance(ap2);
+          window.app?.toast('success', next ? '窗口材质已开启' : '窗口材质已关闭（所选材质已记忆）');
+        } else {
+          materialOn = !next;
+          syncMaterialMaster(materialOn);
+          window.app?.toast('error', (resp && resp.message) || '材质开关切换失败');
+        }
+      } catch (e) {
+        materialOn = !next;
+        syncMaterialMaster(materialOn);
+        window.app?.toast('error', '材质开关切换失败：' + e.message);
+      }
+    });
+    materialMaster?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); materialMaster.click(); }
+    });
     // 初始高亮以主进程持久化值为准（窗口实际材质），避免与 localStorage 不一致
     // 导致「选中项和窗口效果对不上」。取不到时回退 mica（与主进程默认一致）。
     (async () => {
@@ -483,11 +530,20 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
       try {
         const resp = await window.api?.appearance?.getMaterial?.();
         if (resp && resp.material) current = resp.material;
+        materialOn = resp ? resp.materialEnabled !== false : true;
       } catch (e) {}
       refreshMaterialCards(current);
+      syncMaterialMaster(materialOn);
     })();
+    // 主进程材质广播：所有窗口（含本窗）统一跟随，body[data-material] 实时驱动 CSS 分级
+    // （广播载荷是「生效材质」：总开关关闭时为 'none'，此时卡片高亮保持用户所选值不变）
+    window.api?.appearance?.onMaterialChanged?.((m) => {
+      document.body.dataset.material = m;
+      if (materialOn) refreshMaterialCards(m);
+    });
     materialCards.forEach(card => {
       card.addEventListener('click', async () => {
+        if (!materialOn) return; // 总开关关闭期间材质卡为暂停态
         const m = card.dataset.material;
         refreshMaterialCards(m);
         const resp = await window.api?.appearance?.setMaterial?.(m);
@@ -529,7 +585,7 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
       const ap2 = loadAppearance();
       delete ap2.accent;
       saveAppearance(ap2);
-      if (accentInput) accentInput.value = '#D3D4FA';
+      if (accentInput) accentInput.value = '#8B8EE0';
       window.app?.toast('success', '已恢复默认强调色');
     });
 
@@ -586,6 +642,10 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
       body.style.display = open ? 'none' : 'block';
       if (chev) chev.textContent = open ? '⌄' : '⌃';
     });
+    window.ds?.accordion?.enhance(
+      document.getElementById('bgListToggle'),
+      document.getElementById('bgListBody')
+    );
 
     // ---- UI 设计系统：玻璃皮肤 + 预设背景 ----
     // applySkin：body[data-skin="glass"] 开启液态玻璃磨砂；classic 移除属性

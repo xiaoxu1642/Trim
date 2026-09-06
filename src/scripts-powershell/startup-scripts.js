@@ -8,7 +8,7 @@
 //   - 文件夹项：移动到备份目录；启用时移动回原路径
 //   - 计划任务：Disable-ScheduledTask / Enable-ScheduledTask（任务本身保留，无需记录）
 // 删除：先备份到 deleted 目录（注册表 reg.exe 全键导出 / 文件夹复制 / 计划任务导出 XML）再删除
-// 备份目录：%APPDATA%\TuneForge\startup-backup\
+// 备份目录：%APPDATA%\Trim\startup-backup\
 
 const DIAG = require('../diag');
 
@@ -17,7 +17,7 @@ const SCAN_SCRIPT = `
 $OutputEncoding = [System.Text.Encoding]::UTF8
 $ErrorActionPreference = 'SilentlyContinue'
 
-$backupDir = Join-Path $env:APPDATA 'TuneForge\\startup-backup'
+$backupDir = Join-Path $env:APPDATA 'Trim\\startup-backup'
 New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
 $disabledFile = Join-Path $backupDir 'disabled.json'
 
@@ -176,7 +176,7 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 $ErrorActionPreference = 'SilentlyContinue'
 ${DIAG.PS_PREAMBLE}
 
-$backupDir = Join-Path $env:APPDATA 'TuneForge\\startup-backup'
+$backupDir = Join-Path $env:APPDATA 'Trim\\startup-backup'
 New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
 $disabledFile = Join-Path $backupDir 'disabled.json'
 $filesDir = Join-Path $backupDir 'files'
@@ -366,7 +366,7 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 $ErrorActionPreference = 'SilentlyContinue'
 ${DIAG.PS_PREAMBLE}
 
-$backupDir = Join-Path $env:APPDATA 'TuneForge\\startup-backup'
+$backupDir = Join-Path $env:APPDATA 'Trim\\startup-backup'
 New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
 $disabledFile = Join-Path $backupDir 'disabled.json'
 $deletedDir = Join-Path $backupDir 'deleted'

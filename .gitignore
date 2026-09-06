@@ -10,7 +10,7 @@ dist/
 *.blockmap
 
 # 安装器编译缓存
-tuneforge-installer/
+trim-installer/
 
 # 日志与临时文件
 *.log
@@ -19,4 +19,3 @@ tuneforge-installer/
 # 编辑器与工具
 .vscode/
 .vexor/
-.workbuddy/

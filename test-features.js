@@ -52,7 +52,7 @@ for (const f of SYNTAX_FILES) {
 }
 
 check('security 原子 JSON 写入可读回', () => {
-  const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'tuneforge-test-'));
+  const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'trim-test-'));
   try {
     const file = path.join(dir, 'nested', 'settings.json');
     SECURITY.atomicWriteJson(file, { version: 1, ok: true });

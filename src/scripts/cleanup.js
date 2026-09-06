@@ -267,6 +267,7 @@
   const sortStates = {};
   // 折叠状态持久（重渲染/排序时保留）：'group:windows' / 'sub:outdated'
   const collapsedKeys = new Set();
+  let defaultCollapsedInitialized = false;
 
   const COL_CHECK = { key: 'check', label: '', width: 40, minWidth: 40, sortable: false, resizable: false };
   const COL_NAME = { key: 'name', label: '名称', width: 220, minWidth: 100 };
@@ -416,6 +417,16 @@
   function renderCategoryList() {
     const container = document.getElementById('categoryList');
     if (!container) return;
+    // 首次进入磁盘清理保持紧凑折叠态；用户展开后的状态在会话内保留。
+    if (!defaultCollapsedInitialized) {
+      Object.entries(CATEGORIES).forEach(([groupKey, group]) => {
+        collapsedKeys.add('group:' + groupKey);
+        if (Array.isArray(group.subGroups)) {
+          group.subGroups.forEach(sg => collapsedKeys.add('sub:' + sg.id));
+        }
+      });
+      defaultCollapsedInitialized = true;
+    }
     virtualLists.forEach(v => v.destroy());
     virtualLists = [];
     container.innerHTML = '';
@@ -698,6 +709,7 @@
     const valueEl = document.getElementById('progressValue');
     const labelEl = document.getElementById('progressLabel');
     if (section) section.style.display = 'block';
+    if (section) section.setAttribute('aria-busy', percent < 100 ? 'true' : 'false');
     if (fill) fill.style.width = percent + '%';
     if (valueEl) valueEl.textContent = Math.round(percent) + '%';
     if (labelEl && label) labelEl.textContent = label;
@@ -705,7 +717,10 @@
 
   function hideProgress() {
     const section = document.getElementById('progressSection');
-    if (section) section.style.display = 'none';
+    if (section) {
+      section.style.display = 'none';
+      section.setAttribute('aria-busy', 'false');
+    }
   }
 
   // ==================== P1-12：扫描进度流式化 ====================
@@ -948,12 +963,14 @@
       .map(id => scanResults.get(id))
       .filter(r => r && r.risk === 'high');
 
-    // 高风险二次确认
+    // 高风险二次确认（红色，删除类操作规范要求）
     if (highRisk.length > 0) {
-      const ok = await window.app?.confirm(
+      const ok = await window.app?.confirmDanger(
         '高风险操作确认',
-        `您选择了 ${highRisk.length} 个高风险项（如 Windows.old、WinSxS）。\n删除后可能无法恢复，是否继续？\n\n${highRisk.map(r => '• ' + r.name).join('\n')}`,
-        '确认清理'
+        `您选择了 ${highRisk.length} 个高风险项（如 Windows.old、WinSxS）：\n${highRisk.map(r => '• ' + r.name).join('\n')}`,
+        '确认清理',
+        '取消',
+        '删除后可能无法恢复，请确认已了解风险。'
       );
       if (!ok) {
         isCleaning = false;
@@ -1046,8 +1063,7 @@
         }
       }
 
-      // 重建日志（DNS 缓存清理 / 性能计数器）
-      window.app?.log('info', `[模拟] 已执行：ipconfig /flushdns, lodctr /r (参考 cmd/bat 脚本)`);
+      // 上述命令并未真正执行；按审查结论 B6 删除该假日志，日志库只记录真实发生的操作。
 
       setTimeout(() => {
         hideProgress();

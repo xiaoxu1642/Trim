@@ -10,7 +10,7 @@
   const GROUP_ORDER = ['内存优化', '性能调优', '音频优化', '外设调优', '桌面体验', '任务调度', '系统服务', '隐私防护', '系统调校', '系统精简', '显卡优化', '浏览器优化'];
   const RISK_TEXT = { low: '低风险', medium: '中风险', high: '高风险' };
 
-  // 旧分组 → 新分类重映射（TuneForge 分类风格：启动与响应→系统调校、游戏与多媒体→性能调优、键鼠与外设→外设调优、安全与隐私→隐私防护）
+  // 旧分组 → 新分类重映射（Trim 分类风格：启动与响应→系统调校、游戏与多媒体→性能调优、键鼠与外设→外设调优、安全与隐私→隐私防护）
   const GROUP_MAP = {
     '启动与响应': '系统调校',
     '游戏与多媒体': '性能调优',
@@ -199,15 +199,14 @@
   // 执行前高危确认：返回 true 继续 / false 取消
   async function confirmHazard(opt) {
     if (!HAZARD_OPTION_IDS.has(opt.id)) return true;
-    const ok = await window.app.confirm(
+    // 红色二次确认：警示文案走 dangerHint 结构化字段，由弹窗模板渲染
+    return window.app.confirmDanger(
       '⚠️ 高危安全操作确认',
-      `<span style="color:var(--danger);font-weight:700">「${escapeHtml(opt.title)}」会显著降低系统安全防护：</span>\n\n` +
-      `· ${escapeHtml(opt.desc || '')}\n\n` +
-      `<span style="color:var(--danger)">此操作可能使系统更容易受到恶意软件或攻击的侵害，请确认已了解风险。</span>`,
+      `「${opt.title}」会显著降低系统安全防护：\n\n· ${opt.desc || ''}`,
       '仍然执行',
-      '取消'
+      '取消',
+      '此操作可能使系统更容易受到恶意软件或攻击的侵害，请确认已了解风险。'
     );
-    return ok;
   }
 
   // ==================== 工具 ====================
@@ -217,9 +216,13 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
+  // 阶段三：风险徽章统一 design-system（ds-badge sm：低=ok 中=warn 高=bad）
   function riskBadge(risk) {
-    const cls = ['low', 'medium', 'high'].includes(risk) ? risk : 'low';
-    return `<span class="category-risk ${cls}">${RISK_TEXT[risk] || risk}</span>`;
+    const type = risk === 'high' ? 'bad' : risk === 'medium' ? 'warn' : 'ok';
+    const label = RISK_TEXT[risk] || risk;
+    return window.ds
+      ? window.ds.badgeHtml(type, label, { small: true })
+      : `<span class="category-risk ${['low', 'medium', 'high'].includes(risk) ? risk : 'low'}">${label}</span>`;
   }
 
   function stepNote(s) {
@@ -258,11 +261,25 @@
   function setCategory(cat) {
     activeCategory = OPT_CATEGORIES.indexOf(cat) > -1 ? cat : '全部';
     try { localStorage.setItem(OPT_CATEGORY_KEY, activeCategory); } catch (e) {}
-    // 高亮侧边栏「电脑优化中心」分类子项
-    document.querySelectorAll('#optimizerCatNav .nav-subitem').forEach(el => {
-      el.classList.toggle('active', el.dataset.optcat === activeCategory);
+    // 高亮页内「电脑优化中心」分类分段栏（原侧边栏分类子菜单）
+    document.querySelectorAll('#optimizerCatNav .filter-tab').forEach(el => {
+      const on = el.dataset.optcat === activeCategory;
+      el.classList.toggle('active', on);
+      el.setAttribute('aria-selected', on ? 'true' : 'false');
     });
     renderGroups(OPTIONS);
+  }
+
+  // 渲染分类分段栏（按 OPT_CATEGORIES 生成，含侧边栏旧版未展示的分类）
+  function renderCatNav() {
+    const nav = document.getElementById('optimizerCatNav');
+    if (!nav) return;
+    nav.innerHTML = OPT_CATEGORIES.map(cat =>
+      `<button class="filter-tab${cat === activeCategory ? ' active' : ''}" data-optcat="${escapeHtml(cat)}" role="tab" aria-selected="${cat === activeCategory}">${escapeHtml(cat)}</button>`
+    ).join('');
+    nav.querySelectorAll('[data-optcat]').forEach(btn => {
+      btn.addEventListener('click', () => setCategory(btn.dataset.optcat));
+    });
   }
 
   // ==================== 列表渲染：看板瀑布流（Masonry） ====================
@@ -679,44 +696,60 @@
     }
   }
 
-  // 执行任意优化前检查系统还原点：
-  // - 未创建（或最近一次超过 5 天）→ 弹警示窗口（是=立即创建还原点 / 否=跳过）
-  // - 已创建且 5 天内 → 右上角轻量 toast
+  // 执行任意优化前检查系统还原点（返回 true 放行 / false 中止）：
+  // - 5 天内已有还原点 → 静默放行，不弹任何提示（还原点本就无需重复创建）
+  // - 查询失败 → 放行并记日志（查询失败 ≠ 无还原点，不误报骚扰）
+  // - 未创建（或超 5 天）→ 弹警示建议创建；用户拒绝创建时追加一次红色风险确认，
+  //   再拒绝则中止本次执行，避免「点否后仍无条件放行」
   async function ensureRestorePoint() {
     if (!window.api?.optimizer?.checkRestore) return true; // 预览模式直接放行
     let resp;
     try {
       resp = await window.api.optimizer.checkRestore();
     } catch (e) {
-      return true; // 检查失败不阻塞执行
+      window.app?.log?.('warn', '还原点检查异常（已放行）: ' + (e && e.message || e));
+      return true;
     }
-    if (!resp || !resp.success) return true;
+    if (!resp || !resp.success) {
+      window.app?.log?.('warn', '还原点查询失败（已放行，不视为无还原点）: ' + ((resp && resp.message) || '未知原因'));
+      return true;
+    }
 
     const FIVE_DAYS = 5 * 24 * 60 * 60 * 1000;
     if (resp.exists && resp.created) {
       const created = new Date(resp.created);
       if (!isNaN(created) && (Date.now() - created.getTime()) <= FIVE_DAYS) {
-        window.app?.toast('warning', '还原点很重要喔。');
-        return true;
+        return true; // 5 天内已有还原点：直接放行
       }
     }
-    // 未创建或已超过 5 天：弹警示窗口
+    // 未创建或已超过 5 天：弹警示窗口建议创建
     const ok = await window.app.confirm(
       '系统还原点提醒',
-      '优化有风险，请立即创建系统还原点。\n\n创建后如优化导致问题，可在「系统还原点管理」中一键回退。是否立即创建？',
-      '是',
-      '否'
+      '检测到 5 天内没有可用的系统还原点。\n\n优化操作存在风险，建议先创建还原点——出现异常时可在「系统还原点管理」中一键回退。\n\n是否立即创建？',
+      '立即创建',
+      '暂不创建'
     );
     if (ok) {
       let cr;
       try { cr = await window.api.optimizer.createRestore(); } catch (e) { cr = null; }
       if (cr && cr.success) {
         window.app?.toast('success', '已创建系统还原点，可放心优化');
-      } else {
-        window.app?.toast('warning', (cr && cr.message) || '还原点创建失败，建议先手动创建再优化');
+        return true;
       }
+      window.app?.toast('warning', (cr && cr.message) || '还原点创建失败，建议先手动创建再优化');
     }
-    return true;
+    // 未创建还原点（用户拒绝或创建失败）：红色风险确认，拒绝则中止
+    const go = await window.app.confirmDanger(
+      '未创建还原点继续执行？',
+      '未创建还原点的情况下执行优化，出现问题将无法通过系统还原回退。',
+      '仍要执行优化',
+      '取消',
+      '建议先创建还原点再执行优化。'
+    );
+    window.app?.log?.('info', go
+      ? '用户在未创建还原点的情况下经风险确认后继续执行优化'
+      : '用户拒绝在未创建还原点的情况下执行优化，已中止');
+    return go;
   }
 
   async function genAdviceActive() {
@@ -790,14 +823,19 @@
     const highCount = batch.filter(o => o.risk === 'high').length;
     const preview = batch.slice(0, 12).map(o => '· ' + o.title).join('\n') +
       (batch.length > 12 ? `\n…等共 ${batch.length} 项` : '');
-    const hazardWarn = hazardList.length
-      ? `\n\n⚠️ 其中包含 ${hazardList.length} 项高危安全操作（${hazardList.map(o => o.title).join('、')}），会降低系统安全防护。`
-      : '';
+    // 含高风险项时整批走红色二次确认，警示文案由 dangerHint 结构化渲染
+    const hasHazard = hazardList.length > 0;
     const ok = await window.app.confirm(
       '执行所选优化',
-      `将依次执行已勾选的 ${batch.length} 项优化（其中高风险 ${highCount} 项）：\n\n${preview}${hazardWarn}\n\n是否确认执行？`,
+      `将依次执行已勾选的 ${batch.length} 项优化（其中高风险 ${highCount} 项）：\n\n${preview}\n\n是否确认执行？`,
       '确认执行',
-      '取消'
+      '取消',
+      (hasHazard || highCount > 0) ? {
+        danger: true,
+        dangerHint: hasHazard
+          ? `其中包含 ${hazardList.length} 项高危安全操作（${hazardList.map(o => o.title).join('、')}），会显著降低系统安全防护。`
+          : `包含 ${highCount} 项高风险优化，可能影响系统稳定性。`
+      } : {}
     );
     if (!ok) return;
 
@@ -807,7 +845,7 @@
       if (!go) return;
     }
 
-    await ensureRestorePoint();
+    if (!(await ensureRestorePoint())) return;
 
     batchRunning = true;
     const btn = document.getElementById('btnOptimizerSelected');
@@ -863,25 +901,32 @@
     // 全选高亮，提示即将执行的项
     setCardsSelected(true);
     const highCount = batch.filter(o => o.risk === 'high').length;
+    const hazardList = batch.filter(o => HAZARD_OPTION_IDS.has(o.id));
     const preview = batch.slice(0, 12).map(o => '· ' + o.title).join('\n') +
       (batch.length > 12 ? `\n…等共 ${batch.length} 项` : '');
+    // 含高风险项时整批走红色二次确认，警示文案由 dangerHint 结构化渲染
     const ok = await window.app.confirm(
       '批量执行优化',
-      `将依次执行当前页全部 ${batch.length} 项优化（其中高风险 ${highCount} 项）：\n\n${preview}\n\n高风险项可能影响系统稳定性，是否确认执行？`,
+      `将依次执行当前页全部 ${batch.length} 项优化（其中高风险 ${highCount} 项）：\n\n${preview}\n\n是否确认执行？`,
       '确认执行',
-      '取消'
+      '取消',
+      (hazardList.length > 0 || highCount > 0) ? {
+        danger: true,
+        dangerHint: hazardList.length > 0
+          ? `其中包含 ${hazardList.length} 项高危安全操作（${hazardList.map(o => o.title).join('、')}），会显著降低系统安全防护。`
+          : `包含 ${highCount} 项高风险优化，可能影响系统稳定性。`
+      } : {}
     );
     if (!ok) { setCardsSelected(false); return; }
 
     // 高危项逐个红色二次确认（合规强化）
-    const hazardList = batch.filter(o => HAZARD_OPTION_IDS.has(o.id));
     for (const opt of hazardList) {
       const go = await confirmHazard(opt);
       if (!go) { setCardsSelected(false); return; }
     }
 
-    // 执行前统一检查系统还原点（未创建/超 5 天弹警示）
-    await ensureRestorePoint();
+    // 执行前统一检查系统还原点（未创建/超 5 天弹警示；用户最终拒绝则中止）
+    if (!(await ensureRestorePoint())) { setCardsSelected(false); return; }
 
     batchRunning = true;
     const btn = document.getElementById('btnOptimizerBatch');
@@ -921,6 +966,7 @@
         if (res && res.success && Array.isArray(res.data)) {
           OPTIONS = res.data;
           activeCategory = getSavedCategory();
+          renderCatNav();
           setCategory(activeCategory);
           bindEvents();
           // 安全托底：异步批量检测注册表项是否已优化（不阻塞首屏，结果回来后增量灰化）
@@ -961,6 +1007,7 @@
   }
 
   function renderFallback() {
+    renderCatNav(); // 浏览器预览模式下也渲染分类栏，保持布局一致
     const root = document.getElementById('optimizerGroups');
     if (root) root.innerHTML = window.emptyState
       ? window.emptyState({ icon: 'search', title: '优化选项需在应用内运行', desc: '当前为浏览器预览模式，请在 Electron 应用内打开「电脑优化中心」使用全部功能' })
@@ -996,7 +1043,7 @@
         if (window.api?.peripheralWindow?.openWindow) {
           window.api.peripheralWindow.openWindow();
         } else {
-          window.app?.toast('info', '外设优化窗口需在 TuneForge 应用内打开');
+          window.app?.toast('info', '外设优化窗口需在 Trim 应用内打开');
         }
         return;
       }
@@ -1056,16 +1103,26 @@
       if (!go) return;
       // 立即执行后自动关闭弹窗
       closeModal();
-      // 执行前检查系统还原点（警示/轻量提醒）
-      await ensureRestorePoint();
+      // 执行前检查系统还原点（警示/风险确认；用户最终拒绝则不执行）
+      if (!(await ensureRestorePoint())) return;
       if (opt.dynamic) {
         const sel = modalOverlay.querySelector('.opt-mem-select');
         const gbVal = sel ? sel.value : 8;
         // 本会话立即记录已应用档位：重开弹窗时该档位按钮置灰
         svcAppliedGb = gbVal;
-        runOptionActive({ gb: gbVal }, opt);
+        // B11：与 runBatch 对齐 —— await + try/catch，避免浮动 Promise 变成
+        // unhandled rejection（用户侧表现为「点击后毫无反应」）
+        try {
+          await runOptionActive({ gb: gbVal }, opt);
+        } catch (e) {
+          window.app?.toast('error', '优化执行失败: ' + (e.message || e));
+        }
       } else {
-        runOptionActive({}, opt);
+        try {
+          await runOptionActive({}, opt);
+        } catch (e) {
+          window.app?.toast('error', '优化执行失败: ' + (e.message || e));
+        }
       }
     });
     modalOverlay.querySelector('.opt-modal-restore').addEventListener('click', async () => {

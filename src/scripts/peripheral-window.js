@@ -115,7 +115,7 @@
     document.getElementById('btnPeriClose')?.addEventListener('click', close);
 
     document.getElementById('btnPeriApply')?.addEventListener('click', async () => {
-      if (!window.api?.peripheralWindow?.apply) { toast('info', '请在 TuneForge 应用内使用该功能'); return; }
+      if (!window.api?.peripheralWindow?.apply) { toast('info', '请在 Trim 应用内使用该功能'); return; }
       const payload = {};
       Object.keys(GROUPS).forEach(key => { payload[key] = selected[key] ?? -1; });
       if (Object.keys(GROUPS).every(key => payload[key] === -1)) {
@@ -130,7 +130,7 @@
           toast('success', '已应用到注册表' + (payload.keyboard !== -1 || payload.mouse !== -1 ? '，键鼠队列大小重启电脑后生效' : ''));
           await loadCurrent();
         } else {
-          toast('error', resp?.message || '应用失败，可能需要以管理员身份运行 TuneForge');
+          toast('error', resp?.message || '应用失败，可能需要以管理员身份运行 Trim');
         }
       } catch (e) {
         toast('error', '应用失败：' + e.message);
@@ -140,7 +140,7 @@
     });
 
     document.getElementById('btnPeriReset')?.addEventListener('click', async () => {
-      if (!window.api?.peripheralWindow?.apply) { toast('info', '请在 TuneForge 应用内使用该功能'); return; }
+      if (!window.api?.peripheralWindow?.apply) { toast('info', '请在 Trim 应用内使用该功能'); return; }
       const btn = document.getElementById('btnPeriReset');
       btn.disabled = true;
       try {
@@ -153,7 +153,7 @@
           toast('success', '已恢复 Windows 默认值，键鼠队列大小重启电脑后生效');
           await loadCurrent();
         } else {
-          toast('error', resp?.message || '恢复失败，可能需要以管理员身份运行 TuneForge');
+          toast('error', resp?.message || '恢复失败，可能需要以管理员身份运行 Trim');
         }
       } catch (e) {
         toast('error', '恢复失败：' + e.message);

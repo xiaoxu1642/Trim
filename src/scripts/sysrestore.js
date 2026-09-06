@@ -127,11 +127,12 @@
       window.app?.toast('error', '创建功能仅在 Electron 环境中可用');
       return;
     }
-    const ok = await window.app.confirm(
+    const ok = await window.app.confirmDanger(
       '创建系统还原点',
-      '系统还原点用于系统异常时一键回退。\n\n即将为所有已启用保护的磁盘创建还原点，是否继续？',
+      '系统还原点用于系统异常时一键回退。\n\n即将为所有已启用保护的磁盘创建还原点。',
       '创建',
-      '取消'
+      '取消',
+      '此操作为系统级操作，创建过程可能需要数十秒，请确认当前无其他系统任务正在进行。'
     );
     if (!ok) return;
     const btn = q('#btnRestoreCreate');

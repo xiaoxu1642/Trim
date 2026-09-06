@@ -138,7 +138,7 @@
                          value="${escapeAttr(cfg.apiKey || '')}" placeholder="请输入密钥（默认留空，保存后校验通过方可启用）" autocomplete="off" />
                   <button class="btn btn-secondary btn-small" data-role="toggleKey" data-model="${key}" type="button">显示</button>
                 </div>
-                <span class="mw-field-tip">密钥仅保存在本机 %APPDATA%\\TuneForge\\settings.json，不会写入日志；留空保存时不会发起校验</span>
+                <span class="mw-field-tip">密钥仅保存在本机 %APPDATA%\\Trim\\settings.json，不会写入日志；留空保存时不会发起校验</span>
               </div>
             </div>
             ${isBaiduPro ? `

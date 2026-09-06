@@ -329,7 +329,7 @@ function Scan-ShellItems {
       if (\$commandKey) { \$command = Get-DirectString ([string]\$commandKey.GetValue('')) }
 
       # 启用状态：LegacyDisable / Blocked 值存在即视为已禁用（Windows 自身的禁用约定）；
-      # 键名带 'AutorunsDisabled_' 前缀为 Autoruns 的重命名禁用约定，同样视为已禁用
+      # 键名带 'AutorunsDisabled_' 前缀为重命名禁用约定，同样视为已禁用
       \$enabled = \$true
       foreach (\$vn in @('LegacyDisable', 'Blocked')) {
         if (\$null -ne \$key.GetValue(\$vn)) { \$enabled = \$false; break }
@@ -341,7 +341,7 @@ function Scan-ShellItems {
 }
 
 # ==================== ShellEx 项扫描（对齐 GetPathAndGuids） ====================
-# 读取 ContextMenuHandlers（含 Autoruns 约定的禁用形态）：
+# 读取 ContextMenuHandlers（含禁用重命名形态）：
 #   - 子键名以 '-' 开头（如 -Foo）→ 已禁用的单个处理器，输出时还原名称并标记 enabled=false
 #   - 父键被改名为 '-ContextMenuHandlers' → 整组禁用，由 Scan-Scene 以 HandlersDirName 指定扫描
 function Scan-ShellExHandlers {
@@ -627,7 +627,7 @@ if (Test-Path -LiteralPath \$manifestPath) {
 [pscustomobject]@{ success = ((\$imported + \$restored) -gt 0 -and \$failed -eq 0); backupDir = \$latestBackup; imported = \$imported; restored = \$restored; failed = \$failed } | ConvertTo-Json -Compress
 `;
 
-// 启停切换脚本（Autoruns 交互模式：勾选=启用，取消=禁用，可逆操作）
+// 启停切换脚本（勾选=启用，取消=禁用，可逆操作）
 // 禁用/启用约定：
 //   - shell 项：写入/删除 LegacyDisable 值（Windows 自身禁用动词的约定；顺带清理 Blocked）
 //   - shellex 项：处理器键名加/去 '-' 前缀（重命名，可逆）
@@ -683,7 +683,7 @@ foreach (\$item in @(\$items)) {
 
     if (\$source -eq 'shell') {
       # shell 动词：LegacyDisable / Blocked 值的写入与清除；
-      # 启用时兼容还原 Autoruns 的 'AutorunsDisabled_' 前缀重命名
+      # 启用时兼容还原 'AutorunsDisabled_' 前缀重命名
       # （Split-Path 对 'Registry::' 路径会报参数集冲突，用字符串切分）
       \$sepIdx = \$regPath.LastIndexOf('\\')
       \$leaf = if (\$sepIdx -ge 0) { \$regPath.Substring(\$sepIdx + 1) } else { \$regPath }

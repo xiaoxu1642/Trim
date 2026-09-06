@@ -311,17 +311,22 @@
     }
 
     // 绑定看板：getContainer() 每次返回当前布局容器（看板容器可能随重渲染重建）。
-    // 窗口 resize → 防抖 120ms 后重排（带 FLIP 动画）；
-    // 低频 interval 托底检测容器宽度变化（页面由隐藏变可见等场景，无动画；不依赖 rAF，
-    // 避免窗口失焦时 requestAnimationFrame 被节流导致布局失效）。
-    // 返回 { relayout(animate) }：渲染层在重新渲染 DOM 后调用以立即布局。
+    // B7：用 ResizeObserver 替代原先 300ms 常驻轮询——容器尺寸变化才触发重排，
+    // 彻底消除定时强制回流；容器随重渲染重建时在 check/relayout 里重新挂载观察。
+    // 窗口 resize → 防抖 120ms 后重排（带 FLIP 动画）。
+    // 返回 { relayout(animate), dispose() }：渲染层在重新渲染 DOM 后调用 relayout 立即布局，
+    // 页面销毁时调用 dispose 释放观察器与监听。
     function attach(getContainer, cardSelector, opts) {
       const gap = (opts && opts.gap) != null ? opts.gap : 14;
       const minCard = (opts && opts.minCard) || 246;
       let lastW = -1;
+      let ro = null;
+      let roTarget = null;
+      let resizeTimer = null;
+      let disposed = false;
       function force(animate) {
         const container = getContainer();
-        if (!container) return;
+        if (!container || !container.isConnected) return; // 未挂载直接跳过
         const w = container.clientWidth;
         if (w <= 0) return;               // 页面隐藏时不布局，留待可见后重排
         const cap = animate && lastW > 0 ? capture(container, cardSelector) : null;
@@ -329,19 +334,38 @@
         if (cap) play(container, cardSelector, cap);
         lastW = w;
       }
-      function check(animate) {
+      function syncObserver() {
+        if (disposed || typeof ResizeObserver !== 'function') return;
         const container = getContainer();
-        const w = container ? container.clientWidth : 0;
+        if (!container || !container.isConnected) return;
+        if (roTarget === container) return;
+        if (!ro) ro = new ResizeObserver(() => check(false));
+        if (roTarget) ro.unobserve(roTarget);
+        roTarget = container;
+        ro.observe(container);
+      }
+      function check(animate) {
+        if (disposed) return;
+        syncObserver();
+        const container = getContainer();
+        if (!container || !container.isConnected) return; // 未挂载直接跳过
+        const w = container.clientWidth;
         if (w <= 0 || w === lastW) return; // 宽度未变化时跳过（重渲染由 relayout 强制布局）
         force(animate);
       }
-      let timer = null;
       window.addEventListener('resize', () => {
-        clearTimeout(timer);
-        timer = setTimeout(() => check(true), 120); // resize 防抖 120ms
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => check(true), 120); // resize 防抖 120ms
       }, { passive: true });
-      setInterval(() => check(false), 300); // 宽度变化托底（显示切换等）
-      return { relayout(animate) { force(!!animate); } };
+      syncObserver();
+      return {
+        relayout(animate) { force(!!animate); syncObserver(); },
+        dispose() {
+          disposed = true;
+          if (ro) { ro.disconnect(); ro = null; roTarget = null; }
+          clearTimeout(resizeTimer);
+        }
+      };
     }
 
     return { layout, attach };

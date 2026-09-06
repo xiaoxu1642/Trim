@@ -5,7 +5,7 @@
   <meta name="theme-color" content="#202020" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:;" />
   <title>外设优化</title>
-  <link rel="icon" href="../ico/ico/TuneForge.ico" />
+  <link rel="icon" href="./assets/ico/Trim.ico" />
   <link rel="stylesheet" href="styles/main.css" />
 </head>
 <body class="peripheral-window">
@@ -64,7 +64,11 @@
     </div>
   </div>
 
+  <!-- 子窗口材质/主题同步：electron-mica + data-material + 主题类（预览窗不加载） -->
+  <script src="scripts/window-material.js"></script>
   <script src="scripts/theme.js"></script>
+  <!-- 液态玻璃引擎：子窗口与主窗共用四档效果（按钮折射/弹性形动），分段栏等选择器在子窗无命中自动跳过 -->
+  <script src="scripts/liquid-glass.js"></script>
   <script src="scripts/peripheral-window.js"></script>
 </body>
 </html>

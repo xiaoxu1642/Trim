@@ -39,9 +39,9 @@
     const cats = ['全部', ...categories];
     el.innerHTML = cats.map(c => {
       const active = c === activeCat ? ' active' : '';
-      return `<button class="maint-tab${active}" data-cat="${escapeHtml(c)}">${escapeHtml(c)}<span class="maint-tab-count">${countFor(c)}</span></button>`;
+      return `<button class="filter-tab${active}" data-cat="${escapeHtml(c)}">${escapeHtml(c)}<span class="maint-tab-count">${countFor(c)}</span></button>`;
     }).join('');
-    el.querySelectorAll('.maint-tab').forEach(btn => {
+    el.querySelectorAll('.filter-tab').forEach(btn => {
       btn.addEventListener('click', () => {
         activeCat = btn.dataset.cat;
         renderTabs();

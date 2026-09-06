@@ -3,6 +3,10 @@
 (function () {
   'use strict';
 
+  // 启动黑闪修复：尽早触发首帧上报（内部等 DOMContentLoaded 后双 rAF 才真正发送，
+  // 主进程收到后才显示主窗口，确保窗口出现即完整 UI）
+  try { window.api?.window?.notifyFirstPaint?.(); } catch (e) {}
+
   // 侧边栏折叠/展开
   const SIDEBAR_KEY = 'winclean-sidebar-collapsed';
 
@@ -25,6 +29,33 @@
     if (!sidebar) return;
     const collapsed = sidebar.classList.toggle('collapsed');
     setSidebarCollapsed(collapsed);
+  }
+
+  // Motion.Lab ripple-click：统一提供轻量按压反馈，采用事件委托覆盖动态创建的弹窗按钮。
+  // 波纹节点绝对定位脱离文档流（见 main.css 的 .btn > .btn-ripple），
+  // 并在 animationend 与兜底定时器双重保障下移除，避免 DOM 累积。
+  var RIPPLE_DURATION = 480;
+  function setupButtonMotion() {
+    document.addEventListener('pointerdown', (event) => {
+      const button = event.target?.closest?.('.btn');
+      if (!button || button.disabled || button.getAttribute('aria-disabled') === 'true') return;
+      // 偏好减弱动效时完全不建节点，避免 animationend 不触发造成的泄漏
+      if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      const rect = button.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      const ripple = document.createElement('span');
+      ripple.className = 'btn-ripple';
+      ripple.style.left = `${event.clientX - rect.left}px`;
+      ripple.style.top = `${event.clientY - rect.top}px`;
+      const diameter = Math.max(rect.width, rect.height) * 1.35;
+      ripple.style.width = `${diameter}px`;
+      ripple.style.height = `${diameter}px`;
+      const remove = () => ripple.remove();
+      ripple.addEventListener('animationend', remove, { once: true });
+      // 兜底：若动画被浏览器跳过（标签页后台、reduced-motion 中途切换等），仍能清理节点
+      setTimeout(remove, RIPPLE_DURATION + 200);
+      button.appendChild(ripple);
+    }, { passive: true });
   }
 
   // 侧边栏子菜单（父级条目箭头）展开/折叠状态持久化
@@ -57,7 +88,9 @@
       // 展开时回填带缓冲的 max-height：内容高度 + 缓冲，避免展开后滚动条出现/文本回流导致的轻微裁切
       // （收起时清空内联样式，回退到 CSS 的 max-height:0）
       if (expanded) {
-        submenu.style.maxHeight = Math.max(600, submenu.scrollHeight + 40) + 'px';
+        // 只为内容高度增加少量缓冲，避免固定 600px 把侧栏黑底撑到页底。
+        // 上限仍保留，防止极长分类树把底部设置区推出可视范围。
+        submenu.style.maxHeight = Math.min(600, submenu.scrollHeight + 16) + 'px';
       } else {
         submenu.style.maxHeight = '';
       }
@@ -79,7 +112,52 @@
   // 路由
   const ACTIVE_PAGE_KEY = 'winclean-active-page';
 
+  // 磁盘清理五合一：原五个独立页面收拢为 page-cleanup 内的分段视图
+  const CLEANUP_VIEWS = ['cleanup', 'cleanup-dups', 'cleanup-big', 'cleanup-empty', 'cleanup-appdata'];
+  const CLEANUP_VIEW_KEY = 'winclean-cleanup-view';
+
+  function getCleanupView() {
+    try {
+      const v = localStorage.getItem(CLEANUP_VIEW_KEY);
+      return CLEANUP_VIEWS.indexOf(v) > -1 ? v : 'cleanup';
+    } catch (e) { return 'cleanup'; }
+  }
+
+  function setCleanupView(name, persist = true) {
+    const view = CLEANUP_VIEWS.indexOf(name) > -1 ? name : 'cleanup';
+    const tabs = document.getElementById('cleanupTabs');
+    tabs?.querySelectorAll('.filter-tab').forEach(t => {
+      const on = t.dataset.cleanupView === view;
+      t.classList.toggle('active', on);
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    document.querySelectorAll('.cleanup-view').forEach(v => {
+      v.classList.toggle('active', v.dataset.cleanupPanel === view);
+    });
+    // 操作行与分段栏同行（窗口界面升级3）：仅显示当前子视图的操作按钮
+    document.querySelectorAll('.cleanup-toolbar-actions').forEach(el => {
+      el.classList.toggle('active', el.dataset.actionsFor === view);
+    });
+    // 大标题简介跟随子视图切换
+    const subtitle = document.getElementById('cleanupSubtitle');
+    const tab = tabs?.querySelector(`.filter-tab[data-cleanup-view="${view}"]`);
+    if (subtitle && tab?.dataset.subtitle) subtitle.textContent = tab.dataset.subtitle;
+    if (persist) {
+      try { localStorage.setItem(CLEANUP_VIEW_KEY, view); } catch (e) {}
+    }
+    // 查找器子视图：确保脚本已初始化（finder 内部幂等）
+    if (view !== 'cleanup') window.finder?.ensureInit?.();
+    // 带动画刷新液态滑块（升级3：修复切换分段无动效——此前 refreshAll(false)
+    // 在点击动画调度之后执行并把 schedulePlace 改写为无动画落位）
+    window.liquidBar?.refreshAll?.(true);
+  }
+
   function switchPage(pageName) {
+    // 磁盘清理五合一：旧子页地址（cleanup-dups 等）统一映射到主页并恢复对应分段
+    if (CLEANUP_VIEWS.indexOf(pageName) > -1) {
+      setCleanupView(pageName === 'cleanup' ? getCleanupView() : pageName, false);
+      pageName = 'cleanup';
+    }
     // 持久化活跃页（窗口状态记忆：启动恢复上次页面）
     try { localStorage.setItem(ACTIVE_PAGE_KEY, pageName); } catch (e) {}
     document.querySelectorAll('.nav-item').forEach(el => {
@@ -112,48 +190,33 @@
     else overview.stop();
     // 网络测速：仅点击"开始测速"按钮后才加载网页；离开本页回收 iframe 与采样定时器
     if (pageName !== 'netspeed') window.netspeed?.stop?.();
+    // 液态玻璃滑块：页面重新显示后重新对齐（隐藏页内的滑块尺寸此前为 0）
+    window.liquidBar?.refreshAll?.(false);
   }
 
-  // 模态确认（统一使用 .usage-backdrop > .usage-modal 三段式，与「去设置」弹窗一致）
-  function confirm(title, message, confirmText = '确认', cancelText = '取消') {
-    return new Promise(resolve => {
-      const backdrop = document.createElement('div');
-      backdrop.className = 'usage-backdrop';
-      backdrop.id = 'appConfirmBackdrop';
-      backdrop.innerHTML = `
-        <div class="usage-modal" role="dialog" aria-modal="true" aria-labelledby="appConfirmTitle">
-          <div class="usage-header">
-            <h2 id="appConfirmTitle">${escapeHtml(title)}</h2>
-            <button class="usage-close" type="button" title="关闭" aria-label="关闭">&times;</button>
-          </div>
-          <div class="usage-body" id="appConfirmBody"></div>
-          <div class="usage-footer">
-            <span class="model-picker-spacer"></span>
-            <button class="btn btn-secondary" id="appConfirmCancel" type="button">${escapeHtml(cancelText)}</button>
-            <button class="btn btn-primary" id="appConfirmOk" type="button">${escapeHtml(confirmText)}</button>
-          </div>
-        </div>`;
-      document.body.appendChild(backdrop);
-
-      const body = backdrop.querySelector('#appConfirmBody');
-      if (body) body.innerHTML = escapeHtml(message).replace(/\n/g, '<br>');
-
-      const btnConfirm = backdrop.querySelector('#appConfirmOk');
-      const btnCancel = backdrop.querySelector('#appConfirmCancel');
-
-      function cleanup(result) {
-        document.removeEventListener('keydown', escHandler);
-        backdrop.remove();
-        resolve(result);
-      }
-      function escHandler(e) { if (e.key === 'Escape') cleanup(false); }
-
-      btnConfirm.addEventListener('click', () => cleanup(true));
-      btnCancel.addEventListener('click', () => cleanup(false));
-      backdrop.querySelector('.usage-close').addEventListener('click', () => cleanup(false));
-      backdrop.addEventListener('click', e => { if (e.target === backdrop) cleanup(false); });
-      document.addEventListener('keydown', escHandler);
+  // 模态确认：统一代理到 modal.confirm（单一实现），支持 danger 红色二次确认。
+  // options: { danger: boolean, dangerHint: string } —— dangerHint 为纯文本红色
+  // 警示，由弹窗模板统一转义渲染；调用方禁止自行拼接 HTML（会被转义成字面文本）。
+  function confirm(title, message, confirmText = '确认', cancelText = '取消', options = {}) {
+    const opts = options || {};
+    if (!window.modal?.confirm) {
+      // 兜底：modal.js 未加载时退回原生确认框，保证确认链路不因脚本加载顺序中断
+      return Promise.resolve(window.confirm(`${title || ''}\n\n${String(message || '')}`));
+    }
+    return window.modal.confirm({
+      title,
+      message,
+      confirmText,
+      cancelText,
+      danger: !!opts.danger,
+      dangerHint: String(opts.dangerHint || '')
     });
+  }
+
+  // 高风险操作语义化入口（规范：高风险清理项、内存深度清理、高危优化项、
+  // 删除类操作必须红色二次确认）。新增高危确认一律走这里，避免遗漏 danger 标记。
+  function confirmDanger(title, message, confirmText = '确认', cancelText = '取消', dangerHint = '') {
+    return confirm(title, message, confirmText, cancelText, { danger: true, dangerHint });
   }
 
   // 应用状态（管理员权限等）
@@ -351,7 +414,7 @@
   async function loadAppInfo() {
     if (!window.api?.app) {
       // 浏览器预览模式
-      setInfo('infoVersion', '1.3.0');
+      setInfo('infoVersion', '2.0.0');
       setInfo('infoElectron', 'N/A');
       setInfo('infoNode', 'N/A');
       setInfo('infoChrome', navigator.userAgent.match(/Chrome\/([\d.]+)/)?.[1] || 'N/A');
@@ -471,6 +534,7 @@
 
   // 初始化
   function init() {
+    setupButtonMotion();
     // 恢复侧边栏折叠状态
     applySidebarState(getSidebarCollapsed());
 
@@ -512,15 +576,8 @@
       }
     });
     document.querySelectorAll('.nav-subitem').forEach(el => {
-      // 分类树子项（data-category）的点击由右键管理模块处理（切换分类筛选，不切页面）
-      if (el.dataset.category !== undefined) return;
+      // 剩余子项仅测速分组（磁盘清理/优化中心/右键管理的分类已收拢为页内分段栏）
       el.addEventListener('click', () => {
-        // 优化中心分类子项：设置分类过滤并切换到优化页
-        if (el.dataset.optcat !== undefined) {
-          window.optimizer?.setCategory?.(el.dataset.optcat);
-          switchPage('optimizer');
-          return;
-        }
         switchPage(el.dataset.page);
       });
     });
@@ -534,7 +591,7 @@
     // 侧边栏滚轮联动：鼠标悬停在导航区（含展开的子菜单）时，
     // 优先滚动侧边栏本身，直到侧边栏滚动到底/顶（全部功能显示完整），
     // 剩余增量再转发到主内容区，避免滚动被展开项"困住"。
-    const navSection = document.querySelector('.nav-section');
+    const navSection = document.querySelector('.nav-scroll');
     const mainContent = document.getElementById('mainContent');
     if (navSection && mainContent) {
       navSection.addEventListener('wheel', (e) => {
@@ -651,15 +708,33 @@
     startup.init();
     window.maintenance?.init?.();
 
+    // 磁盘清理分段视图：分段栏点击切换（液态滑块由 liquid-glass.js 统一监听跟随）
+    document.getElementById('cleanupTabs')?.addEventListener('click', (e) => {
+      const tab = e.target.closest('.filter-tab');
+      if (!tab || tab.classList.contains('active')) return;
+      setCleanupView(tab.dataset.cleanupView);
+    });
+
+    // 设置 - 切换动效：全局液态玻璃强度（完整 / 标准 / 磨砂 / 关闭，旧值 refract 自动迁移为 standard）
+    const liquidSelect = document.getElementById('liquidMotionSelect');
+    if (liquidSelect) {
+      liquidSelect.value = window.liquidBar?.getMode?.() || 'standard';
+      liquidSelect.addEventListener('change', () => {
+        window.liquidBar?.setMode?.(liquidSelect.value);
+      });
+    }
+
     // 字体管理：启动时恢复已保存的字体 / 字重 / 字号设置（默认 MiSans · 400 · 16px）
     window.fontmanager?.restore?.();
 
     // 暴露给其它模块（须在页面模块启动逻辑之前，保证其可调用 app 能力）
-    window.app = { toast, confirm, log, switchPage, loadAppInfo, requestElevation, getState: () => appState };
+    window.app = { toast, confirm, confirmDanger, log, switchPage, loadAppInfo, requestElevation, getState: () => appState };
 
     // 初始加载：恢复上次活跃页（窗口状态记忆），无记录则默认系统概览
     const lastPage = (() => { try { return localStorage.getItem(ACTIVE_PAGE_KEY); } catch (e) { return null; } })();
-    if (lastPage && lastPage !== 'overview' && document.getElementById('page-' + lastPage)) {
+    // 磁盘清理五合一：旧子页地址（cleanup-dups 等）对应 page 已不存在，先归一化到主页
+    const targetPage = lastPage && CLEANUP_VIEWS.indexOf(lastPage) > -1 ? 'cleanup' : lastPage;
+    if (targetPage && targetPage !== 'overview' && document.getElementById('page-' + targetPage)) {
       switchPage(lastPage);
     } else if (document.getElementById('page-overview')?.classList.contains('active')) {
       overview.start();
@@ -671,6 +746,13 @@
     // 监听主进程的优雅关闭请求（用户点击关闭按钮时触发）
     if (window.api?.shutdown?.onRequest) {
       window.api.shutdown.onRequest(startGracefulShutdown);
+    }
+
+    // B5：提权重启后未检测到新实例时，主进程会保持当前实例运行并通知到这里
+    if (window.api?.elevate?.onNotice) {
+      window.api.elevate.onNotice(data => {
+        toast('warning', (data && data.message) || '未检测到新实例启动，已保持当前运行状态');
+      });
     }
 
     // 内存占用优化：窗口最小化/隐藏后主动回收渲染进程堆内存

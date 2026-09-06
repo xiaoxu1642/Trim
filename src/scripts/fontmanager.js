@@ -275,7 +275,7 @@
           </div>
         </div>
         <div class="usage-footer pw-footer">
-          <span class="pw-last-scan">配置保存在本机 %APPDATA%\\TuneForge\\settings.json</span>
+          <span class="pw-last-scan">配置保存在本机 %APPDATA%\\Trim\\settings.json</span>
           <span class="model-picker-spacer"></span>
           <button class="btn btn-secondary" id="fontModalReset" type="button">恢复默认</button>
           <button class="btn btn-primary" id="fontModalApply" type="button">应用</button>

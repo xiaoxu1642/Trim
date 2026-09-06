@@ -125,6 +125,14 @@
 
     let closed = false;
     let escHandler = null;
+
+    // B10：焦点管理统一走 ds.focusTrap（design-system 单一实现）。
+    // 打开时移焦点入弹窗（opts.initialFocus 选择器优先，高危确认聚焦「取消」）、
+    // Tab 循环限制在弹窗内、关闭时归还焦点给触发元素；ds.js 缺席时优雅降级为无陷阱。
+    const trap = (window.ds && typeof window.ds.focusTrap === 'function')
+      ? window.ds.focusTrap(modalEl, { initialFocus: opts.initialFocus || null })
+      : { release() {} };
+
     const ctrl = {
       backdrop,
       modal: modalEl,
@@ -135,6 +143,7 @@
         closed = true;
         document.removeEventListener('keydown', escHandler);
         backdrop.remove();
+        trap.release();
         if (opts.onClose) opts.onClose('close');
       }
     };
@@ -154,18 +163,28 @@
   }
 
   // 便捷确认框：返回 Promise<boolean>（任意方式关闭都 resolve false）
-  function confirm({ title = '确认', message = '', confirmText = '确认', cancelText = '取消', danger = false }) {
+  // danger=true 渲染红色确认按钮（规范要求：高风险操作必须红色二次确认）。
+  // dangerHint 为结构化红色警示文案：纯文本由模板统一转义渲染，
+  // 调用方禁止自行拼接 HTML 字符串（会被 escapeHtml 转义成字面文本）。
+  function confirm({ title = '确认', message = '', confirmText = '确认', cancelText = '取消', danger = false, dangerHint = '' }) {
     return new Promise(resolve => {
       let settled = false;
       const finish = v => { if (!settled) { settled = true; resolve(v); } };
+      const hintHtml = dangerHint
+        ? `<div class="confirm-danger-hint" role="alert"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg><span>${escapeHtml(dangerHint)}</span></div>`
+        : '';
       const ctrl = create({
-        id: 'confirmModal',
+        // 每个确认框使用唯一 id：允许多个确认框并存（如连续的批量高危确认），
+        // 避免固定 id 互相顶掉导致前一个 Promise 永不 resolve
+        id: 'confirmModal-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
         title,
-        bodyHtml: `<div class="confirm-message">${escapeHtml(message).replace(/\n/g, '<br>')}</div>`,
+        bodyHtml: `<div class="confirm-message">${escapeHtml(message).replace(/\n/g, '<br>')}</div>${hintHtml}`,
         footerHtml: `
           <span class="model-picker-spacer"></span>
           <button class="btn btn-secondary" data-confirm="cancel" type="button">${escapeHtml(cancelText)}</button>
           <button class="btn ${danger ? 'btn-danger' : 'btn-primary'}" data-confirm="ok" type="button">${escapeHtml(confirmText)}</button>`,
+        // B10：高危操作默认聚焦「取消」（防回车误触确认）；普通确认聚焦主按钮
+        initialFocus: danger ? '[data-confirm="cancel"]' : '[data-confirm="ok"]',
         onClose() { finish(false); }
       });
       ctrl.footer.querySelector('[data-confirm="ok"]').addEventListener('click', () => { finish(true); ctrl.close(); });

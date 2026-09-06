@@ -115,6 +115,9 @@
     }
     loading = true;
     setScanBusy(true);
+    // 阶段二：扫描期间以骨架屏占位（ds.skeletonRows），完成后由 render()/renderError() 替换
+    const skeletonList = el('startupList');
+    if (skeletonList && window.ds) skeletonList.innerHTML = window.ds.skeletonRows(6);
     try {
       const resp = await window.api.startup.scan();
       if (!resp || !resp.success) {
@@ -179,9 +182,10 @@
 
     listEl.innerHTML = filtered.map(i => {
       const meta = SOURCE_META[i.source] || SOURCE_META.registry;
+      // 阶段三：徽章统一 design-system（ds-badge sm）；ds 缺席时回退旧标记
       const badge = i.enabled
-        ? '<span class="startup-badge on">启用</span>'
-        : '<span class="startup-badge off">已禁用</span>';
+        ? (window.ds ? window.ds.badgeHtml('ok', '启用', { small: true }) : '<span class="startup-badge on">启用</span>')
+        : (window.ds ? window.ds.badgeHtml('warn', '已禁用', { small: true }) : '<span class="startup-badge off">已禁用</span>');
       const cmd = i.command || '';
       const loc = i.location || meta.label;
       const pub = i.publisher ? `<span class="startup-item-pub" title="发布者">${escapeHtml(i.publisher)}</span>` : '';
@@ -190,13 +194,14 @@
         : '';
       const locPath = i.resolvedPath || i.filePath || '';
       const locBtn = locPath
-        ? `<button class="btn btn-small btn-opt-loc" data-id="${escapeHtml(i.id)}" data-path="${escapeHtml(locPath)}" title="打开文件所在位置">位置</button>`
+        ? `<button class="btn btn-small btn-opt-loc" data-id="${escapeHtml(i.id)}" data-path="${escapeHtml(locPath)}" data-tip="打开文件所在位置">位置</button>`
         : '';
       return `
         <div class="startup-item ${i.enabled ? '' : 'disabled'}" data-id="${escapeHtml(i.id)}">
-          <input type="checkbox" class="startup-check startup-item-check" data-id="${escapeHtml(i.id)}" title="选择该项">
+          <input type="checkbox" class="startup-check startup-item-check" data-id="${escapeHtml(i.id)}" aria-label="选择 ${escapeHtml(i.name || '未命名')}">
           <div class="startup-item-icon ${meta.cls}">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
+            <svg class="startup-item-glyph" viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
+            <img class="startup-item-icon-img" alt="" width="18" height="18" data-icon-path="${escapeHtml(locPath)}" hidden>
           </div>
           <div class="startup-item-info">
             <div class="startup-item-title">${escapeHtml(i.name || '未命名')} ${badge}</div>
@@ -206,9 +211,9 @@
           <div class="startup-item-ops">
             ${locBtn}
             ${i.enabled
-              ? `<button class="btn btn-small btn-opt-toggle off" data-id="${escapeHtml(i.id)}" data-act="disable" title="禁用（可逆）">禁用</button>`
-              : `<button class="btn btn-small btn-opt-toggle on" data-id="${escapeHtml(i.id)}" data-act="enable" title="重新启用">启用</button>`}
-            <button class="btn btn-small btn-opt-del" data-id="${escapeHtml(i.id)}" data-act="delete" title="备份后删除">删除</button>
+              ? `<button class="btn btn-small btn-opt-toggle off" data-id="${escapeHtml(i.id)}" data-act="disable" data-tip="禁用（可逆）">禁用</button>`
+              : `<button class="btn btn-small btn-opt-toggle on" data-id="${escapeHtml(i.id)}" data-act="enable" data-tip="重新启用">启用</button>`}
+            <button class="btn btn-small btn-opt-del" data-id="${escapeHtml(i.id)}" data-act="delete" data-tip="备份后删除">删除</button>
           </div>
         </div>`;
     }).join('') + `
@@ -217,6 +222,37 @@
         <button class="btn btn-secondary btn-small" id="btnStartupEnableBulk">启用所选</button>
         <button class="btn btn-danger btn-small" id="btnStartupDeleteBulk">删除所选</button>
       </div>`;
+
+    // B2：有路径的项提取真实程序图标，失败或无路径时统一兜底为 Trim.ico
+    applyStartupIcons(listEl);
+  }
+
+  // 启动项图标异步应用：优先 fileIcon(项路径)，失败回退 Trim.ico（icon-fallback 共享缓存）；
+  // 图标都不可用时保留源类型 SVG 色块作为降级展示。
+  async function applyStartupIcons(container) {
+    if (!container || !window.iconFallback || !window.api?.paths?.fileIcon) return;
+    const imgs = container.querySelectorAll('.startup-item-icon-img');
+    if (!imgs.length) return;
+    const fallbackUrl = await window.iconFallback.getFallbackUrl();
+    imgs.forEach(img => {
+      if (img.dataset.iconDone) return;
+      img.dataset.iconDone = '1';
+      const p = img.getAttribute('data-icon-path');
+      const show = (url) => {
+        if (!url) return;
+        img.src = url;
+        img.hidden = false;
+        const glyph = img.parentElement && img.parentElement.querySelector('.startup-item-glyph');
+        if (glyph) glyph.style.display = 'none';
+      };
+      if (p) {
+        window.api.paths.fileIcon(p)
+          .then(r => show(r && r.success && r.dataUrl ? r.dataUrl : fallbackUrl))
+          .catch(() => show(fallbackUrl));
+      } else {
+        show(fallbackUrl);
+      }
+    });
   }
 
   function renderError(msg) {
@@ -293,11 +329,13 @@
 
   async function doDelete(selItems) {
     if (!selItems.length) return;
-    const ok = await window.app.confirm(
+    // 删除类操作：规范要求红色二次确认
+    const ok = await window.app.confirmDanger(
       '删除启动项',
-      `将删除以下 ${selItems.length} 个启动项（删除前会自动备份）：\n${selItems.map(i => '· ' + i.name).join('\n')}\n\n此操作不可逆，是否继续？`,
+      `将删除以下 ${selItems.length} 个启动项（删除前会自动备份）：\n${selItems.map(i => '· ' + i.name).join('\n')}`,
       '删除',
-      '取消'
+      '取消',
+      '此操作不可逆，删除后需重新配置才能恢复。'
     );
     if (!ok) return;
     try {

@@ -26,36 +26,66 @@
     const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
     return String(s == null ? '' : s).replace(/[&<>"']/g, m => map[m]);
   }
-  // 进度条颜色：按使用率分档
-  function barColor(p) {
-    if (p >= 90) return 'linear-gradient(90deg, #DC2626, #EF4444)';
-    if (p >= 70) return 'linear-gradient(90deg, #D97706, #F59E0B)';
-    return '';
-  }
+  // 进度条风险分档：>=90 危险(danger) / >=75 警告(warning) / 否则正常(accent)。
+  // 颜色统一由 CSS 根据 data-level 取语义 token，不在 JS 内写死颜色。
   function setBar(id, percent) {
     const bar = $(id);
     if (!bar) return;
     const p = Math.max(0, Math.min(100, Number(percent) || 0));
     bar.style.width = p + '%';
-    bar.style.background = barColor(p) || '';
+    const level = p >= 90 ? 'danger' : p >= 75 ? 'warning' : 'normal';
+    bar.setAttribute('data-level', level);
+  }
+
+  // ===== 系统健康度（纯展示层计算，不伪造业务结果）=====
+  // 仅基于已有 CPU / 内存 / 系统盘占用；三项数据都缺失时返回 null（界面显示 -- / 待检测）。
+  function computeHealth(cpu, memP, diskP) {
+    const hasCpu = isFinite(cpu), hasMem = isFinite(memP), hasDisk = isFinite(diskP);
+    if (!hasCpu && !hasMem && !hasDisk) return null;
+    const c = hasCpu ? cpu : 0, m = hasMem ? memP : 0, dsk = hasDisk ? diskP : 0;
+    let score = 100;
+    const danger = [], warn = [];
+    if (c >= 90) { score -= 25; danger.push('CPU 负载过高'); }
+    else if (c >= 70) { score -= 12; warn.push('CPU 占用偏高'); }
+    if (m >= 90) { score -= 25; danger.push('内存接近满载'); }
+    else if (m >= 75) { score -= 12; warn.push('内存占用偏高'); }
+    if (dsk >= 90) { score -= 20; danger.push('系统盘空间不足'); }
+    else if (dsk >= 80) { score -= 10; warn.push('系统盘空间偏紧'); }
+    score = Math.max(0, Math.min(100, Math.round(score)));
+    const level = score < 70 ? 'bad' : score < 85 ? 'warn' : 'good';
+    let advice = '状态良好，系统运行流畅';
+    if (danger.length) advice = '建议尽快处理：' + danger[0];
+    else if (warn.length) advice = '可优化：' + warn[0];
+    return { score, level, advice };
+  }
+
+  function renderHealth(h, uptime) {
+    const adviceEl = $('ovHealthAdvice');
+    // 按用户要求，首页健康度只显示一个克制的状态文案。
+    if (adviceEl) adviceEl.textContent = '状态良好';
   }
 
   // ===== 实时指标渲染 =====
   function renderMetrics(data) {
     const d = data || {};
-    const cpu = Number(d.cpu) || 0;
+    const cpu = Number(d.cpu);
     const cpuEl = $('ovCpuValue');
-    if (cpuEl) cpuEl.textContent = fmtPercent(cpu);
-    setBar('ovCpuBar', cpu);
+    if (cpuEl) cpuEl.textContent = isFinite(cpu) ? fmtPercent(cpu) : '--';
+    setBar('ovCpuBar', isFinite(cpu) ? cpu : 0);
+    const cpuSub = $('ovCpuSub');
+    if (cpuSub) cpuSub.textContent = (d.processes != null) ? ('进程 ' + d.processes) : '处理器实时负载';
 
     const mem = d.memory || {};
+    const memP = Number(mem.percent);
     const memEl = $('ovMemValue');
-    if (memEl) memEl.textContent = fmtPercent(mem.percent) + ' · ' + fmtBytes(mem.used) + ' / ' + fmtBytes(mem.total);
-    setBar('ovMemBar', mem.percent);
+    if (memEl) memEl.textContent = isFinite(memP) ? fmtPercent(memP) : '--';
+    setBar('ovMemBar', isFinite(memP) ? memP : 0);
+    const memSub = $('ovMemSub');
+    if (memSub) memSub.textContent = (mem.total > 0) ? (fmtBytes(mem.used) + ' / ' + fmtBytes(mem.total)) : '内存占用';
 
-    const uptimeEl = $('ovUptimeValue');
-    if (uptimeEl) uptimeEl.textContent = d.uptime || '--';
-    renderDisks(d.disks || []);
+    const primary = renderDisks(d.disks || []);
+    const diskP = primary ? Number(primary.percent) : NaN;
+    renderHealth(computeHealth(cpu, memP, diskP), d.uptime);
   }
 
   // 概览卡片布局：非最大化 2x2（两列两行），最大化一行展示全部
@@ -74,20 +104,23 @@
 
   function renderDisks(disks) {
     const valueEl = $('ovDiskValue');
-    if (!valueEl) return;
     const labelEl = $('ovDiskLabel');
+    const subEl = $('ovDiskSub');
     if (!disks || !disks.length) {
-      valueEl.textContent = '--';
+      if (valueEl) valueEl.textContent = '--';
       setBar('ovDiskBar', 0);
-      if (labelEl) labelEl.textContent = '磁盘使用';
-      return;
+      if (labelEl) labelEl.textContent = '磁盘';
+      if (subEl) subEl.textContent = '';
+      return null;
     }
     // 优先系统盘(通常 C:)，否则取第一个磁盘作为主磁盘
     const primary = disks.find(d => /^c:/i.test(String(d.name || ''))) || disks[0];
     const p = Math.max(0, Math.min(100, Number(primary.percent) || 0));
-    valueEl.textContent = fmtPercent(p) + ' · ' + fmtBytes(primary.used) + ' / ' + fmtBytes(primary.total);
-    if (labelEl) labelEl.textContent = (primary.name || '磁盘') + ' 磁盘使用';
+    if (valueEl) valueEl.textContent = (primary.name || '磁盘') + ' ' + fmtPercent(p);
+    if (labelEl) labelEl.textContent = '磁盘';
+    if (subEl) subEl.textContent = fmtBytes(primary.used) + ' / ' + fmtBytes(primary.total);
     setBar('ovDiskBar', p);
+    return primary;
   }
 
   // ===== 硬件信息（首次扫描缓存，后期手动刷新才更新） =====
@@ -189,9 +222,14 @@
     $('btnOverviewRefresh')?.addEventListener('click', refresh);
     // 概览卡片整卡跳转：内存卡 → 内存清理，磁盘卡 → 磁盘清理（data-jump 指定目标页）
     document.querySelectorAll('.overview-jump-card').forEach(card => {
-      card.addEventListener('click', () => {
+      const go = () => {
         const page = card.dataset.jump;
         if (page) window.app?.switchPage(page);
+      };
+      card.addEventListener('click', go);
+      // 键盘可达：role=button + tabindex=0，Enter/Space 触发
+      card.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); }
       });
     });
   }

@@ -25,7 +25,27 @@ contextBridge.exposeInMainWorld('api', {
     maximize: () => ipcRenderer.send('window:maximize'),
     close: () => ipcRenderer.send('window:close'),
     updateOverlay: (isDark) => ipcRenderer.invoke('window:update-overlay', { isDark }),
-    onResized: (callback) => ipcRenderer.on('window:resized', (_, bounds) => callback(bounds))
+    onResized: (callback) => ipcRenderer.on('window:resized', (_, bounds) => callback(bounds)),
+    // 启动黑闪修复：DOMContentLoaded 后连排两个 rAF（确保首帧 UI 已真实提交合成），
+    // 再通知主进程显示窗口。主进程按 sender 识别窗口，仅主窗口首个通知生效。
+    // rAF 万一被节流，用 200ms 定时器竞速兜底，保证通知一定能发出。
+    notifyFirstPaint: () => {
+      let sent = false;
+      const send = () => {
+        if (sent) return;
+        sent = true;
+        try { ipcRenderer.send('app:first-paint'); } catch (e) {}
+      };
+      const arm = () => {
+        requestAnimationFrame(() => requestAnimationFrame(send));
+        setTimeout(send, 200);
+      };
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', arm, { once: true });
+      } else {
+        arm();
+      }
+    }
   },
 
   // 日志
@@ -41,6 +61,16 @@ contextBridge.exposeInMainWorld('api', {
     scan: (categories) => ipcRenderer.invoke('cleanup:scan', { categories }),
     execute: (items, force = false) => ipcRenderer.invoke('cleanup:execute', { items, force }),
     onScanProgress: (callback) => ipcRenderer.on('cleanup:scan-progress', (_, data) => callback(data))
+  },
+
+  // 磁盘清理 · Rust 原生查找器（重复/大文件/空/AppData）
+  finder: {
+    scan: (scanType, opts = {}) => ipcRenderer.invoke('finder:scan', { scanType, ...opts }),
+    delete: (items) => ipcRenderer.invoke('finder:delete', { items }),
+    onProgress: (callback) => ipcRenderer.on('finder:progress', (_, data) => callback(data)),
+    // 删除清单：查看最近删除项（含是否已进回收站）与打开清单目录
+    deleteManifest: () => ipcRenderer.invoke('finder:delete-manifest'),
+    openBackupDir: () => ipcRenderer.invoke('finder:open-backup-dir')
   },
 
   // 右键菜单
@@ -106,6 +136,10 @@ contextBridge.exposeInMainWorld('api', {
   appearance: {
     getMaterial: () => ipcRenderer.invoke('appearance:get-material'),
     setMaterial: (material) => ipcRenderer.invoke('appearance:set-material', { material }),
+    // 材质总开关（窗口界面升级3）：关闭 = 生效材质置 none，所选材质保留记忆
+    setMaterialEnabled: (enabled) => ipcRenderer.invoke('appearance:set-material-enabled', { enabled }),
+    // 材质变更广播（主进程会发给全部存活窗口，子窗口的 window-material.js 依赖）
+    onMaterialChanged: (callback) => ipcRenderer.on('appearance:material-changed', (_, material) => callback(material)),
     importBg: () => ipcRenderer.invoke('appearance:bg-import'),
     deleteBg: (file) => ipcRenderer.invoke('appearance:bg-delete', { file }),
     listBg: () => ipcRenderer.invoke('appearance:bg-list'),
@@ -137,7 +171,7 @@ contextBridge.exposeInMainWorld('api', {
     adapters: () => ipcRenderer.invoke('realtime:adapters'),
     sample: () => ipcRenderer.invoke('realtime:sample'),
     loss: () => ipcRenderer.invoke('realtime:loss'),
-    // 网速记录报告（存 %APPDATA%\TuneForge\cache\realtime-reports\，7 天自动清理）
+    // 网速记录报告（存 %APPDATA%\Trim\cache\realtime-reports\，7 天自动清理）
     reportSave: (data) => ipcRenderer.invoke('realtime:report-save', { data }),
     reportList: () => ipcRenderer.invoke('realtime:report-list'),
     reportDelete: (name) => ipcRenderer.invoke('realtime:report-delete', { name }),
@@ -155,7 +189,9 @@ contextBridge.exposeInMainWorld('api', {
   // 权限提升
   elevate: {
     status: () => ipcRenderer.invoke('elevate:status'),
-    request: () => ipcRenderer.invoke('elevate:request')
+    request: () => ipcRenderer.invoke('elevate:request'),
+    // B5：提权后新实例未启动等异常情况的主进程通知
+    onNotice: (callback) => ipcRenderer.on('elevate:notice', (_, data) => callback(data))
   },
 
   // 关闭流程

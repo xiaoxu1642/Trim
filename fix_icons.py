@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
-"""修复 TuneForge 图标四角白点 v2：用严格阈值区分紫色主体与白色背景/柔和阴影。"""
+"""修复 Trim 图标四角白点 v2：用严格阈值区分紫色主体与白色背景/柔和阴影。"""
 from PIL import Image, ImageDraw, ImageFilter
 import os
+import shutil
 
-ROOT = r"c:\kaifa\TuneForge v1.2"
-SRC = os.path.join(ROOT, "ico", "ico", "source.png")
+# 以脚本自身所在目录为仓库根，源码换位置后仍可运行
+ROOT = os.path.dirname(os.path.abspath(__file__))
+SRC = os.path.join(ROOT, "ico", "source.png")
 
 img = Image.open(SRC).convert("RGBA")
 W, H = img.size
@@ -50,8 +52,10 @@ img = Image.merge("RGBA", (r_, g_, b_, mask))
 print("corner alphas:", [img.getpixel(p)[3] for p in [(2, 2), (W - 3, 2), (2, H - 3), (W - 3, H - 3)]])
 
 # 5) 输出
-ico_dir = os.path.join(ROOT, "ico", "ico")
-img.save(SRC)
+ico_dir = os.path.join(ROOT, "ico")
+# 不就地覆盖 source.png：源图是唯一的原始素材，重跑时二次裁切会因
+# 透明角导致主体包围盒判定漂移。裁切结果另存为 source_squared.png。
+img.save(os.path.join(ico_dir, "source_squared.png"))
 for s in [12, 16, 24, 32, 48, 64, 96]:
     img.resize((s, s), Image.LANCZOS).save(os.path.join(ico_dir, f"icon_{s}x{s}.png"))
 
@@ -59,13 +63,31 @@ for s in [12, 16, 24, 32, 48, 64, 96]:
 # 基底若是 16px 则只写入 16x16 一帧，导致桌面图标模糊且白角外露）
 ico_sizes = [16, 24, 32, 48, 64, 96, 128, 256]
 frames = [img.resize((s, s), Image.LANCZOS) for s in ico_sizes]
-frames[-1].save(os.path.join(ico_dir, "TuneForge.ico"), format="ICO",
+frames[-1].save(os.path.join(ico_dir, "Trim.ico"), format="ICO",
                 append_images=frames[:-1])
 
-inst_assets = os.path.join(ROOT, "tuneforge-installer", "src", "assets")
-img.resize((192, 192), Image.LANCZOS).save(os.path.join(inst_assets, "tuneforge-192.png"))
-img.resize((32, 32), Image.LANCZOS).save(os.path.join(inst_assets, "tuneforge-32.png"))
+# 构建器（Tauri 安装器工程）可能位于本仓库内或同级的独立目录，按候选顺序解析。
+# 找不到时只跳过并提示，绝不凭空创建 trim-installer 幽灵目录。
+BUILDER_CANDIDATES = [
+    os.path.join(ROOT, "trim-installer"),
+    os.path.join(os.path.dirname(ROOT), "Trim goujian", "trim-installer"),
+]
+builder = next((p for p in BUILDER_CANDIDATES if os.path.isdir(p)), None)
 
-img.resize((256, 256), Image.LANCZOS).save(os.path.join(ROOT, "tuneforge-installer", "src-tauri", "icons", "icon.ico"),
-                                           format="ICO", sizes=[(16,16),(24,24),(32,32),(48,48),(64,64),(128,128),(256,256)])
+brand_ico = os.path.join(ico_dir, "Trim.ico")
+if builder is None:
+    print("WARN: 未找到 trim-installer 构建器目录，跳过构建器图标同步")
+else:
+    inst_assets = os.path.join(builder, "src", "assets")
+    os.makedirs(inst_assets, exist_ok=True)
+    img.resize((192, 192), Image.LANCZOS).save(os.path.join(inst_assets, "trim-192.png"))
+    img.resize((32, 32), Image.LANCZOS).save(os.path.join(inst_assets, "trim-32.png"))
+
+    # Tauri 图标必须与 ico/Trim.ico 逐字节一致：就地重采样会丢帧、
+    # 产生与 Electron 端不同的图标位图，因此直接复制成品 ico。
+    dst_ico = os.path.join(builder, "src-tauri", "icons", "icon.ico")
+    os.makedirs(os.path.dirname(dst_ico), exist_ok=True)
+    shutil.copyfile(brand_ico, dst_ico)
+    print("builder synced ->", builder)
+
 print("done v2")

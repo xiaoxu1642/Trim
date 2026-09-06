@@ -22,17 +22,34 @@ const SECURITY = require('./src/security');
 // ==================== 防止多开 ====================
 // 必须在任何重初始化逻辑（数据迁移、窗口创建、IPC 注册）之前请求单实例锁：
 // 第二实例越早退出越好，避免无谓地执行模块级代码与磁盘 IO。
+const ELEVATED_RELAUNCH_FLAG = '--elevated-relaunch';
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
-  app.quit();
-} else {
-  app.on('second-instance', () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
-    }
-  });
+  if (process.argv.includes(ELEVATED_RELAUNCH_FLAG)) {
+    // B5：本进程是提权重启的新实例。旧实例要等收到 second-instance 信号（证明新实例
+    // 确实活着）才会退出释放锁，因此这里轮询重试拿锁；拿到锁后模块顶层代码照常执行、
+    // 窗口正常创建。超时仍拿不到才放弃退出。
+    const retryDeadline = Date.now() + 15000;
+    const retryTimer = setInterval(() => {
+      if (app.requestSingleInstanceLock()) {
+        clearInterval(retryTimer);
+        writeLog('info', '提权重启的新实例已取得单实例锁，继续启动');
+      } else if (Date.now() > retryDeadline) {
+        clearInterval(retryTimer);
+        writeLog('error', '提权重启的新实例等待单实例锁超时，退出');
+        app.quit();
+      }
+    }, 250);
+  } else {
+    app.quit();
+  }
 }
+app.on('second-instance', () => {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  }
+});
 
 // ==================== 全局状态 ====================
 let mainWindow = null;
@@ -40,6 +57,8 @@ let lastCleanupSnapshot = new Map();
 let lastContextmenuSnapshot = new Map();
 let lastStartupSnapshot = new Map();
 let lastProcessSnapshot = new Map();
+// finder 删除只允许操作最近一次 Rust 扫描返回的路径，避免渲染层构造任意删除目标。
+let lastFinderSnapshot = new Map();
 
 const MAIN_WINDOW_MIN_WIDTH = 1294;
 const MAIN_WINDOW_MIN_HEIGHT = 870;
@@ -118,14 +137,25 @@ function validateSnapshotItems(items, snapshot) {
 // 仅杀「本应用 spawn 且已登记」的进程，绝不按进程名无差别杀戮（如 taskkill /im node.exe）。
 const backendProcs = new Map(); // pid -> { pid, kind, cmdline }
 const isDev = !app.isPackaged;
-const APP_NAME = 'TuneForge';
-// 应用数据根目录（统一品牌为 TuneForge）。旧版本曾使用 "CleanTool" 目录，
+const APP_NAME = 'Trim';
+// 应用数据根目录（统一品牌为 Trim）。旧版本曾使用 "CleanTool" 目录，
 // 启动时做一次性迁移，避免用户已有的配置 / 日志 / 缓存 / 备份数据丢失。
-const APP_DATA_DIR = path.join(os.homedir(), 'AppData', 'Roaming', 'TuneForge');
+// C1：优先 userData（productName=Trim 时即 %APPDATA%\Trim，兼容 USERPROFILE 重定向
+// 与 portable 形态）；dev 模式 userData 指向 Electron 默认目录，回退硬编码以共享
+// 安装版数据。LEGACY_DATA_DIR 仅保留给 CleanTool→Trim 的旧数据迁移兜底。
+const APP_DATA_DIR = (() => {
+  try {
+    if (app.isPackaged) {
+      const ud = app.getPath('userData');
+      if (ud && path.basename(ud).toLowerCase() === 'trim') return ud;
+    }
+  } catch (e) { /* userData 不可用时走硬编码兜底 */ }
+  return path.join(os.homedir(), 'AppData', 'Roaming', 'Trim');
+})();
 const LEGACY_DATA_DIR = path.join(os.homedir(), 'AppData', 'Roaming', 'CleanTool');
 const LOG_DIR = path.join(APP_DATA_DIR, 'logs');
 
-// 启动时迁移旧版本（CleanTool）数据目录到 TuneForge。仅当新目录不存在时才复制，
+// 启动时迁移旧版本（CleanTool）数据目录到 Trim。仅当新目录不存在时才复制，
 // 避免覆盖；迁移失败不阻塞启动（记录日志即可）。
 function migrateLegacyData() {
   try {
@@ -140,7 +170,7 @@ function migrateLegacyData() {
 }
 
 // 统一 Windows 通知、任务栏分组、跳转列表的应用标识（与 package.json 的 appId 一致）
-app.setAppUserModelId('com.xiaoxu.tuneforge');
+app.setAppUserModelId('com.xiaoxu.trim');
 
 // 将最终客户区尺寸发送给渲染层。最大化/还原时 Windows 可能先更新
 // 原生窗口状态、稍后才提交 WebContents 尺寸，因此渲染层需要在下一帧再回流。
@@ -205,14 +235,20 @@ function ensureMaximizedClientBounds() {
 }
 
 // ==================== 管理员权限检测 ====================
+// net session 探测在域环境/离线/网络异常时可能耗时数秒，同步执行会冻结主进程
+// 事件循环（连带全部渲染进程卡顿）。改为异步探测 + 进程内缓存：同一进程生命周期
+// 内权限不会变化，检测一次即可；启动关键路径（ready-to-show）只做异步回填。
+let adminStatusCache = null; // null=未检测完成 / true / false
+let adminDetecting = null;
 function isAdmin() {
-  try {
-    const { execSync } = require('child_process');
-    execSync('net session', { stdio: 'ignore' });
-    return true;
-  } catch (e) {
-    return false;
+  if (adminStatusCache !== null) return Promise.resolve(adminStatusCache);
+  if (!adminDetecting) {
+    adminDetecting = execAsync('net session', { windowsHide: true, timeout: 10000 })
+      .then(() => { adminStatusCache = true; return true; })
+      .catch(() => { adminStatusCache = false; return false; })
+      .finally(() => { adminDetecting = null; });
   }
+  return adminDetecting;
 }
 
 // ==================== 日志系统 ====================
@@ -226,15 +262,54 @@ function ensureLogDir() {
   }
 }
 
+// B9：日志改为内存缓冲 + 批量异步落盘。高频扫描/批量清理场景下逐条 appendFileSync
+// 会把同步 I/O 叠加到主进程事件循环上；日志对实时性不敏感，setImmediate 合并落盘即可。
+// 退出前由 flushLogSync() 强制刷盘，防止尾部日志丢失。
+const logQueue = [];
+let logFlushScheduled = false;
+
+function groupLogBatch(batch) {
+  const byFile = new Map();
+  for (const entry of batch) {
+    if (!byFile.has(entry.file)) byFile.set(entry.file, []);
+    byFile.get(entry.file).push(entry.line);
+  }
+  return byFile;
+}
+
+function flushLogQueue() {
+  logFlushScheduled = false;
+  if (!logQueue.length) return;
+  const byFile = groupLogBatch(logQueue.splice(0));
+  for (const [file, lines] of byFile) {
+    fs.promises.appendFile(file, lines.join(''), 'utf8').catch(e => {
+      console.error('写入日志失败:', e.message || e);
+    });
+  }
+}
+
+// 同步兜底：仅在应用退出等无法等待异步完成的时机调用
+function flushLogSync() {
+  if (!logQueue.length) return;
+  const byFile = groupLogBatch(logQueue.splice(0));
+  for (const [file, lines] of byFile) {
+    try {
+      fs.appendFileSync(file, lines.join(''), 'utf8');
+    } catch (e) {
+      console.error('写入日志失败:', e);
+    }
+  }
+}
+
 function writeLog(level, message) {
   ensureLogDir();
   const ts = new Date().toISOString().replace(/T/, ' ').replace(/\..+/, '');
   const line = `[${ts}] [${level.toUpperCase()}] ${message}\n`;
   const logFile = path.join(LOG_DIR, `app-${new Date().toISOString().slice(0, 10)}.log`);
-  try {
-    fs.appendFileSync(logFile, line, 'utf8');
-  } catch (e) {
-    console.error('写入日志失败:', e);
+  logQueue.push({ file: logFile, line });
+  if (!logFlushScheduled) {
+    logFlushScheduled = true;
+    setImmediate(flushLogQueue);
   }
   return line;
 }
@@ -260,25 +335,33 @@ function resolvePowerShell7Path() {
 
   const candidates = [
     process.env.PWSH7_PATH,
-    process.env.ProgramFiles ? path.join(process.env.ProgramFiles, 'PowerShell', '7', 'pwsh.exe') : null,
-    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Microsoft', 'WindowsApps', 'pwsh.exe') : null
+    process.env.ProgramFiles ? path.join(process.env.ProgramFiles, 'PowerShell', '7', 'pwsh.exe') : null
   ].filter(Boolean);
+
+  const whereResult = spawnSync('where.exe', ['pwsh.exe'], { encoding: 'utf8', windowsHide: true });
+  if (whereResult.status === 0) {
+    candidates.push(
+      ...whereResult.stdout
+        .split(/\r?\n/)
+        .map(item => item.trim())
+        .filter(candidate => candidate)
+    );
+  }
+
+  // C3：WindowsApps 里的 pwsh.exe 可能是 0 字节应用执行别名存根，未装 PowerShell 7
+  // 时执行它会拉起 Microsoft Store。排到最后，且仅当文件非 0 字节（真实安装）才探测。
+  const winAppsStub = process.env.LOCALAPPDATA
+    ? path.join(process.env.LOCALAPPDATA, 'Microsoft', 'WindowsApps', 'pwsh.exe')
+    : null;
+  if (winAppsStub) {
+    try {
+      if (fs.statSync(winAppsStub).size > 0) candidates.push(winAppsStub);
+    } catch (e) { /* 不存在则跳过 */ }
+  }
 
   for (const candidate of candidates) {
     if (fs.existsSync(candidate) && isPowerShell7Executable(candidate)) {
       powerShell7Path = candidate;
-      return powerShell7Path;
-    }
-  }
-
-  const whereResult = spawnSync('where.exe', ['pwsh.exe'], { encoding: 'utf8', windowsHide: true });
-  if (whereResult.status === 0) {
-    const firstMatch = whereResult.stdout
-      .split(/\r?\n/)
-      .map(item => item.trim())
-      .find(candidate => candidate && isPowerShell7Executable(candidate));
-    if (firstMatch) {
-      powerShell7Path = firstMatch;
       return powerShell7Path;
     }
   }
@@ -315,14 +398,12 @@ function extractDiagLines(stdout, op) {
   return kept.join('\n');
 }
 
-function runPowerShell(script, options = {}) {
+// B4：runPowerShell / runPowerShellFile 共用的子进程封装。
+// 超时/kill/clearTimeout 逻辑统一在此实现（原先只有 File 变体有），pwsh 卡死时
+// 调用方（如 elevate:request）不会再出现 Promise 永不 settle、IPC 永久挂起。
+// options: { timeout(ms), diagOp, onStdout(chunk), 以及透传给 spawn 的其它选项 }
+function runPwshChild(args, options) {
   return new Promise((resolve, reject) => {
-    const args = [
-      '-NoProfile',
-      '-NonInteractive',
-      '-ExecutionPolicy', 'Bypass',
-      '-Command', script
-    ];
     let executable;
     try {
       executable = resolvePowerShell7Path();
@@ -331,53 +412,7 @@ function runPowerShell(script, options = {}) {
       reject(err);
       return;
     }
-    const child = spawn(executable, args, {
-      windowsHide: true,
-      ...options
-    });
-    registerBackendChild(child, executable, args);
-
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', d => { stdout += d.toString('utf8'); });
-    child.stderr.on('data', d => { stderr += d.toString('utf8'); });
-
-    child.on('error', err => {
-      writeLog('error', `PowerShell 7 启动失败: ${err.message}`);
-      reject(err);
-    });
-
-    child.on('close', code => {
-      const cleanStdout = extractDiagLines(stdout, options.diagOp);
-      if (code === 0) {
-        resolve({ stdout: cleanStdout, stderr, code });
-      } else {
-        writeLog('warn', `PowerShell 7 退出码 ${code}: ${stderr}`);
-        // 即使有错误也返回结果，由调用方判断
-        resolve({ stdout: cleanStdout, stderr, code });
-      }
-    });
-  });
-}
-
-// 将脚本写入临时文件再执行（避免命令行长度限制）
-function runPowerShellFile(scriptPath, options = {}) {
-  return new Promise((resolve, reject) => {
-    const args = [
-      '-NoProfile',
-      '-NonInteractive',
-      '-ExecutionPolicy', 'Bypass',
-      '-File', scriptPath
-    ];
-    let executable;
-    try {
-      executable = resolvePowerShell7Path();
-    } catch (err) {
-      writeLog('error', err.message);
-      reject(err);
-      return;
-    }
-    const { timeout, onStdout, ...spawnOptions } = options;
+    const { timeout, diagOp, onStdout, ...spawnOptions } = options;
     const child = spawn(executable, args, {
       windowsHide: true,
       ...spawnOptions
@@ -396,53 +431,97 @@ function runPowerShellFile(scriptPath, options = {}) {
     child.stderr.on('data', d => { stderr += d.toString('utf8'); });
 
     let timeoutHandle = null;
+    let settled = false;
     const finish = (result) => {
+      if (settled) return;
+      settled = true;
       if (timeoutHandle) clearTimeout(timeoutHandle);
-      result.stdout = extractDiagLines(result.stdout, options.diagOp);
       resolve(result);
     };
     child.on('error', err => {
+      if (settled) return;
+      settled = true;
       if (timeoutHandle) clearTimeout(timeoutHandle);
+      writeLog('error', `PowerShell 7 启动失败: ${err.message}`);
       reject(err);
     });
     child.on('close', code => {
-      finish({ stdout, stderr, code, timedOut: false });
+      const cleanStdout = extractDiagLines(stdout, diagOp);
+      if (code !== 0 && stderr && stderr.trim()) {
+        writeLog('warn', `PowerShell 7 退出码 ${code}: ${stderr}`);
+      }
+      // 即使有错误也返回结果，由调用方判断
+      finish({ stdout: cleanStdout, stderr, code, timedOut: false });
     });
     if (Number.isFinite(timeout) && timeout > 0) {
       timeoutHandle = setTimeout(() => {
         try { child.kill(); } catch (e) {}
-        finish({ stdout, stderr: `${stderr}\nPowerShell 7 测试超时`, code: -1, timedOut: true });
+        finish({ stdout, stderr: `${stderr}\nPowerShell 7 执行超时`, code: -1, timedOut: true });
       }, timeout);
     }
   });
 }
 
+function runPowerShell(script, options = {}) {
+  return runPwshChild([
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy', 'Bypass',
+    '-Command', script
+  ], options);
+}
+
+// 将脚本写入临时文件再执行（避免命令行长度限制）
+function runPowerShellFile(scriptPath, options = {}) {
+  return runPwshChild([
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy', 'Bypass',
+    '-File', scriptPath
+  ], options);
+}
+
+// 临时脚本目录：位于 %APPDATA%\Trim\tmp\（当前用户 ACL 保护，同机其他标准用户
+// 不可写）。不用 %TEMP%：那是系统级全局可写目录，而本应用经 UAC 提权后脚本会
+// 以管理员身份执行——低权限用户可预写/替换脚本或放置目录联接，构成 TOCTOU
+// 本地提权窗口（见审查报告 A1）。
+function getTempScriptDir() {
+  const dir = path.join(APP_DATA_DIR, 'tmp');
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  return dir;
+}
+
 // 写入临时 PowerShell 脚本
 function writeTempScript(content, suffix = '.ps1') {
-  const tempDir = path.join(os.tmpdir(), 'TuneForge');
-  if (!fs.existsSync(tempDir)) {
-    fs.mkdirSync(tempDir, { recursive: true });
+  const tempDir = getTempScriptDir();
+  // 拒绝符号链接/联接点：目录若被替换为链接，脚本内容可能被导向任意位置
+  const dirStat = fs.lstatSync(tempDir);
+  if (dirStat.isSymbolicLink()) {
+    throw new Error('临时脚本目录已被替换（符号链接/联接点），已拒绝写入');
   }
   const filePath = path.join(tempDir, `script_${Date.now()}_${Math.random().toString(36).slice(2, 8)}${suffix}`);
   // PowerShell 5.1 默认按系统 ANSI 编码读取无 BOM 脚本，中文注释会乱码导致解析失败；
   // PowerShell 7 亦兼容 UTF-8 BOM，故为 .ps1 写入带 BOM 的 UTF-8。
+  // mode 0o600：仅所有者可读写（Windows 上 ACL 继承自用户目录，此处为跨平台双保险）。
   if (suffix.toLowerCase() === '.ps1') {
-    fs.writeFileSync(filePath, Buffer.from('\uFEFF' + content, 'utf8'));
+    fs.writeFileSync(filePath, Buffer.from('\uFEFF' + content, 'utf8'), { mode: 0o600 });
   } else {
-    fs.writeFileSync(filePath, content, 'utf8');
+    fs.writeFileSync(filePath, content, { encoding: 'utf8', mode: 0o600 });
   }
   return filePath;
 }
 
-// 清理临时脚本
+// 清理临时脚本（含旧版本遗留在全局可写 %TEMP%\Trim 下的历史残留）
 function cleanupTempScripts() {
-  try {
-    const tempDir = path.join(os.tmpdir(), 'TuneForge');
-    if (fs.existsSync(tempDir)) {
-      const files = fs.readdirSync(tempDir);
-      const now = Date.now();
+  const now = Date.now();
+  const sweep = (dir) => {
+    try {
+      if (!fs.existsSync(dir)) return;
+      const files = fs.readdirSync(dir);
       for (const f of files) {
-        const fp = path.join(tempDir, f);
+        const fp = path.join(dir, f);
         try {
           const stat = fs.statSync(fp);
           // 删除超过 1 小时的临时文件
@@ -451,10 +530,12 @@ function cleanupTempScripts() {
           }
         } catch (e) {}
       }
+    } catch (e) {
+      writeLog('error', `清理临时脚本失败: ${e.message}`);
     }
-  } catch (e) {
-    writeLog('error', `清理临时脚本失败: ${e.message}`);
-  }
+  };
+  sweep(getTempScriptDir());
+  sweep(path.join(os.tmpdir(), 'Trim'));
 }
 
 // ==================== Windows 11 特性检测 ====================
@@ -474,8 +555,34 @@ function getFluentSupportLevel() {
   return 'none';                           // Win10，不支持
 }
 
+// ==================== 窗口材质（主窗 / 子窗共享逻辑） ====================
+// 材质名 → Electron backgroundMaterial 原生值。细亚克力与亚克力共用原生 acrylic，
+// 「更透亮」的差异化由渲染层 data-material 着色透明度分级实现（main.css 材质 2.0 段）。
+// none = 无材质（普通不透明窗口，DWM 不参与）。
+const MATERIAL_NATIVE_MAP = {
+  'mica': 'mica', 'mica-alt': 'tabbed', 'acrylic': 'acrylic', 'thin-acrylic': 'acrylic', 'none': 'none'
+};
+// 读取持久化的合法材质（非法值回退 mica，与设置页默认一致）
+function getSavedMaterial() {
+  const m = loadAppearance().material;
+  return MATERIAL_NATIVE_MAP[m] ? m : 'mica';
+}
+function nativeMaterialFor(material) {
+  return MATERIAL_NATIVE_MAP[material] || 'mica';
+}
+// 子窗口构造参数的原生材质片段：Win10 / 「无材质」时不设置（普通不透明窗口）。
+// backgroundColor 保留不透明兜底——窗口在首帧之后才 show，不会盖住材质。
+function childWindowMaterialOption() {
+  if (getFluentSupportLevel() === 'none') return {};
+  // 材质总开关关闭（窗口界面升级3）：与「无材质」一致，不设原生材质
+  if (loadAppearance().materialEnabled === false) return {};
+  const saved = getSavedMaterial();
+  if (saved === 'none') return {};
+  return { backgroundMaterial: nativeMaterialFor(saved) };
+}
+
 // ==================== 窗口状态持久化 ====================
-// 关闭时保存 bounds + 最大化状态到 appearance.json（%APPDATA%\TuneForge），启动时恢复。
+// 关闭时保存 bounds + 最大化状态到 appearance.json（%APPDATA%\Trim），启动时恢复。
 // 最大化时记录 getNormalBounds()（还原位），恢复时直接最大化。
 function loadWindowState() {
   const st = loadAppearance().windowState;
@@ -513,6 +620,7 @@ function sanitizeWindowState(state) {
 }
 
 // ==================== 窗口创建 ====================
+const mainWindowCreatedAt = Date.now();
 function createWindow() {
   const fluentLevel = getFluentSupportLevel();
   const useMica = fluentLevel === 'full' || fluentLevel === 'partial';
@@ -528,14 +636,15 @@ function createWindow() {
     // （仅最小化和关闭出现）。显式置 true 确保三按钮齐全。
     resizable: true,
     maximizable: true,
-    // 客户区=窗口（contentSize 渲染）：1080×720 即内容区/客户区尺寸，
-    // 不含标题栏与边框，使 innerWidth/Height 恒等于 1080×720，仅可放大不可缩小。
+    // 客户区=窗口（contentSize 渲染）：最小 1294×870 即内容区/客户区尺寸（2.0 起
+    // 基线调整，规范见 readme「窗口尺寸」），不含标题栏与边框，
+    // 仅可放大或最大化、不可缩小到该尺寸以下。
     useContentSize: true,
     title: APP_NAME,
     show: false,
     autoHideMenuBar: true,
     // 标题栏图标统一来自工作目录 ico 文件夹，避免预览/运行时资源不一致。
-    icon: path.join(__dirname, 'ico', 'ico', 'TuneForge.ico'),
+    icon: path.join(__dirname, 'src', 'assets', 'ico', 'Trim.ico'),
     // 透明窗口会让空白区域命中后面的应用，导致点击时出现重影和失焦。
     transparent: false,
     // titleBarOverlay 依赖原生窗口框架管理客户区。frame:false 会使原生
@@ -549,7 +658,10 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true
+      sandbox: true,
+      // 启动黑闪修复：窗口隐藏等待首帧握手期间，禁用后台节流以保证
+      // requestAnimationFrame/定时器正常走帧，首帧通知能及时发出
+      backgroundThrottling: false
     }
   };
 
@@ -563,13 +675,17 @@ function createWindow() {
 
   if (useMica) {
     // Windows 11: 原生背景材质（Electron 30+），材质由设置页「窗口材质」选择
-    // Mica=柔和云母 / Mica Alt(tabbed)=层次云母 / acrylic=磨砂玻璃（细亚克力共用 acrylic，视觉更透亮）
-    const materialMap = { 'mica': 'mica', 'mica-alt': 'tabbed', 'acrylic': 'acrylic', 'thin-acrylic': 'acrylic' };
-    const saved = loadAppearance().material;
-    windowOptions.backgroundMaterial = materialMap[saved] || 'mica';
-    // 背景色必须透明，否则不透明的客户区底色会盖住 DWM 材质，导致「切换材质无变化」。
-    // 材质的可见性由渲染层半透明 CSS 透出（见 main.css body.electron-mica）。
-    windowOptions.backgroundColor = '#00000000';
+    // Mica=柔和云母 / Mica Alt(tabbed)=层次云母 / acrylic=磨砂玻璃（细亚克力共用 acrylic，
+    // 视觉更透亮的差异化由渲染层 data-material 透明度分级完成）；none=无材质。
+    const saved = getSavedMaterial();
+    if (saved !== 'none') {
+      windowOptions.backgroundMaterial = nativeMaterialFor(saved);
+      // 首帧使用与系统主题一致的不透明底色，避免透明客户区在 DWM 提交前出现黑闪。
+      // Mica 仍作为可损失的视觉增强，页面本身始终提供不透明 CSS 兜底。
+      windowOptions.backgroundColor = nativeTheme.shouldUseDarkColors ? '#0F1115' : '#F5F6F8';
+    } else {
+      windowOptions.backgroundColor = nativeTheme.shouldUseDarkColors ? '#202020' : '#f3f3f3';
+    }
   } else {
     // Windows 10 回退：普通不透明背景
     windowOptions.backgroundColor = nativeTheme.shouldUseDarkColors ? '#202020' : '#f3f3f3';
@@ -586,30 +702,48 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, 'src', 'index.html'));
 
-  mainWindow.once('ready-to-show', () => {
-    mainWindow.show();
-    // Win11 27H2：显式声明 DWM 圆角，避免直角边框
-    forceRoundCorners();
-    // 恢复上次关闭时的最大化状态
+  // 启动黑闪修复：不再在 ready-to-show（仅首帧底色，UI 尚未提交）就显示窗口，
+  // 而是等渲染层 DOMContentLoaded 后连排两个 rAF 发来的 app:first-paint 再显示，
+  // 保证窗口出现的瞬间就是完整 UI；最大化与 DWM 圆角也前移到 show 之前完成，
+  // 避免 show 后二次改窗（可见的尺寸跳变/边框重绘）。
+  let mainWindowShown = false;
+  const showMainWindowWhenReady = (cause) => {
+    if (mainWindowShown) return;
+    mainWindowShown = true;
+    writeLog('info', `主窗口显示（触发: ${cause}，距创建 ${Date.now() - mainWindowCreatedAt}ms）`);
     if (savedWindowState && savedWindowState.maximized) {
       mainWindow.maximize();
-      // maximize 事件可能在渲染层就绪前触发，渲染层会错过 onResized 通知，
-      // 这里在页面加载完成后补发一次，确保 win-maximized 底色类正确同步
-      mainWindow.webContents.once('did-finish-load', () => {
-        setTimeout(notifyRendererResize, 80);
-      });
+      // maximize 后补发尺寸通知，确保 win-maximized 底色类正确同步
+      //（此时渲染层必然已加载，无需再挂 did-finish-load）
+      setTimeout(notifyRendererResize, 120);
+      setTimeout(notifyRendererResize, 400);
     }
-    // 日志精简：仅记录打开/开关/执行/错误——应用启动合并为一条
-    writeLog('info', `应用启动（管理员: ${isAdmin() ? '是' : '否'}）`);
+    // Win11 27H2：显式声明 DWM 圆角，避免直角边框
+    forceRoundCorners();
+    mainWindow.show();
+    // 日志精简：仅记录打开/开关/执行/错误——应用启动合并为一条。
+    // 管理员检测为异步（不阻塞首帧显示），完成后回填日志并预热缓存。
+    isAdmin().then(v => writeLog('info', `应用启动（管理员: ${v ? '是' : '否'}）`));
+  };
+  mainWindow.once('ready-to-show', () => {
+    // 兜底：渲染层首帧通知 3s 内未到达（渲染异常/脚本失败）也照常显示窗口
+    setTimeout(() => showMainWindowWhenReady('ready-to-show 3s 兜底'), 3000);
   });
+  // 创建级兜底：ready-to-show 本身也未触发时（页面卡死）最终仍显示窗口
+  setTimeout(() => showMainWindowWhenReady('创建后 8s 兜底'), 8000);
+  mainWindowOnFirstPaint = () => showMainWindowWhenReady('渲染层首帧握手');
 
   // ==================== 主题跟随 ====================
-  // 系统主题变化只通知渲染进程。标题栏保持独立的固定系统浅色表面，
-  // 不跟随应用主题或强调色，避免原生窗口按钮区域出现色块冲突。
+  // 系统主题变化推送给全部窗口（子窗口的 window-material.js 依赖此广播同步
+  // theme-dark/theme-light）。标题栏保持独立的固定系统浅色表面，不跟随应用主题
+  // 或强调色，避免原生窗口按钮区域出现色块冲突。
   nativeTheme.on('updated', () => {
     const isDark = nativeTheme.shouldUseDarkColors;
-    // 通知渲染进程
-    mainWindow?.webContents.send('app:theme-changed', isDark ? 'dark' : 'light');
+    // 通知所有存活窗口（主窗 + 子窗）
+    BrowserWindow.getAllWindows().forEach((w) => {
+      if (w.isDestroyed()) return;
+      try { w.webContents.send('app:theme-changed', isDark ? 'dark' : 'light'); } catch (e) {}
+    });
     writeLog('info', `系统主题变化: ${isDark ? '深色' : '浅色'}`);
   });
 
@@ -647,9 +781,8 @@ function createWindow() {
   mainWindow.on('hide', trimMainWindowMemory);
   mainWindow.on('resize', notifyRendererResize);
 
-  // 关闭时持久化窗口状态（bounds + 最大化）
-  mainWindow.on('close', saveWindowState);
-
+  // C2：窗口状态持久化不再挂在 close 上（与优雅关闭的 close 拦截双写，且取消
+  // 关闭时也会写入）；统一在确认真正退出的 performFinalClose / before-quit 中保存
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
@@ -664,7 +797,7 @@ function createWindow() {
 
 // ==================== IPC 处理 ====================
 // 应用信息
-ipcMain.handle('app:get-info', () => {
+ipcMain.handle('app:get-info', async () => {
   return {
     name: APP_NAME,
     version: app.getVersion(),
@@ -677,7 +810,8 @@ ipcMain.handle('app:get-info', () => {
     osBuild: getWindowsBuild(),
     fluentSupport: getFluentSupportLevel(),
     micaEnabled: getFluentSupportLevel() !== 'none',
-    isAdmin: isAdmin(),
+    materialEnabled: loadAppearance().materialEnabled !== false,
+    isAdmin: await isAdmin(),
     username: os.userInfo().username,
     homedir: os.homedir(),
     powerShell: 'PowerShell 7'
@@ -716,6 +850,15 @@ ipcMain.on('window:maximize', () => {
   }
 });
 ipcMain.on('window:close', () => mainWindow?.close());
+
+// 启动黑闪修复：渲染层首帧握手。各窗口的 preload 都可能上报，只认主窗口的
+// 首个通知；回调在 createWindow 里赋值（showMainWindowWhenReady）。
+let mainWindowOnFirstPaint = null;
+ipcMain.on('app:first-paint', (event) => {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (event.sender !== mainWindow.webContents) return;
+  if (typeof mainWindowOnFirstPaint === 'function') mainWindowOnFirstPaint();
+});
 
 // 兼容旧渲染层调用：无论应用主题为何，标题栏覆盖层都保持固定系统色。
 ipcMain.handle('window:update-overlay', () => {
@@ -763,7 +906,7 @@ ipcMain.handle('log:export', async () => {
   try {
     const result = await dialog.showSaveDialog(mainWindow, {
       title: '导出日志',
-      defaultPath: `TuneForge-log-${Date.now()}.txt`,
+      defaultPath: `Trim-log-${Date.now()}.txt`,
       filters: [{ name: '文本文件', extensions: ['txt', 'log'] }]
     });
     if (result.canceled || !result.filePath) return { success: false, message: '已取消' };
@@ -874,6 +1017,297 @@ ipcMain.handle('cleanup:execute', async (event, { items, force }) => {
   }
 });
 
+// ==================== 磁盘清理 · Rust 原生查找器 IPC ====================
+// 复用 native-scanner（finder.exe）实现 重复/大文件/空文件空目录/AppData 四类扫描，
+// 输出行协议 @@PROGRESS:n@@ 与 @@ITEM@@{json}，由主进程流式转发布尔进度并收拢结果。
+// 展开路径中的 %VAR% 环境变量（如 %USERPROFILE%、%USERNAME%）
+function expandEnvPath(p) {
+  return String(p).replace(/%([^%]+)%/g, (m, name) => process.env[name] || m);
+}
+
+// 重复文件查找内置目录：缺哪个跳哪个，全部缺失时报错（前端 toast）
+const FINDER_DEFAULT_DUP_DIRS = [
+  '%USERPROFILE%\\Downloads',
+  '%USERPROFILE%\\Desktop',
+  '%USERPROFILE%\\Documents',
+  '%USERPROFILE%\\Pictures',
+  'C:\\yule'
+];
+
+function resolveExistingDirs(plist) {
+  const found = [];
+  const missing = [];
+  for (const p of plist) {
+    try {
+      if (fs.existsSync(p) && fs.statSync(p).isDirectory()) found.push(p);
+      else missing.push(p);
+    } catch (e) {
+      missing.push(p);
+    }
+  }
+  return { found, missing };
+}
+
+function resolveFinderExe() {
+  const candidates = [
+    process.resourcesPath ? path.join(process.resourcesPath, 'finder', 'finder.exe') : null,
+    path.join(__dirname, 'native-scanner', 'target', 'release', 'finder.exe'),
+    path.join(__dirname, 'resources', 'finder', 'finder.exe')
+  ].filter(Boolean);
+  for (const c of candidates) {
+    try { if (fs.existsSync(c)) return c; } catch (e) {}
+  }
+  return null;
+}
+
+function runRustScanner(scanType, args, opts = {}) {
+  return new Promise((resolve, reject) => {
+    const exe = resolveFinderExe();
+    if (!exe) return reject(new Error('未找到原生扫描器 finder.exe'));
+    const child = spawn(exe, [scanType, ...args], { windowsHide: true });
+    registerBackendChild(child, exe, [scanType, ...args]);
+    let stderr = '';
+    let buf = '';
+    const items = [];
+    child.stdout.on('data', d => {
+      buf += d.toString('utf8');
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).replace(/\r$/, '');
+        buf = buf.slice(nl + 1);
+        if (line.startsWith('@@PROGRESS:')) {
+          const m = /@@PROGRESS:(\d+)@@/.exec(line);
+          if (m && typeof opts.onProgress === 'function') {
+            try { opts.onProgress(parseInt(m[1], 10)); } catch (e) {}
+          }
+        } else if (line.startsWith('@@ITEM@@')) {
+          try { items.push(JSON.parse(line.slice(8))); } catch (e) {}
+        }
+      }
+    });
+    child.stderr.on('data', d => { stderr += d.toString('utf8'); });
+    child.on('error', err => reject(err));
+    child.on('close', code => {
+      if (code !== 0) return reject(new Error(stderr || `原生扫描器退出码 ${code}`));
+      resolve(items);
+    });
+  });
+}
+
+const FINDER_SCAN_TYPES = ['duplicates', 'bigfiles', 'empty', 'appdata'];
+
+ipcMain.handle('finder:scan', async (event, { scanType, paths, minSize, count, minSizeMb }) => {
+  const denied = rejectUntrustedRenderer(event);
+  if (denied) return denied;
+  if (!FINDER_SCAN_TYPES.includes(scanType)) return { success: false, message: '未知扫描类型' };
+  const sender = event.sender;
+  const args = [];
+  let plist = (Array.isArray(paths) ? paths : [])
+    .map(p => String(p).trim())
+    .filter(p => p && p.length <= 400)
+    .map(expandEnvPath)
+    .slice(0, 50);
+  if (scanType === 'duplicates') {
+    if (plist.length === 0) {
+      // 输入为「默认」占位：解析内置目录，缺哪个跳哪个，全部缺失则报错
+      const resolved = resolveExistingDirs(FINDER_DEFAULT_DUP_DIRS.map(expandEnvPath));
+      if (resolved.missing.length) {
+        writeLog('info', `finder 默认目录缺失跳过: ${resolved.missing.join(', ')}`);
+      }
+      if (!resolved.found.length) {
+        writeLog('warn', 'finder 默认扫描目录均不存在');
+        return { success: false, message: '默认扫描目录均不存在（Downloads/Desktop/Documents/Pictures/C:\\yule），请在「扫描目录」中手动填写' };
+      }
+      plist = resolved.found;
+    } else {
+      // 自填目录同样跳过不存在的，全部无效时报错
+      const checked = resolveExistingDirs(plist);
+      if (checked.missing.length) {
+        writeLog('info', `finder 指定目录缺失跳过: ${checked.missing.join(', ')}`);
+      }
+      if (!checked.found.length) {
+        return { success: false, message: '指定的扫描目录均不存在，请检查路径' };
+      }
+      plist = checked.found;
+    }
+    args.push('--min-size', String(Math.max(0, Number(minSize) || 0)));
+  } else if (scanType === 'bigfiles') {
+    if (plist.length === 0) return { success: false, message: '至少需要一个扫描目录' };
+    args.push('--count', String(Math.max(1, Number(count) || 50)));
+  } else if (scanType === 'appdata') {
+    args.push('--min-size-mb', String(Math.max(1, Number(minSizeMb) || 10)));
+  } else if (scanType === 'empty') {
+    if (plist.length === 0) return { success: false, message: '至少需要一个扫描目录' };
+  }
+  for (const p of plist) args.push(p);
+  try {
+    writeLog('info', `finder ${scanType} 开始扫描: ${plist.join(', ') || '(AppData)'}`);
+    const items = await runRustScanner(scanType, args, {
+      onProgress: n => {
+        if (sender && !sender.isDestroyed()) sender.send('finder:progress', { scanType, progress: n });
+      }
+    });
+    lastFinderSnapshot = new Map();
+    for (const item of items) {
+      if (item && typeof item.path === 'string') {
+        lastFinderSnapshot.set(path.resolve(item.path).toLowerCase(), {
+          path: item.path,
+          kind: item.type === 'emptyfolder' || item.type === 'appdata' ? 'dir' : 'file'
+        });
+      }
+    }
+    writeLog('info', `finder ${scanType} 完成: ${items.length} 项`);
+    return { success: true, data: items };
+  } catch (e) {
+    writeLog('error', `finder ${scanType} 失败: ${e.message}`);
+    return { success: false, message: e.message };
+  }
+});
+
+// 保护路径：拒绝删除系统关键目录与磁盘根
+function isProtectedDeletePath(p) {
+  const norm = path.normalize(String(p || '')).replace(/[\\/]+$/, '');
+  if (!norm) return true;
+  if (/^[A-Za-z]:$/.test(norm)) return true;
+  const lower = norm.toLowerCase();
+  const roots = ['c:\\windows', 'c:\\program files', 'c:\\program files (x86)', 'c:\\programdata', 'c:\\$recycle.bin', 'c:\\system volume information'];
+  for (const r of roots) {
+    if (lower === r || lower.startsWith(r + '\\')) return true;
+  }
+  return false;
+}
+
+// 文件清理删除清单：记录每次删除批次（路径/大小/类型/时间/是否进回收站），
+// 误删可在此追溯并在回收站还原。大文件不做内容复制，仅落清单（见审查报告 A3）。
+const FILECLEAN_BACKUP_DIR = path.join(APP_DATA_DIR, 'fileclean-backup');
+const FILECLEAN_MANIFEST_KEEP = 50; // 只保留最近 50 个批次清单，避免目录无限膨胀
+
+function saveDeleteManifest(batchId, entries) {
+  try {
+    if (!entries.length) return '';
+    fs.mkdirSync(FILECLEAN_BACKUP_DIR, { recursive: true });
+    const manifestPath = path.join(FILECLEAN_BACKUP_DIR, `deleted-${batchId}.json`);
+    fs.writeFileSync(manifestPath, JSON.stringify({
+      batchId,
+      deletedAt: new Date().toISOString(),
+      count: entries.length,
+      items: entries
+    }, null, 2), 'utf8');
+    const files = fs.readdirSync(FILECLEAN_BACKUP_DIR)
+      .filter(f => f.startsWith('deleted-') && f.endsWith('.json'))
+      .sort();
+    while (files.length > FILECLEAN_MANIFEST_KEEP) {
+      const oldest = files.shift();
+      try { fs.unlinkSync(path.join(FILECLEAN_BACKUP_DIR, oldest)); } catch (e) {}
+    }
+    return manifestPath;
+  } catch (e) {
+    writeLog('error', `写入删除清单失败: ${e.message}`);
+    return '';
+  }
+}
+
+ipcMain.handle('finder:delete', async (event, { items }) => {
+  const denied = rejectUntrustedRenderer(event);
+  if (denied) return denied;
+  const requested = (Array.isArray(items) ? items : []).filter(it => it && typeof it.path === 'string').slice(0, 500);
+  const safe = requested.map(it => {
+    const known = lastFinderSnapshot.get(path.resolve(it.path).toLowerCase());
+    return known ? { path: known.path, kind: known.kind } : null;
+  });
+  if (safe.some(it => !it)) return { success: false, message: '删除目标已过期，请重新扫描后再试' };
+  const validSafe = safe.filter(Boolean);
+  if (!validSafe.length) return { success: false, message: '没有可删除的项' };
+  const protectedHits = validSafe.filter(it => isProtectedDeletePath(it.path));
+  if (protectedHits.length) return { success: false, message: `包含受保护的系统路径，已拒绝：${protectedHits[0].path}` };
+  const args = [];
+  for (const it of validSafe) {
+    const kind = it.kind === 'dir' ? 'dir' : 'file';
+    args.push(kind, String(it.path));
+  }
+  try {
+    writeLog('info', `finder 删除(原生): ${validSafe.length} 项`);
+    const results = await runRustScanner('delete', args);
+    const details = (Array.isArray(results) ? results : []).filter(r => r && r.type === 'delresult');
+    let totalFreed = 0, success = 0, failed = 0, recycled = 0;
+    for (const d of details) {
+      totalFreed += Number(d.freed) || 0;
+      if (d.status === 'ok') {
+        success++;
+        if (d.mode === 'recycled') recycled++;
+      } else {
+        failed++;
+      }
+    }
+    const skipped = Math.max(0, validSafe.length - success - failed);
+    // 删除清单：成功删除的项落盘到 %APPDATA%\Trim\fileclean-backup\（误删可追溯）
+    const batchId = new Date().toISOString().replace(/[:.]/g, '-');
+    const manifestEntries = details
+      .filter(d => d.status === 'ok')
+      .map(d => ({
+        path: String(d.path || '').replace(/\//g, '\\'),
+        kind: d.kind === 'dir' ? 'dir' : 'file',
+        size: Number(d.freed) || 0,
+        recycled: d.mode === 'recycled'
+      }));
+    const manifestPath = saveDeleteManifest(batchId, manifestEntries);
+    writeLog('info', `finder 删除完成: 成功 ${success}（回收站 ${recycled}）失败 ${failed} 释放 ${totalFreed} 字节${manifestPath ? ` 清单 ${path.basename(manifestPath)}` : ''}`);
+    return { success: failed === 0, data: { totalFreed, success, failed, skipped, recycled, details, manifestPath } };
+  } catch (e) {
+    writeLog('error', `finder 删除异常: ${e.message}`);
+    return { success: false, message: e.message };
+  }
+});
+
+// 读取删除清单（最近批次在前，最多返回 200 条）
+ipcMain.handle('finder:delete-manifest', (event) => {
+  const denied = rejectUntrustedRenderer(event);
+  if (denied) return denied;
+  try {
+    if (!fs.existsSync(FILECLEAN_BACKUP_DIR)) {
+      return { success: true, data: { items: [], dir: FILECLEAN_BACKUP_DIR } };
+    }
+    const files = fs.readdirSync(FILECLEAN_BACKUP_DIR)
+      .filter(f => f.startsWith('deleted-') && f.endsWith('.json'))
+      .sort()
+      .reverse();
+    const items = [];
+    for (const f of files) {
+      if (items.length >= 200) break;
+      try {
+        const obj = JSON.parse(fs.readFileSync(path.join(FILECLEAN_BACKUP_DIR, f), 'utf8'));
+        for (const it of (Array.isArray(obj.items) ? obj.items : [])) {
+          if (items.length >= 200) break;
+          items.push({
+            path: it && it.path || '',
+            kind: it && it.kind || 'file',
+            size: Number(it && it.size) || 0,
+            recycled: !!(it && it.recycled),
+            deletedAt: obj.deletedAt || ''
+          });
+        }
+      } catch (e) {}
+    }
+    return { success: true, data: { items, dir: FILECLEAN_BACKUP_DIR } };
+  } catch (e) {
+    writeLog('error', `读取删除清单失败: ${e.message}`);
+    return { success: false, message: e.message };
+  }
+});
+
+// 打开删除清单所在目录（已进回收站的文件可在系统回收站中还原）
+ipcMain.handle('finder:open-backup-dir', async (event) => {
+  const denied = rejectUntrustedRenderer(event);
+  if (denied) return denied;
+  try {
+    fs.mkdirSync(FILECLEAN_BACKUP_DIR, { recursive: true });
+    const err = await shell.openPath(FILECLEAN_BACKUP_DIR);
+    return { success: !err, message: err || '' };
+  } catch (e) {
+    return { success: false, message: e.message };
+  }
+});
+
 // ==================== 右键菜单管理 IPC ====================
 const CONTEXTMENU_SCRIPT = require('./src/scripts-powershell/contextmenu-scripts');
 
@@ -966,7 +1400,7 @@ ipcMain.handle('contextmenu:remove', async (event, { items, clsids } = {}) => {
   }
 });
 
-// 启停切换右键菜单项（Autoruns 模式：勾选=启用，取消=禁用；禁用为可逆操作，不做备份）
+// 启停切换右键菜单项（勾选=启用，取消=禁用；禁用为可逆操作，不做备份）
 ipcMain.handle('contextmenu:toggle', async (event, { items } = {}) => {
   const denied = rejectUntrustedRenderer(event);
   if (denied) return denied;
@@ -1506,21 +1940,53 @@ ipcMain.handle('optimizer:restore-reg', async (event, { optionId } = {}) => {
   }
 });
 
-// 查询最近一次系统还原点（返回最近创建时间 ISO，无还原点返回 exists=false）
+// 解析 WMI DMTF 时间串（yyyymmddHHMMSS.mmmmmm±UUU，UUU 为与 UTC 的分钟偏移）。
+// 返回 ISO 字符串；无法解析返回 null。
+// 不使用 [System.Management.ManagementDateTimeConverter]：该类型属于 System.Management
+// 程序集，PowerShell 7 默认不加载，执行会抛异常（见审查报告 B3）。
+function parseDmtfDateTime(raw) {
+  const m = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\.(\d{6})([+\-])(\d{3})$/.exec(String(raw || '').trim());
+  if (!m) return null;
+  const [, y, mo, d, h, mi, s, , sign, off] = m;
+  const offsetMinutes = Number(off) * (sign === '-' ? -1 : 1);
+  const utcMs = Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s)) - offsetMinutes * 60000;
+  const t = new Date(utcMs);
+  return isNaN(t.getTime()) ? null : t.toISOString();
+}
+
+// 查询最近一次系统还原点（返回最近创建时间 ISO，无还原点返回 exists=false）。
+// PS 脚本直接输出原始 DMTF 串由 Node 侧解析；查询失败通过 RPERROR| 显式上报，
+// 不与「确无还原点」混为一谈——查询失败应放行并记日志，而非恒误报骚扰用户。
 ipcMain.handle('optimizer:check-restore', async () => {
   const script = [
-    '$ErrorActionPreference = "SilentlyContinue"',
-    'try { $rp = Get-ComputerRestorePoint | Sort-Object CreationTime -Descending | Select-Object -First 1 } catch { $rp = $null }',
-    'if ($rp) { $dt = [System.Management.ManagementDateTimeConverter]::ToDateTime($rp.CreationTime); Write-Output ("RPEXISTS|" + $dt.ToUniversalTime().ToString("o")) } else { Write-Output "RPNONE" }'
+    '$ErrorActionPreference = "Stop"',
+    'try {',
+    '  $rp = Get-ComputerRestorePoint | Sort-Object CreationTime -Descending | Select-Object -First 1',
+    '  if ($rp) { Write-Output ("RPEXISTS|" + $rp.CreationTime) } else { Write-Output "RPNONE" }',
+    '} catch {',
+    '  Write-Output ("RPERROR|" + $_.Exception.Message)',
+    '}'
   ].join('\n');
   const scriptPath = writeTempScript(script);
   try {
     const { stdout } = await runPowerShellFile(scriptPath, { timeout: 30000 });
-    const line = (stdout || '').split(/\r?\n/).map(s => s.trim()).find(l => l.startsWith('RPEXISTS|') || l === 'RPNONE');
+    const line = (stdout || '').split(/\r?\n/).map(s => s.trim())
+      .find(l => l.startsWith('RPEXISTS|') || l === 'RPNONE' || l.startsWith('RPERROR|'));
     if (line && line.startsWith('RPEXISTS|')) {
-      return { success: true, exists: true, created: line.slice('RPEXISTS|'.length) };
+      const created = parseDmtfDateTime(line.slice('RPEXISTS|'.length));
+      if (!created) {
+        writeLog('warn', `还原点时间解析失败: ${line.slice('RPEXISTS|'.length)}`);
+        return { success: false, exists: false, message: '还原点时间解析失败' };
+      }
+      return { success: true, exists: true, created };
     }
-    return { success: true, exists: false };
+    if (line && line.startsWith('RPERROR|')) {
+      writeLog('warn', `还原点查询失败: ${line.slice('RPERROR|'.length)}`);
+      return { success: false, exists: false, message: line.slice('RPERROR|'.length) };
+    }
+    // 无可辨识输出：视为查询失败而非「无还原点」
+    writeLog('warn', '还原点查询无有效输出');
+    return { success: false, exists: false, message: '查询无有效输出' };
   } catch (e) {
     writeLog('error', `检查还原点异常: ${e.message}`);
     return { success: false, exists: false, message: e.message };
@@ -1548,18 +2014,19 @@ ipcMain.handle('optimizer:create-restore', async (event) => {
   }
 });
 
-// 列出所有系统还原点 + 各卷系统保护状态（供"系统还原点管理"页面）
+// 列出所有系统还原点 + 各卷系统保护状态（供"系统还原点管理"页面）。
+// created 输出原始 DMTF 串由 Node 侧 parseDmtfDateTime 解析（PS7 不加载
+// System.Management 程序集，见 optimizer:check-restore 处说明）。
 ipcMain.handle('optimizer:list-restore', async () => {
   const script = [
     '$ErrorActionPreference = "SilentlyContinue"',
     '$out = @{}',
     '$rps = @(Get-ComputerRestorePoint)',
     '$out.restorePoints = @($rps | Sort-Object CreationTime -Descending | ForEach-Object {',
-    '  $dt = [System.Management.ManagementDateTimeConverter]::ToDateTime($_.CreationTime)',
     '  [pscustomobject]@{',
     '    seq = $_.SequenceNumber;',
     '    desc = $_.Description;',
-    '    created = $dt.ToUniversalTime().ToString("o");',
+    '    created = $_.CreationTime;',
     '    type = $_.RestorePointType',
     '  }',
     '})',
@@ -1585,6 +2052,11 @@ ipcMain.handle('optimizer:list-restore', async () => {
     let data = null;
     try { data = JSON.parse((stdout || '').trim()); } catch (e) { data = null; }
     if (!data) return { success: false, message: '无法解析还原点数据' };
+    if (Array.isArray(data.restorePoints)) {
+      for (const rp of data.restorePoints) {
+        rp.created = parseDmtfDateTime(rp && rp.created) || '';
+      }
+    }
     return { success: true, data };
   } catch (e) {
     writeLog('error', `列出还原点异常: ${e.message}`);
@@ -1645,7 +2117,7 @@ ipcMain.handle('startup:toggle', async (event, { items = [], enable = true } = {
   }
 });
 
-// 删除启动项（先备份到 %APPDATA%\TuneForge\startup-backup\deleted 再删除）
+// 删除启动项（先备份到 %APPDATA%\Trim\startup-backup\deleted 再删除）
 ipcMain.handle('startup:delete', async (event, { items = [] } = {}) => {
   const denied = rejectUntrustedRenderer(event);
   if (denied) return denied;
@@ -1682,6 +2154,9 @@ ipcMain.handle('startup:openlocation', async (event, { path: targetPath = '' } =
 
 // 添加启动项（文件选择对话框 → 写入当前用户 Run 键）
 ipcMain.handle('startup:add', async (event, _payload = {}) => {
+  // B12：与同族 startup:toggle/delete 对齐，补齐渲染进程来源校验（高风险持久化写操作）
+  const denied = rejectUntrustedRenderer(event);
+  if (denied) return denied;
   try {
     const win = BrowserWindow.fromWebContents(event.sender);
     const result = await dialog.showOpenDialog(win, {
@@ -1725,24 +2200,70 @@ function saveAppearance(v) {
 
 ipcMain.handle('appearance:get-material', async () => {
   const ap = loadAppearance();
-  return { material: ap.material || 'mica' };
+  return { material: ap.material || 'mica', materialEnabled: ap.materialEnabled !== false };
 });
 
-ipcMain.handle('appearance:set-material', async (event, { material } = {}) => {
-  const allowed = ['mica', 'mica-alt', 'acrylic', 'thin-acrylic'];
-  if (!allowed.includes(material)) return { success: false, message: '未知的材质' };
-  const map = { 'mica': 'mica', 'mica-alt': 'tabbed', 'acrylic': 'acrylic', 'thin-acrylic': 'acrylic' };
-  try {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.setBackgroundMaterial(map[material]);
+// 把原生材质应用到全部存活窗口；单窗失败不影响其余窗口与持久化
+//（Win11 27H2 运行中重设可能不生效，重启后由构造参数保证最终一致）
+function applyNativeMaterialAll(native) {
+  if (native === 'none') return false;
+  let nativeApplied = false;
+  BrowserWindow.getAllWindows().forEach((w) => {
+    if (w.isDestroyed()) return;
+    try {
+      if (typeof w.setBackgroundMaterial === 'function') {
+        w.setBackgroundMaterial(native);
+        nativeApplied = true;
+      }
+    } catch (e) {
+      // Win10/旧版 Electron 可能没有可用的 DWM backdrop；CSS 回退仍会生效。
+      writeLog('warn', `原生窗口材质不可用（${w.getTitle()}），使用 CSS 回退: ${e.message}`);
     }
+  });
+  return nativeApplied;
+}
+// 广播「生效材质」字符串（总开关关闭时为 'none'），主窗 pathbinding 与子窗 window-material 统一跟随
+function broadcastMaterialChanged(effective) {
+  BrowserWindow.getAllWindows().forEach((w) => {
+    if (w.isDestroyed()) return;
+    try { w.webContents.send('appearance:material-changed', effective); } catch (e) {}
+  });
+}
+
+ipcMain.handle('appearance:set-material', async (event, { material } = {}) => {
+  const allowed = ['mica', 'mica-alt', 'acrylic', 'thin-acrylic', 'none'];
+  if (!allowed.includes(material)) return { success: false, message: '未知的材质' };
+  try {
     const ap = loadAppearance();
     ap.material = material;
     saveAppearance(ap);
-    writeLog('info', `窗口材质切换: ${material}`);
-    return { success: true };
+    // 总开关关闭时所选材质只做记忆，生效材质按「无材质」处理（窗口界面升级3）
+    const enabled = ap.materialEnabled !== false;
+    const effective = enabled ? material : 'none';
+    const nativeApplied = applyNativeMaterialAll(nativeMaterialFor(effective));
+    broadcastMaterialChanged(effective);
+    writeLog('info', `窗口材质切换: ${material}（总开关${enabled ? '开' : '关'}，生效 ${effective}）`);
+    return { success: true, nativeApplied };
   } catch (e) {
     writeLog('error', `窗口材质切换失败: ${e.message}`);
+    return { success: false, message: e.message };
+  }
+});
+
+// 材质总开关（窗口界面升级3）：关闭 = 生效材质置 none（各窗口即时不透明），所选材质保留记忆
+ipcMain.handle('appearance:set-material-enabled', async (event, { enabled } = {}) => {
+  try {
+    const on = !!enabled;
+    const ap = loadAppearance();
+    ap.materialEnabled = on;
+    saveAppearance(ap);
+    const effective = on ? (ap.material || 'mica') : 'none';
+    const nativeApplied = applyNativeMaterialAll(nativeMaterialFor(effective));
+    broadcastMaterialChanged(effective);
+    writeLog('info', `窗口材质总开关: ${on ? '开启' : '关闭'}（生效材质 ${effective}）`);
+    return { success: true, material: effective, materialEnabled: on, nativeApplied };
+  } catch (e) {
+    writeLog('error', `窗口材质总开关切换失败: ${e.message}`);
     return { success: false, message: e.message };
   }
 });
@@ -2548,7 +3069,7 @@ ipcMain.handle('device:scan', async () => {
   } finally { try { fs.unlinkSync(scriptPath); } catch (e) {} }
 });
 
-// 系统信息缓存：首次扫描写入 %APPDATA%\TuneForge\system-info.json，此后优先读缓存，手动刷新才重新扫描
+// 系统信息缓存：首次扫描写入 %APPDATA%\Trim\system-info.json，此后优先读缓存，手动刷新才重新扫描
 const SYSTEM_INFO_FILE = path.join(APP_DATA_DIR, 'system-info.json');
 
 function loadSystemInfoCache() {
@@ -2745,26 +3266,66 @@ ipcMain.handle('bench-history:clear', () => {
 
 // ==================== UAC 权限提升 IPC ====================
 // 应用以普通权限启动（asInvoker），需要管理员权限时通过 UAC 重新拉起
-ipcMain.handle('elevate:status', () => {
-  return { isAdmin: isAdmin() };
+ipcMain.handle('elevate:status', async () => {
+  return { isAdmin: await isAdmin() };
 });
+
+// B5：提权成功 ≠ 新实例启动成功（新实例可能因崩溃等原因立刻退出）。
+// 旧实例等待新实例发出的 second-instance 信号确认其存活后再退出释放锁；
+// 超时则保持当前实例存活并通知渲染层提示用户。
+const ELEVATE_HANDSHAKE_TIMEOUT = 20000;
+let elevateHandshakeArmed = false;
+function armElevateHandshake() {
+  if (elevateHandshakeArmed) return;
+  elevateHandshakeArmed = true;
+  writeLog('info', '等待提权后的新实例就绪');
+  const startedAt = Date.now();
+  const onSecondInstance = (event, argv = []) => {
+    // 只认带提权标志的信号：等待期间用户手动再次启动应用（无标志）不应触发退出
+    if (!argv.includes(ELEVATED_RELAUNCH_FLAG)) return;
+    elevateHandshakeArmed = false;
+    app.removeListener('second-instance', onSecondInstance);
+    writeLog('info', '检测到提权后的新实例已启动，退出当前实例');
+    app.quit();
+  };
+  app.on('second-instance', onSecondInstance);
+  const check = setInterval(() => {
+    if (!elevateHandshakeArmed) { clearInterval(check); return; }
+    if (Date.now() - startedAt > ELEVATE_HANDSHAKE_TIMEOUT) {
+      clearInterval(check);
+      app.removeListener('second-instance', onSecondInstance);
+      elevateHandshakeArmed = false;
+      writeLog('warn', '未检测到提权后的新实例启动，保持当前实例运行');
+      try {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('elevate:notice', { message: '未检测到新实例启动，已保持当前运行状态' });
+        }
+      } catch (e) {}
+    }
+  }, 500);
+}
 
 ipcMain.handle('elevate:request', () => {
   return new Promise((resolve) => {
     writeLog('info', '请求管理员权限提升 (UAC)');
     const exe = process.execPath;
     const args = isDev ? [path.join(__dirname)] : [];
+    args.push(ELEVATED_RELAUNCH_FLAG);
     const escapedExe = exe.replace(/'/g, "''");
     const argsPart = args.map(a => `'${a.replace(/'/g, "''")}'`).join(' ');
     // 通过 PowerShell Start-Process -Verb RunAs 弹出 UAC
     const script = `try { Start-Process -FilePath '${escapedExe}' -Verb RunAs ${argsPart} -ErrorAction Stop; exit 0 } catch { exit 1 }`;
-    runPowerShell(script).then(result => {
+    // B4：15s 超时兜底，pwsh 卡死时不再永久挂起
+    runPowerShell(script, { timeout: 15000 }).then(result => {
+      if (result.timedOut) {
+        writeLog('error', 'UAC 提权请求超时');
+        resolve({ success: false, message: '提权请求超时，请重试' });
+        return;
+      }
       if (result.code === 0) {
-        writeLog('info', 'UAC 提权成功，正在重启应用');
+        writeLog('info', 'UAC 提权成功，等待新实例就绪后退出当前实例');
         resolve({ success: true, relaunching: true });
-        // 等新实例起来后退出当前实例。延迟需大于 0：新实例（Electron 冷启动 1s+）
-        // 若在旧实例仍持有单实例锁时请求锁会失败退出；1.5s 给 UAC 弹窗与冷启动留足余量。
-        setTimeout(() => { app.quit(); }, 1500);
+        armElevateHandshake();
       } else {
         writeLog('warn', 'UAC 提权被用户取消');
         resolve({ success: false, message: '提权请求被取消或失败' });
@@ -2798,6 +3359,8 @@ function registerShutdownHook() {
 function performFinalClose() {
   if (shutdownTimeout) { clearTimeout(shutdownTimeout); shutdownTimeout = null; }
   isShuttingDown = true;
+  // C2：确认真正退出时才持久化窗口状态（原来挂在 close 上，取消关闭也会写入）
+  try { saveWindowState(); } catch (e) {}
   try {
     cleanupTempScripts();
   } catch (e) {}
@@ -2990,7 +3553,7 @@ ipcMain.handle('realtime:loss', async () => {
 });
 
 // ==================== 实时网速：记录报告 IPC ====================
-// 报告 JSON 存入 %APPDATA%\TuneForge\cache\realtime-reports\，超过 7 天自动清理
+// 报告 JSON 存入 %APPDATA%\Trim\cache\realtime-reports\，超过 7 天自动清理
 const REALTIME_REPORT_DIR = path.join(APP_DATA_DIR, 'cache', 'realtime-reports');
 const REALTIME_REPORT_TTL = 7 * 24 * 60 * 60 * 1000;
 
@@ -3382,7 +3945,7 @@ ipcMain.handle('paths:file-icon', async (event, { filePath } = {}) => {
 // ==================== 设置 → 字体管理（应用内弹窗） ====================
 // 识别 5 款指定系统字体的可用性（文件存在性检测，无需管理员权限）；
 // 内嵌 MiSans 可变字体随应用分发（src/assets/fonts/MiSansVF.ttf）；
-// 支持导入 1 款外部字体（复制副本到 %APPDATA%\TuneForge\fonts\，记录持久化到 settings.json）。
+// 支持导入 1 款外部字体（复制副本到 %APPDATA%\Trim\fonts\，记录持久化到 settings.json）。
 const FONTS_DIR = path.join(APP_DATA_DIR, 'fonts');
 const FONT_SYSTEM_FAMILIES = [
   { family: '微软雅黑', cssStack: "'微软雅黑', 'Microsoft YaHei', sans-serif", files: ['C:\\Windows\\Fonts\\msyh.ttc', 'C:\\Windows\\Fonts\\msyh.ttf'] },
@@ -3558,8 +4121,10 @@ ipcMain.handle('processManager:open-window', async () => {
     modal: false,
     title: '应用进程管理',
     autoHideMenuBar: true,
-    icon: path.join(__dirname, 'ico', 'ico', 'TuneForge.ico'),
+    icon: path.join(__dirname, 'src', 'assets', 'ico', 'Trim.ico'),
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#202020' : '#f3f3f3',
+    // 原生材质与主窗同源（appearance.json.material）；渲染层半透明化见 window-material.js
+    ...childWindowMaterialOption(),
     // 先隐藏待首帧渲染完成再显示，避免打开瞬间黑/白闪一帧
     show: false,
     webPreferences: {
@@ -3611,8 +4176,10 @@ ipcMain.handle('models:open-window', async () => {
     modal: false,
     title: '大模型管理',
     autoHideMenuBar: true,
-    icon: path.join(__dirname, 'ico', 'ico', 'TuneForge.ico'),
+    icon: path.join(__dirname, 'src', 'assets', 'ico', 'Trim.ico'),
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#202020' : '#f3f3f3',
+    // 原生材质与主窗同源（appearance.json.material）；渲染层半透明化见 window-material.js
+    ...childWindowMaterialOption(),
     // 先隐藏待首帧渲染完成再显示，避免打开瞬间黑/白闪一帧
     show: false,
     webPreferences: {
@@ -3656,7 +4223,7 @@ ipcMain.handle('preview:open-window', async (event, payload = {}) => {
     modal: false,
     title: '图片预览',
     autoHideMenuBar: true,
-    icon: path.join(__dirname, 'ico', 'ico', 'TuneForge.ico'),
+    icon: path.join(__dirname, 'src', 'assets', 'ico', 'Trim.ico'),
     backgroundColor: '#000000',
     // 先隐藏待首帧渲染完成再显示，避免打开瞬间（尤其图片加载）黑闪一帧
     show: false,
@@ -3738,8 +4305,10 @@ ipcMain.handle('peripheral:open-window', async () => {
     modal: false,
     title: '外设优化',
     autoHideMenuBar: true,
-    icon: path.join(__dirname, 'ico', 'ico', 'TuneForge.ico'),
+    icon: path.join(__dirname, 'src', 'assets', 'ico', 'Trim.ico'),
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#202020' : '#f3f3f3',
+    // 原生材质与主窗同源（appearance.json.material）；渲染层半透明化见 window-material.js
+    ...childWindowMaterialOption(),
     // 先隐藏待首帧渲染完成再显示，避免打开瞬间黑/白闪一帧
     show: false,
     webPreferences: {
@@ -4111,6 +4680,10 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  // B9：退出前把日志缓冲强制落盘，防止尾部日志随进程退出丢失
+  flushLogSync();
+  // C2：兜底持久化窗口状态（performFinalClose 已存过则幂等）
+  try { saveWindowState(); } catch (e) {}
   // 清理本应用 spawn 的子进程（仅清理已登记的 PID，绝误杀用户的其它进程）
   if (backendProcs.size > 0) {
     const { execSync } = require('child_process');
