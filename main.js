@@ -823,9 +823,9 @@ ipcMain.handle('app:get-theme', () => {
   return nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
 });
 
-// 读取使用说明（readme.md）
+// 读取使用说明（《使用说明.md》独立文档，不再读 readme.md；设置页整合4）
 ipcMain.handle('app:read-usage', () => {
-  const mdPath = path.join(__dirname, 'readme.md');
+  const mdPath = path.join(__dirname, '使用说明.md');
   try {
     if (!fs.existsSync(mdPath)) return { success: false, message: '使用说明文件不存在' };
     const content = fs.readFileSync(mdPath, 'utf8');
@@ -988,22 +988,83 @@ ipcMain.handle('cleanup:scan', async (event, { categories }) => {
   }
 });
 
-ipcMain.handle('cleanup:execute', async (event, { items, force }) => {
+ipcMain.handle('cleanup:execute', async (event, { items, force, toRecycle, autoRebuild }) => {
   const denied = rejectUntrustedRenderer(event);
   if (denied) return denied;
   const safeItems = validateSnapshotItems(items, lastCleanupSnapshot);
   if (!safeItems) return { success: false, message: '清理项不是最近一次扫描结果，已拒绝执行' };
-  const script = CLEANUP_SCRIPT.execute(safeItems, !!force);
+  const script = CLEANUP_SCRIPT.execute(safeItems, !!force, !!toRecycle);
   const scriptPath = writeTempScript(script);
+  const sender = event.sender;
+  // P3 回收站模式：PS 输出 @@RECYCLE@@ 目标行，实际移入回收站由主进程 shell.trashItem 完成
+  const recycleEntries = [];
+  const cleanLines = [];
+  let buf = '';
+  const onStdout = (chunk) => {
+    buf += chunk;
+    let nl;
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, nl).replace(/\r$/, '');
+      buf = buf.slice(nl + 1);
+      if (line.startsWith('@@RECYCLE@@')) {
+        try {
+          const entry = JSON.parse(line.slice(11));
+          if (entry && typeof entry.path === 'string' && entry.path) recycleEntries.push(entry);
+        } catch (e) {}
+        continue;
+      }
+      cleanLines.push(line);
+    }
+  };
   try {
-    writeLog('info', `开始清理: ${safeItems.length} 项, force=${force}`);
-    const { stdout, stderr, code } = await runPowerShellFile(scriptPath, { diagOp: 'cleanup.execute', timeout: 600000 });
+    writeLog('info', `开始清理: ${safeItems.length} 项, force=${!!force}, toRecycle=${!!toRecycle}, autoRebuild=${!!autoRebuild}`);
+    const { stdout, stderr, code } = await runPowerShellFile(scriptPath, { diagOp: 'cleanup.execute', timeout: 600000, onStdout });
     if (code !== 0) {
       writeLog('error', `清理失败: ${stderr}`);
       return { success: false, message: stderr || '清理失败' };
     }
+    let data;
     try {
-      const data = JSON.parse(stdout.trim());
+      const cleanStdout = cleanLines.join('\n').trim() || stdout.trim();
+      data = JSON.parse(cleanStdout);
+    } catch (e) {
+      return { success: false, message: '解析结果失败', raw: stdout };
+    }
+    // P3：回收站模式——逐目标 shell.trashItem，改写 recycle 状态为 ok/partial/error
+    if (toRecycle && recycleEntries.length > 0) {
+      const perItem = new Map();
+      for (const entry of recycleEntries) {
+        const st = perItem.get(entry.id) || { freed: 0, ok: 0, fail: 0 };
+        try {
+          await shell.trashItem(entry.path);
+          st.freed += Number(entry.size) || 0;
+          st.ok++;
+          // 目录条目可选自动重建（与直接删除模式的 optAutoRebuild 语义一致）
+          if (entry.isDir && autoRebuild) {
+            try { fs.mkdirSync(entry.path, { recursive: true }); } catch (e2) {}
+          }
+        } catch (e) {
+          st.fail++;
+          writeLog('warn', `移入回收站失败: ${entry.path} -> ${e.message}`);
+        }
+        perItem.set(entry.id, st);
+      }
+      for (const d of data.details || []) {
+        if (d.status !== 'recycle') continue;
+        const st = perItem.get(d.id);
+        if (!st) { d.status = 'ok'; d.freed = 0; d.message = '无可清理目标'; continue; }
+        d.freed = st.freed;
+        if (st.fail === 0) { d.status = 'ok'; d.message = `已移入回收站（${st.ok} 项）`; }
+        else if (st.ok > 0) { d.status = 'partial'; d.message = `已移入回收站 ${st.ok} 项，${st.fail} 项失败（被占用）`; }
+        else { d.status = 'error'; d.freed = 0; d.message = '移入回收站失败（可能被占用）'; }
+      }
+      // 按改写后的明细重算统计
+      data.totalFreed = (data.details || []).reduce((s, d) => s + (Number(d.freed) || 0), 0);
+      data.success = (data.details || []).filter(d => d.status === 'ok').length;
+      data.failed = (data.details || []).filter(d => d.status === 'error' || d.status === 'partial').length;
+      data.skipped = (data.details || []).filter(d => d.status === 'skip').length;
+    }
+    try {
       writeLog('info', `清理完成: 释放 ${data.totalFreed} 字节`);
       return { success: Number(data.failed || 0) === 0, data };
     } catch (e) {
@@ -1015,6 +1076,182 @@ ipcMain.handle('cleanup:execute', async (event, { items, force }) => {
   } finally {
     try { fs.unlinkSync(scriptPath); } catch (e) {}
   }
+});
+
+// P3 条目明细：枚举单个条目将删除的文件清单（只读，供「明细」弹窗展示）
+ipcMain.handle('cleanup:item-detail', async (event, { id, path: itemPath }) => {
+  const denied = rejectUntrustedRenderer(event);
+  if (denied) return denied;
+  if (typeof id !== 'string' || id.length < 1 || id.length > 160) return { success: false, message: '参数无效' };
+  let safePath = '';
+  if (typeof itemPath === 'string' && itemPath.length > 0 && itemPath.length <= 600) safePath = itemPath;
+  const script = CLEANUP_SCRIPT.detail(id, safePath);
+  const scriptPath = writeTempScript(script);
+  const files = [];
+  let meta = null;
+  let buf = '';
+  try {
+    const { stderr, code } = await runPowerShellFile(scriptPath, {
+      diagOp: 'cleanup.detail',
+      timeout: 120000,
+      onStdout: (chunk) => {
+        buf += chunk;
+        let nl;
+        while ((nl = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, nl).replace(/\r$/, '');
+          buf = buf.slice(nl + 1);
+          try {
+            if (line.startsWith('@@ITEMFILE@@')) {
+              const f = JSON.parse(line.slice(12));
+              if (f && typeof f.path === 'string') files.push(f);
+            } else if (line.startsWith('@@DETAIL@@')) {
+              meta = JSON.parse(line.slice(10));
+            }
+          } catch (e) {}
+        }
+      }
+    });
+    if (code !== 0) return { success: false, message: stderr || '明细枚举失败' };
+    return { success: true, data: { kind: (meta && meta.kind) || 'files', total: (meta && meta.total) != null ? meta.total : files.length, truncated: !!(meta && meta.truncated), files } };
+  } catch (e) {
+    writeLog('error', `条目明细枚举失败: ${e.message}`);
+    return { success: false, message: e.message };
+  } finally {
+    try { fs.unlinkSync(scriptPath); } catch (e) {}
+  }
+});
+
+// ==================== 清理规则库在线更新（P2） ====================
+// 发布源按序回退：GitHub raw → jsDelivr → gh-proxy。默认指向本仓库 main 分支的
+// 规则文件；迁移仓库 / 更改规则文件路径时同步修改这里。
+// 私有仓库的匿名 HTTP 源会 404——两种解决方式：
+//   ① 把仓库设为 public（默认 URL 立即可用）；
+//   ② 在 %APPDATA%\Trim\cleanup\update-source.json 配置可访问源与请求头：
+//      { "urls": ["https://..."], "headers": { "Authorization": "Bearer <token>" } }
+// 另有 git 回退：应用目录在 git 仓库内（开发机）且本机已存有该仓库凭据时，
+// 经 `git fetch` 深拉远程 main 并 `git show` 取文件（只 fetch，不动工作树）。
+const RULES_UPDATE_URLS = [
+  'https://raw.githubusercontent.com/xiaoxu1642/TuneForge/main/src/data/cleanup-rules.json',
+  'https://cdn.jsdelivr.net/gh/xiaoxu1642/TuneForge@main/src/data/cleanup-rules.json',
+  'https://gh-proxy.com/https://raw.githubusercontent.com/xiaoxu1642/TuneForge/main/src/data/cleanup-rules.json'
+];
+const RULES_MIN_SIZE = 4096;          // 内容下限（当前规则约 20KB，低于 4KB 视为异常）
+const RULES_DOWNLOAD_TIMEOUT = 15000; // 单源超时（毫秒）
+
+// 读取可选的更新源覆盖配置（数据目录优先，支持自定义 URL 列表与请求头）
+function loadRulesUpdateOverride() {
+  try {
+    const file = path.join(CLEANUP_SCRIPT.dataRulesDir(), 'update-source.json');
+    if (!fs.existsSync(file)) return null;
+    const cfg = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (!cfg || typeof cfg !== 'object') return null;
+    const urls = Array.isArray(cfg.urls) ? cfg.urls.filter(u => typeof u === 'string' && /^https?:\/\//.test(u)).slice(0, 10) : [];
+    const headers = {};
+    if (cfg.headers && typeof cfg.headers === 'object') {
+      for (const [k, v] of Object.entries(cfg.headers)) {
+        if (typeof k === 'string' && k.length <= 128 && typeof v === 'string' && v.length <= 1024) headers[k] = v;
+      }
+    }
+    return { urls, headers };
+  } catch (e) {
+    writeLog('warn', `读取更新源覆盖配置失败: ${e.message}`);
+    return null;
+  }
+}
+
+// git 回退（开发机）：经本机凭据深拉远程 main，取规则文件内容；不可用返回 null
+function gitFetchRulesFile() {
+  return new Promise((resolve) => {
+    const repoDir = __dirname; // dev 模式应用根 = 仓库根；打包后无 .git 自然跳过
+    if (!fs.existsSync(path.join(repoDir, '.git'))) { resolve(null); return; }
+    exec('git fetch --depth=1 origin main', { cwd: repoDir, timeout: 60000, windowsHide: true }, (fetchErr) => {
+      if (fetchErr) { resolve(null); return; }
+      exec('git show FETCH_HEAD:src/data/cleanup-rules.json', { cwd: repoDir, timeout: 15000, windowsHide: true, maxBuffer: 16 * 1024 * 1024, encoding: 'utf8' }, (showErr, stdout) => {
+        resolve(showErr ? null : String(stdout));
+      });
+    });
+  });
+}
+
+ipcMain.handle('cleanup:update-rules', async (event) => {
+  const denied = rejectUntrustedRenderer(event);
+  if (denied) return denied;
+  const currentVersion = Number(CLEANUP_SCRIPT.rules()?.rulesVersion) || 0;
+  const override = loadRulesUpdateOverride();
+  const sources = [
+    ...(override?.urls || []),
+    ...RULES_UPDATE_URLS.map(url => ({ url, headers: override?.headers || {} }))
+  ].slice(0, 16);
+  const seen = new Set();
+  const attempts = [];
+  let lastError = '';
+  // 内容校验链：尺寸 → JSON 结构 → 条目形状 → 版本防降级
+  const validate = (text) => {
+    if (!text || text.length < RULES_MIN_SIZE) return { error: '内容过小，疑似异常响应' };
+    let parsed;
+    try { parsed = JSON.parse(text); } catch (e) { return { error: 'JSON 解析失败' }; }
+    if (!parsed || !Array.isArray(parsed.groups) || parsed.groups.length < 1) return { error: '缺少 groups 结构' };
+    const sample = (parsed.groups || []).flatMap(g => (g.items || []).concat((g.subGroups || []).flatMap(sg => sg.items || [])));
+    if (!sample.length || !sample.every(it => it && typeof it.id === 'string' && typeof it.name === 'string')) return { error: '条目缺少 id/name 字段' };
+    const version = Number(parsed.rulesVersion) || 0;
+    if (version < currentVersion) return { error: `下载版本(${version})低于当前版本(${currentVersion})，已拒绝（防降级）` };
+    return { version, text };
+  };
+  const writeValidated = (result) => {
+    const dir = CLEANUP_SCRIPT.dataRulesDir();
+    fs.mkdirSync(dir, { recursive: true });
+    const target = path.join(dir, 'rules.json');
+    const tmp = target + '.downloading';
+    fs.writeFileSync(tmp, result.text, 'utf8');
+    fs.renameSync(tmp, target);
+    writeLog('info', `清理规则库已更新: rulesVersion=${result.version}`);
+    return { success: true, rulesVersion: result.version };
+  };
+
+  for (const src of sources) {
+    const url = typeof src === 'string' ? src : src.url;
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    const headers = (typeof src === 'object' && src.headers) || {};
+    try {
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), RULES_DOWNLOAD_TIMEOUT);
+      let resp;
+      try {
+        resp = await fetch(url, { signal: ac.signal, headers });
+      } finally {
+        clearTimeout(timer);
+      }
+      if (!resp.ok) { lastError = `HTTP ${resp.status}`; continue; }
+      const text = await resp.text();
+      const checked = validate(text);
+      if (checked.error) { lastError = checked.error; continue; }
+      const done = writeValidated(checked);
+      return { ...done, source: url };
+    } catch (e) {
+      lastError = e.name === 'AbortError' ? '下载超时' : e.message;
+    }
+  }
+
+  // git 回退：HTTP 全部失败时，开发机经本机凭据拉取远程（私有仓库也可用）
+  const gitText = await gitFetchRulesFile();
+  if (gitText) {
+    const checked = validate(gitText);
+    if (checked.error) {
+      lastError = checked.error + '（本机 git 已取到远程规则）';
+    } else {
+      const done = writeValidated(checked);
+      attempts.push('git');
+      return { ...done, source: 'git:origin/main' };
+    }
+  }
+
+  const revertible = (lastError || '').includes('版本') || (lastError || '').includes('防降级');
+  const hint = fs.existsSync(path.join(__dirname, '.git'))
+    ? (revertible ? '（远程规则版本未更新或低于本地，请先在源仓库发布新规则）' : '（已尝试本机 git 回退仍失败，请检查网络或远程分支）')
+    : '（HTTP 发布源不可达；私有仓库请先公开仓库，或在数据目录 update-source.json 配置可访问源）';
+  writeLog('warn', `清理规则库更新失败: ${lastError}`);
+  return { success: false, message: '所有发布源均不可用或校验未通过：' + lastError + hint };
 });
 
 // ==================== 磁盘清理 · Rust 原生查找器 IPC ====================
@@ -3780,7 +4017,9 @@ function savePathsConfig(config) {
 
 // 自动扫描安装路径
 ipcMain.handle('paths:scan', async () => {
-  const scriptPath = writeTempScript(PATHSCAN_SCRIPT.scan());
+  // 任务3：注入当前生效规则库（数据目录覆盖/自定义合并后）——规则库在线更新后，
+  // 路径绑定扫描的应用候选目录自动同步；规则不可用时 pathscan 走内置兜底。
+  const scriptPath = writeTempScript(PATHSCAN_SCRIPT.scan(JSON.stringify(CLEANUP_SCRIPT.rules())));
   try {
     writeLog('info', '开始扫描安装路径');
     const { stdout, stderr, code } = await runPowerShellFile(scriptPath, { timeout: 120000 });

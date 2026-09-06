@@ -104,14 +104,28 @@
     applyMicaMode
   };
 
-  // 全局应用「设计系统」外观（玻璃皮肤 + 预设背景）：跨页面/启动即生效，
+  // 全局应用「设计系统」外观（背景模糊度 + 预设背景）：跨页面/启动即生效，
   // 与设置页共用 localStorage 键 'winclean-appearance'，避免仅设置页生效。
   function applySkinAndPreset() {
     let ap = {};
     try { ap = JSON.parse(localStorage.getItem('winclean-appearance') || '{}') || {}; } catch (e) {}
-    // 仅在开启玻璃皮肤时挂 body[data-skin="glass"]；classic/未设置一律移除
-    if (ap.skin === 'glass') document.body.dataset.skin = 'glass';
-    else delete document.body.dataset.skin;
+    // 背景模糊度（设置页整合4）：>0 挂 body[data-skin="glass"] 并按百分比缩放模糊半径
+    // （100% = 26px，与原液态玻璃一致；与 pathbinding.js 的 GLASS_MAX_BLUR_PX 共用同一约定，
+    // 改动需两处同步）；0% = 经典不透明面板。旧 skin 键按 glass=100% / classic=0% 折算迁移。
+    let blur = ap.bgBlur;
+    if (blur == null) {
+      blur = ap.skin === 'glass' ? 100 : 0;
+      ap.bgBlur = blur;
+      delete ap.skin;
+      try { localStorage.setItem('winclean-appearance', JSON.stringify(ap)); } catch (e) {}
+    }
+    if (blur > 0) {
+      document.body.dataset.skin = 'glass';
+      document.documentElement.style.setProperty('--glass-blur', (blur / 100 * 26).toFixed(1) + 'px');
+    } else {
+      delete document.body.dataset.skin;
+      document.documentElement.style.removeProperty('--glass-blur');
+    }
     if (ap.presetBg) document.body.dataset.presetBg = ap.presetBg;
     else delete document.body.dataset.presetBg;
   }

@@ -25,9 +25,11 @@
           id: 'system', name: '系统相关', icon: '⚙️',
           items: [
             { id: 'windowsReport', name: 'Windows报告', risk: 'low' },
-            { id: 'windowsEvent', name: 'Windows事件', risk: 'medium' },
             { id: 'windowsUpdateLog', name: 'Windows更新安装记录', risk: 'low' },
-            { id: 'diagnosisData', name: '诊断数据目录', risk: 'low' }
+            { id: 'diagnosisData', name: '诊断数据目录', risk: 'low' },
+            { id: 'explorerRecentDocs', name: '最近文档注册表记录', risk: 'low' },
+            { id: 'explorerRunMRU', name: '运行对话框历史', risk: 'low' },
+            { id: 'shellMuiCache', name: '资源管理器名称缓存', risk: 'low' }
           ]
         },
         {
@@ -39,6 +41,7 @@
             { id: 'dotNetCache', name: '.NET程序集缓存', risk: 'low' },
             { id: 'prefetchFiles', name: 'Windows预读取文件', risk: 'low' },
             { id: 'thumbnailCacheFiles', name: '缩略图缓存(需重启explorer)', risk: 'low' },
+            { id: 'iconCacheFiles', name: '图标缓存(需重启explorer)', risk: 'low' },
             { id: 'winINetCache', name: 'WinINet网页缓存', risk: 'low' },
             { id: 'winINetCookies', name: 'WinINet Cookies', risk: 'low' },
             { id: 'userCrashDumps', name: '用户崩溃转储', risk: 'low' }
@@ -47,7 +50,7 @@
         {
           id: 'app', name: '应用程序', icon: '📦',
           items: [
-            { id: 'packageCache', name: 'Windows Installer 缓存', risk: 'high' },
+            { id: 'packageCache', name: 'Windows Installer 补丁缓存', risk: 'high' },
             { id: 'defenderHistoryRecords', name: 'Windows Defender保护历史记录', risk: 'low' }
           ]
         },
@@ -63,7 +66,7 @@
             { id: 'baiduNetdiskLog', name: '百度网盘日志', risk: 'low' },
             { id: 'recycleBin', name: '回收站', risk: 'medium' },
             { id: 'memoryDumpFiles', name: '系统以及程序崩溃dmp文件（by YukiSakura）', risk: 'low' },
-            { id: 'mseOldFiles', name: '微软系安软数据目录', risk: 'high' },
+            { id: 'recentFiles', name: '最近文档快捷方式', risk: 'low' },
             { id: 'dismComponentCleanup', name: 'DISM 组件清理 (WinSxS /ResetBase)', risk: 'medium' },
             { id: 'directXShaderCache', name: 'DirectX 着色器缓存', risk: 'low' }
           ]
@@ -88,7 +91,9 @@
         { id: 'chromeCodeCache', name: 'Chrome 代码缓存', risk: 'low' },
         { id: 'chromeMediaCache', name: 'Chrome 媒体缓存', risk: 'low' },
         { id: 'edgeMediaCache', name: 'Edge 媒体缓存', risk: 'low' },
-        { id: 'edgeCache', name: 'Edge 浏览器缓存', risk: 'low' }
+        { id: 'edgeCache', name: 'Edge 浏览器缓存', risk: 'low' },
+        { id: 'firefoxCache', name: 'Firefox 浏览器缓存', risk: 'low' },
+        { id: 'qqBrowserCache', name: 'QQ浏览器缓存', risk: 'low' }
       ]
     },
     apps: {
@@ -99,7 +104,15 @@
         { id: 'neteaseMusicCache', name: '网易云音乐缓存', risk: 'low' },
         { id: 'wechatCache', name: '微信缓存', risk: 'low' },
         { id: 'qqCache', name: 'QQ缓存', risk: 'low' },
-        { id: 'douyinCache', name: '抖音缓存', risk: 'low' }
+        { id: 'douyinCache', name: '抖音缓存', risk: 'low' },
+        { id: 'steamHtmlCache', name: 'Steam 内置浏览器缓存', risk: 'low' },
+        { id: 'epicWebCache', name: 'Epic 启动器网页缓存', risk: 'low' },
+        { id: 'officeFileCache', name: 'Office 文件缓存', risk: 'medium' },
+        { id: 'vscodeCache', name: 'VS Code 缓存', risk: 'low' },
+        { id: 'jetbrainsCache', name: 'JetBrains IDE 缓存', risk: 'low' },
+        { id: 'npmCache', name: 'npm 包缓存', risk: 'low' },
+        { id: 'pipCache', name: 'pip 包缓存', risk: 'low' },
+        { id: 'nugetCache', name: 'NuGet 全局包缓存', risk: 'medium' }
       ]
     },
     fileclean: {
@@ -163,7 +176,6 @@
     chromeOldBackup: 128 * 1024 * 1024,
     wpsOldBackup: 234 * 1024 * 1024,
     windowsReport: 67 * 1024 * 1024,
-    windowsEvent: 156 * 1024 * 1024,
     windowsUpdateLog: 45 * 1024 * 1024,
     diagnosisData: 220 * 1024 * 1024,
     windowsDownloadCache: 1024 * 1024 * 1024,
@@ -186,7 +198,6 @@
     baiduNetdiskLog: 156 * 1024 * 1024,
     recycleBin: 89 * 1024 * 1024,
     memoryDumpFiles: 345 * 1024 * 1024,
-     mseOldFiles: 67 * 1024 * 1024,
      dismComponentCleanup: 0,
      directXShaderCache: 112 * 1024 * 1024,
     // 显卡 / 浏览器 / 应用
@@ -219,6 +230,10 @@
 
   // 文件清理项 ID（使用独立扫描/清理逻辑）
   const FILECLEAN_IDS = ['qqFileClean', 'wechatFileClean'];
+
+  // P1 安装检测（detect）未命中的条目：扫描后从列表隐藏（重新扫描/换规则后自动恢复）
+  const hiddenIds = new Set();
+  function visibleItems(items) { return items.filter(i => !hiddenIds.has(i.id)); }
 
   // 状态
   let scanResults = new Map();
@@ -277,8 +292,8 @@
   const COL_ACTIONS = { key: 'actions', label: '操作', width: 112, minWidth: 84, sortable: false, align: 'center' };
 
   function columnsFor(groupKey) {
-    const cols = [COL_CHECK, COL_NAME, COL_PATH, COL_RISK, COL_SIZE];
-    if (groupKey === 'fileclean') cols.push(COL_ACTIONS);
+    // P3：全部分组都提供「明细」操作列（fileclean 组沿用图片预览按钮）
+    const cols = [COL_CHECK, COL_NAME, COL_PATH, COL_RISK, COL_SIZE, COL_ACTIONS];
     return cols;
   }
 
@@ -391,7 +406,13 @@
           break;
         case 'path':
           if (result && result.path) {
-            inner = `<span class="xtable-cell-text xtable-cell-path" title="${escapeHtml(result.path)}">${escapeHtml(xtable.middleEllipsis(result.path, 72))}${result.pathSource === 'auto' ? ' <span class="path-auto-tag">自动定位</span>' : ''}</span>`;
+            const autoTag = result.pathSource === 'auto' ? ' <span class="path-auto-tag">自动定位</span>' : '';
+            // P1：fileKeys/regKeys 条目的规模标签 + requiredStoppedProcesses 命中提示标签
+            const fileTag = result.fileCount > 0 ? ` <span class="path-auto-tag">共 ${result.fileCount} 个文件</span>` : '';
+            const regTag = result.regCount > 0 ? ` <span class="path-auto-tag">注册表 ${result.regCount} 项</span>` : '';
+            const blockedTag = Array.isArray(result.blockedBy) && result.blockedBy.length
+              ? ` <span class="path-blocked-tag" data-tip="执行前会跳过此项目并提示原因">需关闭: ${escapeHtml(result.blockedBy.join(', '))}</span>` : '';
+            inner = `<span class="xtable-cell-text xtable-cell-path" title="${escapeHtml(result.path)}">${escapeHtml(xtable.middleEllipsis(result.path, 72))}${autoTag}${fileTag}${regTag}${blockedTag}</span>`;
           } else {
             inner = '<span class="xtable-cell-muted">—</span>';
           }
@@ -403,7 +424,12 @@
           inner = size !== null && size !== undefined ? formatSize(size) : '<span class="xtable-cell-muted">—</span>';
           break;
         case 'actions':
-          inner = previewBtnHtml(item, hasImages, imageCount);
+          if (isFileClean) {
+            inner = previewBtnHtml(item, hasImages, imageCount);
+          } else {
+            // P3：明细按钮——弹窗枚举该条目将删除的具体文件清单（只读）
+            inner = `<button class="fileclean-preview-btn" data-detail="${item.id}" data-tip="查看此条目包含的具体文件清单（只读，最多展示 600 条）">明细</button>`;
+          }
           break;
       }
       const align = col.align === 'end' ? ' data-align="end"' : (col.align === 'center' ? ' data-align="center"' : '');
@@ -444,6 +470,12 @@
           if (!previewBtn.disabled) openPreview(previewBtn.dataset.preview);
           return;
         }
+        const detailBtn = e.target.closest('[data-detail]');
+        if (detailBtn) {
+          e.stopPropagation();
+          openItemDetail(detailBtn.dataset.detail);
+          return;
+        }
         const row = e.target.closest('.xtable-row');
         if (!row || !container.contains(row)) return;
         if (window.getSelection && window.getSelection().toString()) return;
@@ -451,7 +483,11 @@
       });
     }
 
-    for (const [groupKey, group] of Object.entries(CATEGORIES)) {
+    for (const [groupKey, rawGroup] of Object.entries(CATEGORIES)) {
+      // P1：detect 未命中的隐藏条目不渲染（分组计数/大小汇总同步排除）
+      const group = rawGroup.subGroups
+        ? { ...rawGroup, subGroups: rawGroup.subGroups.map(sg => ({ ...sg, items: visibleItems(sg.items) })).filter(sg => sg.items.length > 0) }
+        : { ...rawGroup, items: visibleItems(rawGroup.items || []) };
       const groupEl = document.createElement('div');
       groupEl.className = 'category-group' + (groupKey === 'fileclean' ? ' fileclean-group' : '');
 
@@ -625,12 +661,10 @@
     text.textContent = allSelected ? '全不选' : '全选';
   }
 
-  // 收集所有分类下的子项（含二级分类）
+  // 收集所有分类下的子项（含二级分类；detect 未命中的隐藏项不参与数量/大小汇总）
   function getGroupItems(group) {
-    if (group.subGroups) {
-      return group.subGroups.flatMap(sg => sg.items);
-    }
-    return group.items || [];
+    const items = group.subGroups ? group.subGroups.flatMap(sg => sg.items) : (group.items || []);
+    return visibleItems(items);
   }
 
   function updateUI() {
@@ -765,7 +799,11 @@
     const pathCell = row.querySelector('[data-cell="path"]');
     if (pathCell && r.path) {
       const autoTag = r.pathSource === 'auto' ? ' <span class="path-auto-tag">自动定位</span>' : '';
-      pathCell.innerHTML = `<span class="xtable-cell-text xtable-cell-path" title="${escapeHtml(r.path)}">${escapeHtml(xtable.middleEllipsis(r.path, 72))}${autoTag}</span>`;
+      const fileTag = r.fileCount > 0 ? ` <span class="path-auto-tag">共 ${r.fileCount} 个文件</span>` : '';
+      const regTag = r.regCount > 0 ? ` <span class="path-auto-tag">注册表 ${r.regCount} 项</span>` : '';
+      const blockedTag = Array.isArray(r.blockedBy) && r.blockedBy.length
+        ? ` <span class="path-blocked-tag" data-tip="执行前会跳过此项目并提示原因">需关闭: ${escapeHtml(r.blockedBy.join(', '))}</span>` : '';
+      pathCell.innerHTML = `<span class="xtable-cell-text xtable-cell-path" title="${escapeHtml(r.path)}">${escapeHtml(xtable.middleEllipsis(r.path, 72))}${autoTag}${fileTag}${regTag}${blockedTag}</span>`;
     }
   }
 
@@ -903,6 +941,12 @@
         }
       }
 
+      // P1：detect 未命中的条目不会出现在扫描结果中——标记为隐藏（重新扫描/换规则后恢复）
+      hiddenIds.clear();
+      const gotIds = new Set(results.map(r => r.id));
+      for (const id of ALL_IDS) {
+        if (!FILECLEAN_IDS.includes(id) && !gotIds.has(id)) hiddenIds.add(id);
+      }
       for (const r of results) {
         scanResults.set(r.id, r);
       }
@@ -983,6 +1027,10 @@
     // 分离常规清理项和文件清理项
     const regularItems = allItems.filter(i => !FILECLEAN_IDS.includes(i.id));
     const fileCleanItems = allItems.filter(i => FILECLEAN_IDS.includes(i.id));
+    // P3：三个执行选项真正接线（此前 force 恒为 true，强制删除/自动重建勾选框形同虚设）
+    const force = !!document.getElementById('optForceDelete')?.checked;
+    const toRecycle = !!document.getElementById('optRecycleBin')?.checked;
+    const autoRebuild = !!document.getElementById('optAutoRebuild')?.checked;
     setProgress(0, '开始清理...');
 
     let progress = 0;
@@ -1000,7 +1048,7 @@
         // 常规清理
         let regularResult = { totalFreed: 0, success: 0, failed: 0, skipped: 0, details: [] };
         if (regularItems.length > 0) {
-          const resp = await window.api.cleanup.execute(regularItems, true);
+          const resp = await window.api.cleanup.execute(regularItems, force, toRecycle, autoRebuild);
           if (!resp.success) throw new Error(resp.message);
           regularResult = resp.data;
         }
@@ -1071,6 +1119,11 @@
         updateUI();
         const freed = result.totalFreed || 0;
         window.app?.toast('success', `清理完成！释放 ${formatSize(freed)} 空间`);
+        // P3 残留复查提示：清理后仍有文件/注册表残留的项
+        const residualItems = (result.details || []).filter(d => (Number(d.residual) || 0) > 0);
+        if (residualItems.length > 0) {
+          window.app?.toast('warning', `${residualItems.length} 项仍有残留（文件可能被占用，可关闭相关程序或重启后再试）`);
+        }
         if (result.failed > 0) {
           window.app?.toast('warning', `${result.failed} 项清理失败（可能文件被占用）`);
           maybeOfferElevation(`${result.failed} 项清理失败，可能需要管理员权限才能删除这些文件。`);
@@ -1144,6 +1197,107 @@
     });
   }
 
+  // P2：规则库在线更新（数据目录规则优先于内置规则），成功后重载规则并重渲染
+  async function updateRules() {
+    const btn = document.getElementById('btnUpdateRules');
+    if (!window.api?.cleanup?.updateRules) {
+      window.app?.toast('warning', '当前环境不支持在线更新规则库');
+      return;
+    }
+    if (btn) btn.disabled = true;
+    try {
+      const resp = await window.api.cleanup.updateRules();
+      if (resp && resp.success) {
+        window.app?.toast('success', `规则库已更新到版本 ${resp.rulesVersion}`);
+        hiddenIds.clear();
+        await loadRulesFromMain();
+      } else {
+        window.app?.toast('error', (resp && resp.message) || '规则库更新失败');
+      }
+    } catch (e) {
+      window.app?.toast('error', '规则库更新失败: ' + e.message);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  // ==================== P3 条目明细弹窗 ====================
+  // 枚举单个条目将删除的具体文件清单（只读，最多展示 600 条），支持复制完整清单。
+  let detailEscHandler = null;
+  function closeItemDetail() {
+    if (detailEscHandler) { document.removeEventListener('keydown', detailEscHandler); detailEscHandler = null; }
+    document.getElementById('itemDetailBackdrop')?.remove();
+  }
+
+  function openItemDetail(id) {
+    const result = scanResults.get(id);
+    const item = getItemById(id);
+    closeItemDetail();
+    const backdrop = document.createElement('div');
+    backdrop.className = 'usage-backdrop';
+    backdrop.id = 'itemDetailBackdrop';
+    backdrop.innerHTML = `
+      <div class="usage-modal" role="dialog" aria-modal="true" aria-labelledby="itemDetailTitle">
+        <div class="usage-header">
+          <h2 id="itemDetailTitle">${escapeHtml((item && item.name) || id)} · 文件明细</h2>
+          <button class="usage-close" id="itemDetailClose" type="button" title="关闭" aria-label="关闭">&times;</button>
+        </div>
+        <div class="usage-body" id="itemDetailBody">
+          <div class="empty-state"><p>正在枚举文件清单…</p></div>
+        </div>
+        <div class="usage-footer pw-footer">
+          <span class="pw-last-scan" id="itemDetailMeta"></span>
+          <span class="model-picker-spacer"></span>
+          <button class="btn btn-secondary" id="itemDetailCopy" type="button">复制完整清单</button>
+          <button class="btn btn-primary" id="itemDetailDone" type="button">关闭</button>
+        </div>
+      </div>`;
+    document.body.appendChild(backdrop);
+    backdrop.querySelector('#itemDetailClose').addEventListener('click', closeItemDetail);
+    backdrop.querySelector('#itemDetailDone').addEventListener('click', closeItemDetail);
+    backdrop.addEventListener('click', e => { if (e.target === backdrop) closeItemDetail(); });
+    detailEscHandler = (e) => { if (e.key === 'Escape') closeItemDetail(); };
+    document.addEventListener('keydown', detailEscHandler);
+
+    (async () => {
+      try {
+        const resp = await window.api.cleanup.itemDetail(id, (result && result.path) || '');
+        const body = backdrop.querySelector('#itemDetailBody');
+        if (!body) return;
+        if (!resp || !resp.success) {
+          body.innerHTML = `<div class="empty-state"><p>${escapeHtml((resp && resp.message) || '明细枚举失败')}</p></div>`;
+          return;
+        }
+        const { kind, total, truncated, files } = resp.data;
+        const meta = backdrop.querySelector('#itemDetailMeta');
+        if (kind === 'reg') {
+          body.innerHTML = `<div class="empty-state"><p>注册表条目（共 ${total} 项键/值），不产生文件清单。</p></div>`;
+        } else if (kind === 'dism') {
+          body.innerHTML = `<div class="empty-state"><p>DISM 组件清理为系统级操作，不产生文件清单。</p></div>`;
+        } else if (!files.length) {
+          body.innerHTML = `<div class="empty-state"><p>未枚举到文件（目录为空或已被清理）。</p></div>`;
+        } else {
+          body.innerHTML = `<div class="detail-file-list">${files.map(f =>
+            `<div class="detail-file-row"><span class="detail-file-path" title="${escapeHtml(f.path)}">${escapeHtml(xtable.middleEllipsis(f.path, 96))}</span><span class="detail-file-size">${formatSize(f.size)}</span></div>`
+          ).join('')}</div>`;
+        }
+        if (meta) meta.textContent = `共 ${total} 个文件${truncated ? '（仅展示前 600 条）' : ''}`;
+        backdrop.querySelector('#itemDetailCopy').addEventListener('click', async () => {
+          if (!files.length) return;
+          try {
+            await navigator.clipboard.writeText(files.map(f => f.path).join('\r\n'));
+            window.app?.toast('success', `已复制 ${files.length} 条文件路径`);
+          } catch (e) {
+            window.app?.toast('error', '复制失败: ' + e.message);
+          }
+        });
+      } catch (e) {
+        const body = backdrop.querySelector('#itemDetailBody');
+        if (body) body.innerHTML = `<div class="empty-state"><p>明细枚举失败: ${escapeHtml(e.message)}</p></div>`;
+      }
+    })();
+  }
+
   function init() {
     renderCategoryList();
     updateUI();
@@ -1152,6 +1306,7 @@
     document.getElementById('btnScan')?.addEventListener('click', scan);
     document.getElementById('btnClean')?.addEventListener('click', clean);
     document.getElementById('btnSelectAll')?.addEventListener('click', toggleSelectAll);
+    document.getElementById('btnUpdateRules')?.addEventListener('click', updateRules);
 
     // P1-12：订阅扫描逐项进度（一次性；ipcRenderer.on 会累积，不能放进 scan）
     if (window.api?.cleanup?.onScanProgress) {

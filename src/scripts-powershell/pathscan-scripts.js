@@ -6,12 +6,41 @@
 //      注意 DisplayIcon 常带图标索引后缀如 "foo.exe,0"，解析时必须剥离）
 //   4. 开始菜单快捷方式（WScript.Shell 解析 .lnk 的 TargetPath，兜底无注册表信息的 excerpts）
 // 参考 lizi/laji-lizi 的软件路径绑定思路，但输出保持当前 Electron IPC 契约。
+//
+// 任务3：扫描应用的「安装/文件/缓存目录候选」与清理规则库共用同一数据源——
+// main.js 注入当前生效规则 JSON（含在线更新与自定义合并），本脚本优先取
+// 规则的 candidatesPs / globCandidatesPs 求值结果，内置候选降级为兜底。
+
+const fs = require('fs');
+const path = require('path');
+
+const BUILTIN_RULES_FILE = path.join(__dirname, '..', 'data', 'cleanup-rules.json');
+const DATA_RULES_FILE = path.join(process.env.APPDATA || path.join(require('os').homedir(), 'AppData', 'Roaming'), 'Trim', 'cleanup', 'rules.json');
+
+function psEscapeSingle(s) {
+  return String(s).replace(/'/g, "''");
+}
+
+// 读取生效规则（数据目录优先，与 cleanup-scripts.loadRules 同语义；失败返回空串走兜底）
+function loadEffectiveRulesJson() {
+  for (const file of [DATA_RULES_FILE, BUILTIN_RULES_FILE]) {
+    try {
+      if (fs.existsSync(file)) {
+        const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+        if (parsed && Array.isArray(parsed.groups)) return JSON.stringify(parsed);
+      }
+    } catch (e) { /* 读取失败尝试下一级 */ }
+  }
+  return '';
+}
 
 const SCAN_SCRIPT = `
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference = 'SilentlyContinue'
+
+$rulesJson = '\${RULES_JSON_PLACEHOLDER}'
 
 $results = @{}
 $script:inventory = @()
@@ -174,6 +203,37 @@ $results.neteaseMusicInstallPath = First-Existing @(
   (Resolve-FromStartMenu @('CloudMusic', '网易云音乐'))
 )
 
+# 任务3：从规则库取应用「安装/文件/缓存目录候选」（candidatesPs/globCandidatesPs 求值）。
+# 规则库经 main.js 注入当前生效版本（在线更新/自定义规则即时同步）；解析失败走内置兜底。
+$ruleCacheCandidates = @{ neteaseMusicCache = @(); qqCache = @(); douyinCache = @() }
+$ruleWechatGlobs = @()
+try {
+  if ($rulesJson) {
+    $rules = ConvertFrom-Json -InputObject $rulesJson
+    $ruleMap = @{}
+    foreach ($g in $rules.groups) {
+      if ($g.subGroups) { foreach ($sg in $g.subGroups) { foreach ($it in $sg.items) { $ruleMap[$it.id] = $it } } }
+      elseif ($g.items) { foreach ($it in $g.items) { $ruleMap[$it.id] = $it } }
+    }
+    foreach ($id in @('neteaseMusicCache', 'qqCache', 'douyinCache')) {
+      $r = $ruleMap[$id]
+      if ($r -and $r.candidatesPs) {
+        foreach ($expr in @($r.candidatesPs)) {
+          if (-not $expr) { continue }
+          try { $v = [string](Invoke-Expression ([string]$expr)); if ($v) { $ruleCacheCandidates[$id] += $v } } catch {}
+        }
+      }
+    }
+    $w = $ruleMap['wechatCache']
+    if ($w -and $w.globCandidatesPs) {
+      foreach ($expr in @($w.globCandidatesPs)) {
+        if (-not $expr) { continue }
+        try { $v = [string](Invoke-Expression ([string]$expr)); if ($v) { $ruleWechatGlobs += $v } } catch {}
+      }
+    }
+  }
+} catch {}
+
 # 用户数据目录。xwechat_files 下按最近修改时间选择用户目录，避免固定 wxid 失效。
 $qqFileCandidates = @(
   ($env:USERPROFILE + '\\Documents\\Tencent Files'),
@@ -193,26 +253,43 @@ $wxTemp = ''
 if ($wxRoot -and (Split-Path -Leaf $wxRoot) -ne 'xwechat_files' -and (Split-Path -Leaf $wxRoot) -ne 'WeChat Files') {
   $wxTemp = Join-Path $wxRoot 'temp'
 } else {
-  $wxTemp = Get-ChildItem -Path ($env:USERPROFILE + '\\Documents\\xwechat_files\\*\\temp') -Directory -ErrorAction SilentlyContinue |
-    Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
-  if (-not $wxTemp) {
-    $wxTemp = Get-ChildItem -Path ($env:USERPROFILE + '\\Documents\\WeChat Files\\*\\FileStorage\\Cache') -Directory -ErrorAction SilentlyContinue |
+  # 任务3：glob 候选优先取规则库；按最近修改时间选择用户目录，避免固定 wxid 失效
+  $wxGlobPatterns = @($ruleWechatGlobs)
+  if ($wxGlobPatterns.Count -eq 0) {
+    $wxGlobPatterns = @(
+      ($env:USERPROFILE + '\\Documents\\xwechat_files\\*\\temp'),
+      ($env:USERPROFILE + '\\Documents\\WeChat Files\\*\\FileStorage\\Cache')
+    )
+  }
+  foreach ($pat in $wxGlobPatterns) {
+    $wxTemp = Get-ChildItem -Path $pat -Directory -ErrorAction SilentlyContinue |
       Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
+    if ($wxTemp) { break }
   }
 }
 
 # 缓存目录供清理模块复用；找不到时保留空值，绝不写入猜测路径。
+# 任务3：候选目录优先取规则库求值结果（在线更新/自定义规则即时同步），内置候选兜底。
 $results.neteaseCacheDir = First-Existing @(
-  ($env:LOCALAPPDATA + '\\NetEase\\CloudMusic\\Cache'),
-  ($env:LOCALAPPDATA + '\\Netease\\CloudMusic\\Cache'),
-  ($env:APPDATA + '\\NetEase\\CloudMusic\\Cache')
+  $ruleCacheCandidates['neteaseMusicCache'] +
+  @(
+    ($env:LOCALAPPDATA + '\\NetEase\\CloudMusic\\Cache'),
+    ($env:LOCALAPPDATA + '\\Netease\\CloudMusic\\Cache'),
+    ($env:APPDATA + '\\NetEase\\CloudMusic\\Cache')
+  )
 )
 $results.wechatCacheDir = $wxTemp
-$results.douyinCacheDir = First-Existing @(($env:LOCALAPPDATA + '\\Douyin'), ($env:LOCALAPPDATA + '\\TikTok'))
+$results.douyinCacheDir = First-Existing @(
+  $ruleCacheCandidates['douyinCache'] +
+  @(($env:LOCALAPPDATA + '\\Douyin'), ($env:LOCALAPPDATA + '\\TikTok'))
+)
 $results.qqCacheDir = First-Existing @(
-  ($env:LOCALAPPDATA + '\\Tencent\\QQNT\\User Data\\Cache'),
-  ($env:APPDATA + '\\Tencent\\QQ\\Cache'),
-  ($env:APPDATA + '\\Tencent Files\\Cache')
+  $ruleCacheCandidates['qqCache'] +
+  @(
+    ($env:LOCALAPPDATA + '\\Tencent\\QQNT\\User Data\\Cache'),
+    ($env:APPDATA + '\\Tencent\\QQ\\Cache'),
+    ($env:APPDATA + '\\Tencent Files\\Cache')
+  )
 )
 
 $results.softwareInventory = @($script:inventory | Sort-Object name, installPath)
@@ -222,7 +299,9 @@ $results | ConvertTo-Json -Compress -Depth 6
 `;
 
 module.exports = {
-  scan() {
-    return SCAN_SCRIPT;
+  // rulesJson：main.js 注入的当前生效规则库（在线更新/自定义合并后）；空串时走内置兜底
+  scan(rulesJson = '') {
+    const payload = typeof rulesJson === 'string' && rulesJson ? rulesJson : loadEffectiveRulesJson();
+    return SCAN_SCRIPT.replace('\u0024{RULES_JSON_PLACEHOLDER}', () => psEscapeSingle(payload));
   }
 };

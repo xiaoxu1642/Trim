@@ -247,12 +247,19 @@
             <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M19 4h-3.5l-1-1h-5l-1 1H5v2h14V4zM6 7v12c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6z"/></svg>
             <span>开始清理</span>
           </button>
+          <button class="btn btn-secondary" id="btnUpdateRules" data-tip="从发布源下载最新清理规则库（数据目录规则优先于内置规则，支持版本校验与防降级）">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+            <span>更新规则库</span>
+          </button>
           <div class="clean-inline-opts" id="cleanInlineOpts">
             <label class="clean-opt" title="清理时跳过「占用中/被锁定」文件的重试，最大程度清空目标目录（删除操作不可撤销）">
               <input type="checkbox" id="optForceDelete" /><span>强制删除</span>
             </label>
             <label class="clean-opt" title="清理后自动重建被删除的空目录，避免依赖该目录的应用（如微信）因目录缺失而出错">
               <input type="checkbox" id="optAutoRebuild" checked /><span>自动重建目录</span>
+            </label>
+            <label class="clean-opt" title="文件移入系统回收站而非直接删除，可在回收站还原（注册表项与 DISM 操作不适用，仍为直接执行）">
+              <input type="checkbox" id="optRecycleBin" /><span>删除进回收站</span>
             </label>
           </div>
         </div>
@@ -1037,6 +1044,29 @@
                   <input type="radio" name="theme" value="dark" id="themeDark" />
                   <span>深色</span>
                 </label>
+                <!-- 预设主题选择（设置页整合4）：原「皮肤与背景」卡的预设背景收编至此 -->
+                <div class="appearance-sub">
+                  <div class="appearance-sub-head">预设主题选择</div>
+                  <div class="skin-row">
+                    <span class="skin-row-label">预设背景</span>
+                    <select id="presetBgSelect" title="选择内置渐变墙纸">
+                      <option value="">无</option>
+                      <option value="aurora">极光 Aurora</option>
+                      <option value="sunset">落日 Sunset</option>
+                      <option value="graphite">石墨 Graphite</option>
+                    </select>
+                  </div>
+                  <p class="appearance-hint">内置渐变墙纸铺于页面底层，可与导入的图片背景叠加使用</p>
+                </div>
+                <!-- 主题颜色选择（设置页整合4）：原「颜色选择」卡收编至此 -->
+                <div class="appearance-sub">
+                  <div class="appearance-sub-head">主题颜色选择</div>
+                  <div class="accent-row">
+                    <input type="color" id="accentColor" value="#8B8EE0" title="选择强调色" aria-label="选择界面强调色" />
+                    <button class="btn btn-secondary btn-small" id="btnAccentReset" title="恢复默认强调色">恢复默认</button>
+                  </div>
+                  <p class="appearance-hint">强调色管按钮、高亮与选中态</p>
+                </div>
               </div>
               <div class="appearance-card">
                 <div class="appearance-card-head">
@@ -1069,13 +1099,9 @@
                     <span class="material-name">细亚克力</span>
                     <span class="material-desc">更透亮的磨砂</span>
                   </div>
-                  <div class="material-card" data-material="none">
-                    <span class="material-swatch" style="background:linear-gradient(145deg,#2B2F3A 0%,#171A21 100%)"></span>
-                    <span class="material-name">无材质</span>
-                    <span class="material-desc">关闭原生材质</span>
-                  </div>
                 </div>
-                <p class="appearance-hint">材质同时作用于主窗口与大模型管理 / 外设优化 / 进程管理窗口；切换后若观感未刷新，重启应用完全生效</p>
+                <!-- 「无材质」卡片已移除（设置页整合4）：与上方材质总开关重复，关闭总开关即无材质观感 -->
+                <p class="appearance-hint">材质同时作用于主窗口与大模型管理 / 外设优化 / 进程管理窗口；关闭上方总开关即无材质观感；切换后若观感未刷新，重启应用完全生效</p>
               </div>
               <div class="appearance-card">
                 <div class="appearance-card-head">
@@ -1089,7 +1115,7 @@
                 <div class="bg-current" id="bgCurrentRow" style="display:none">
                   <img id="bgThumb" alt="背景预览" />
                   <div class="bg-opacity-row">
-                    <span class="bg-opacity-label">透明度</span>
+                    <span class="bg-opacity-label">雾化度</span>
                     <input type="range" id="bgOpacity" min="0" max="100" value="15" />
                     <span id="bgOpacityVal">15%</span>
                   </div>
@@ -1099,70 +1125,45 @@
                   <div class="bg-list-body" id="bgListBody"></div>
                 </div>
                 <button class="bg-dir-link btn-link" id="btnOpenBgDir" title="打开背景图片存放目录">图片导入后存放地址</button>
+                <!-- 背景模糊度（设置页整合4）：合并原「皮肤：液态玻璃」与背景磨砂强度，0-100% 无级 -->
+                <div class="bg-opacity-row bg-blur-row">
+                  <span class="bg-opacity-label">背景模糊度</span>
+                  <input type="range" id="bgBlur" min="0" max="100" value="0" />
+                  <span id="bgBlurVal">0%</span>
+                </div>
+                <p class="appearance-hint">0% 关闭液态玻璃面板，100% 为完整磨砂；配合预设背景或导入图片层次感更强</p>
               </div>
+              <!-- 颜色选择卡已并入上方「主题选择 → 主题颜色选择」分区（设置页整合4） -->
+              <!-- 动效设置（设置页整合4）：合并原「鼠标拖尾」与「切换动效」两张卡 -->
               <div class="appearance-card">
                 <div class="appearance-card-head">
-                  <h4>颜色选择</h4>
-                  <p>自定义界面强调色</p>
+                  <h4>动效设置</h4>
+                  <p>指针轨迹与界面切换动效</p>
                 </div>
-                <div class="accent-row">
-                  <input type="color" id="accentColor" value="#8B8EE0" title="选择强调色" aria-label="选择界面强调色" />
-                  <button class="btn btn-secondary btn-small" id="btnAccentReset" title="恢复默认强调色">恢复默认</button>
+                <div class="appearance-sub">
+                  <div class="appearance-sub-head">鼠标拖尾</div>
+                  <div class="mouse-trail-row">
+                    <span class="mouse-trail-label">启用鼠标拖尾</span>
+                    <label class="toggle-switch" for="mouseTrailToggle" title="开启后指针移动会留下淡紫色光点轨迹">
+                      <input type="checkbox" id="mouseTrailToggle" />
+                      <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                    </label>
+                  </div>
+                  <p class="appearance-hint">在软件范围内显示轻量指针轨迹，仅作用于当前窗口，可随时关闭</p>
                 </div>
-                <p class="appearance-hint">强调色管按钮、高亮与选中态</p>
-              </div>
-              <div class="appearance-card mouse-trail-card">
-                <div class="appearance-card-head">
-                  <h4>鼠标拖尾</h4>
-                  <p>在软件范围内显示轻量指针轨迹</p>
+                <div class="appearance-sub">
+                  <div class="appearance-sub-head">动效选择</div>
+                  <div class="skin-row">
+                    <span class="skin-row-label">效果</span>
+                    <select id="liquidMotionSelect" title="切换全局液态玻璃效果强度">
+                      <option value="full">完整液态玻璃</option>
+                      <option value="standard">标准液态玻璃</option>
+                      <option value="frost">磨砂玻璃</option>
+                      <option value="off">关闭</option>
+                    </select>
+                  </div>
+                  <p class="appearance-hint">「完整」= 折射 + 色散 + 指针弹性形变（弹层含 WebGL 高光）；「标准」= 折射无色散；「磨砂」= 仅毛玻璃；按钮均为浅色玻璃底，不使用主题色</p>
                 </div>
-                <div class="mouse-trail-row">
-                  <span class="mouse-trail-label">启用鼠标拖尾</span>
-                  <label class="toggle-switch" for="mouseTrailToggle" title="开启后指针移动会留下淡紫色光点轨迹">
-                    <input type="checkbox" id="mouseTrailToggle" />
-                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                  </label>
-                </div>
-                <p class="appearance-hint">仅作用于当前窗口，可随时关闭</p>
-              </div>
-              <div class="appearance-card">
-                <div class="appearance-card-head">
-                  <h4>皮肤与背景</h4>
-                  <p>液态玻璃面板 + 内置渐变墙纸</p>
-                </div>
-                <div class="skin-row">
-                  <span class="skin-row-label">皮肤</span>
-                  <select id="skinSelect" title="切换面板视觉皮肤">
-                    <option value="classic">经典</option>
-                    <option value="glass">液态玻璃</option>
-                  </select>
-                </div>
-                <div class="skin-row">
-                  <span class="skin-row-label">预设背景</span>
-                  <select id="presetBgSelect" title="选择内置渐变墙纸">
-                    <option value="">无</option>
-                    <option value="aurora">极光 Aurora</option>
-                    <option value="sunset">落日 Sunset</option>
-                    <option value="graphite">石墨 Graphite</option>
-                  </select>
-                </div>
-                <p class="appearance-hint">玻璃皮肤配合预设背景/自定义色调更有层次感，可与导入的图片背景叠加使用</p>
-              </div>
-              <div class="appearance-card">
-                <div class="appearance-card-head">
-                  <h4>切换动效</h4>
-                  <p>液态玻璃：按钮 · 分段栏 · 弹层</p>
-                </div>
-                <div class="skin-row">
-                  <span class="skin-row-label">效果</span>
-                  <select id="liquidMotionSelect" title="切换全局液态玻璃效果强度">
-                    <option value="full">完整液态玻璃</option>
-                    <option value="standard">标准液态玻璃</option>
-                    <option value="frost">磨砂玻璃</option>
-                    <option value="off">关闭</option>
-                  </select>
-                </div>
-                <p class="appearance-hint">「完整」= 折射 + 色散 + 指针弹性形变（弹层含 WebGL 高光）；「标准」= 折射无色散；「磨砂」= 仅毛玻璃；按钮均为浅色玻璃底，不使用主题色</p>
               </div>
             </div>
           </div>

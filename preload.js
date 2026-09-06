@@ -59,7 +59,12 @@ contextBridge.exposeInMainWorld('api', {
   cleanup: {
     rules: () => ipcRenderer.invoke('cleanup:rules'),
     scan: (categories) => ipcRenderer.invoke('cleanup:scan', { categories }),
-    execute: (items, force = false) => ipcRenderer.invoke('cleanup:execute', { items, force }),
+    // P3：force / toRecycle / autoRebuild 三个执行选项由渲染层勾选框决定
+    execute: (items, force = false, toRecycle = false, autoRebuild = false) => ipcRenderer.invoke('cleanup:execute', { items, force, toRecycle, autoRebuild }),
+    // P2 规则库在线更新：从发布源下载并经校验后写入数据目录（防降级 + 原子替换）
+    updateRules: () => ipcRenderer.invoke('cleanup:update-rules'),
+    // P3 条目明细：枚举单个条目的文件清单（只读，供明细弹窗展示）
+    itemDetail: (id, path = '') => ipcRenderer.invoke('cleanup:item-detail', { id, path }),
     onScanProgress: (callback) => ipcRenderer.on('cleanup:scan-progress', (_, data) => callback(data))
   },
 

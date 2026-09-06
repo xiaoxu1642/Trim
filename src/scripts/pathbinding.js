@@ -465,7 +465,7 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
   }
 
   function initAppearance() {
-    const ap = loadAppearance();
+    const ap = migrateSkinToBlur(loadAppearance());
 
     // 系统信息折叠（默认折叠，点击展开）
     const sec = document.getElementById('systemInfoSection');
@@ -477,7 +477,7 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
     document.getElementById('systemInfoToggle')?.addEventListener('click', () => {
       if (!sec) return;
       const open = sec.classList.toggle('collapsed') === false;
-      if (chev) chev.textContent = open ? '▴' : '▾';
+      if (chevron) chevron.textContent = open ? '▴' : '▾';
       try { localStorage.setItem('winclean-systeminfo-open', open ? '1' : '0'); } catch (e) {}
     });
     // 阶段三：折叠区补齐 ARIA（不改视觉逻辑，ds.accordion 只同步 aria-expanded/hidden）
@@ -532,6 +532,9 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
         if (resp && resp.material) current = resp.material;
         materialOn = resp ? resp.materialEnabled !== false : true;
       } catch (e) {}
+      // 「无材质」卡片已移除（设置页整合4）：存储值为 none 时与总开关关闭等价，按关闭态展示；
+      // 不回写主进程，用户重开总开关或点选任一材质卡后自然覆盖
+      if (current === 'none' && materialOn) materialOn = false;
       refreshMaterialCards(current);
       syncMaterialMaster(materialOn);
     })();
@@ -647,35 +650,62 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
       document.getElementById('bgListBody')
     );
 
-    // ---- UI 设计系统：玻璃皮肤 + 预设背景 ----
-    // applySkin：body[data-skin="glass"] 开启液态玻璃磨砂；classic 移除属性
-    function applySkin(skin) {
-      if (skin === 'glass') document.body.dataset.skin = 'glass';
-      else delete document.body.dataset.skin;
+    // ---- UI 设计系统：背景模糊度 + 预设背景（设置页整合4） ----
+    // 原「皮肤：经典/液态玻璃」二选一下拉与背景磨砂合并为 0-100% 无级「背景模糊度」滑块：
+    // 0% = 经典不透明面板（无 data-skin）；>0% = 液态玻璃面板，模糊半径按百分比线性缩放
+    // （100% = 26px，与原液态玻璃一致；theme.js 启动期应用共用同一常量约定，改动需两处同步）
+    const GLASS_MAX_BLUR_PX = 26;
+    function applyBgBlur(pct) {
+      const v = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
+      if (v > 0) {
+        document.body.dataset.skin = 'glass';
+        document.documentElement.style.setProperty('--glass-blur', ((v / 100) * GLASS_MAX_BLUR_PX).toFixed(1) + 'px');
+      } else {
+        delete document.body.dataset.skin;
+        document.documentElement.style.removeProperty('--glass-blur');
+      }
+    }
+    // 旧值迁移：仅存有 skin 键的历史配置按 glass=100% / classic=0% 折算为 bgBlur
+    function migrateSkinToBlur(stored) {
+      if (stored.bgBlur == null) {
+        stored.bgBlur = stored.skin === 'glass' ? 100 : 0;
+        delete stored.skin;
+        saveAppearance(stored);
+      }
+      return stored;
     }
     // applyPresetBg：body[data-preset-bg="aurora|sunset|graphite"] 设置底层渐变墙纸
     function applyPresetBg(preset) {
       if (preset) document.body.dataset.presetBg = preset;
       else delete document.body.dataset.presetBg;
     }
-    const skinSelect = document.getElementById('skinSelect');
     const presetBgSelect = document.getElementById('presetBgSelect');
-    if (skinSelect) skinSelect.value = ap.skin === 'glass' ? 'glass' : 'classic';
     if (presetBgSelect) presetBgSelect.value = ap.presetBg || '';
-    applySkin(ap.skin);
     applyPresetBg(ap.presetBg);
-    skinSelect?.addEventListener('change', () => {
-      const ap2 = loadAppearance();
-      ap2.skin = skinSelect.value === 'glass' ? 'glass' : 'classic';
-      saveAppearance(ap2);
-      applySkin(ap2.skin);
-    });
     presetBgSelect?.addEventListener('change', () => {
       const ap2 = loadAppearance();
       ap2.presetBg = presetBgSelect.value || '';
       saveAppearance(ap2);
       applyPresetBg(ap2.presetBg);
     });
+    // 背景模糊度滑块（位于「背景图片」卡内，预设背景/导入图片均可叠加）
+    const blurSlider = document.getElementById('bgBlur');
+    const blurVal = document.getElementById('bgBlurVal');
+    if (blurSlider) {
+      blurSlider.value = ap.bgBlur == null ? 0 : ap.bgBlur;
+      if (blurVal) blurVal.textContent = blurSlider.value + '%';
+      // 编程式赋值不触发 input 事件，手动同步轨道填充（ds.slider）
+      window.ds?.slider?.sync?.(blurSlider);
+      applyBgBlur(blurSlider.value);
+      blurSlider.addEventListener('input', () => {
+        const v = parseInt(blurSlider.value, 10) || 0;
+        if (blurVal) blurVal.textContent = v + '%';
+        const ap2 = migrateSkinToBlur(loadAppearance());
+        ap2.bgBlur = v;
+        saveAppearance(ap2);
+        applyBgBlur(v);
+      });
+    }
   }
 
   function init() {

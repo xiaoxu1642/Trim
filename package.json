@@ -31,7 +31,7 @@
       "preload.js",
       "src/**/*",
       "ico/*.ico",
-      "readme.md",
+      "使用说明.md",
       "package.json"
     ],
     "asarUnpack": [

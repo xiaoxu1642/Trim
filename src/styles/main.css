@@ -168,8 +168,11 @@
 
 /* ================================================================
    设计系统扩展：玻璃皮肤引擎 + 预设背景
-   - 玻璃皮肤：body[data-skin="glass"] 激活，对主要面板做磨砂半透明
-     叠加 backdrop-filter 模糊/增艳，配合预设背景体现"液态玻璃"质感。
+   - 背景模糊度（设置页整合4）：body[data-skin="glass"] 由设置页
+     「背景模糊度」滑块驱动（0-100% 无级），模糊半径走 --glass-blur
+     随百分比缩放（100% = 26px，与原液态玻璃皮肤观感一致）；0% 时
+     移除 data-skin，回落经典不透明面板。原「皮肤：经典/液态玻璃」
+     二选一下拉已被该滑块取代。
    - 预设背景：body[data-preset-bg="aurora|sunset|graphite"] 选择底层
      渐变墙纸（z-index:-1 垫底，可与上方图片水印叠加，互不冲突）。
    ================================================================ */
@@ -207,8 +210,9 @@ body[data-skin="glass"] .card,
 body[data-skin="glass"] .empty-state,
 body[data-skin="glass"] .overview-card,
 body[data-skin="glass"] .table-card {
-  -webkit-backdrop-filter: blur(26px) saturate(1.65) brightness(1.04);
-  backdrop-filter: blur(26px) saturate(1.65) brightness(1.04);
+  /* 模糊半径由设置页「背景模糊度」滑块写入 --glass-blur（0-26px），缺省 26px 保持原液态玻璃观感 */
+  -webkit-backdrop-filter: blur(var(--glass-blur, 26px)) saturate(1.65) brightness(1.04);
+  backdrop-filter: blur(var(--glass-blur, 26px)) saturate(1.65) brightness(1.04);
   border-color: var(--glass-border);
   box-shadow:
     inset 0 1px 0 var(--glass-highlight),
@@ -6399,6 +6403,21 @@ body.pv-window {
   margin: 10px 0 0;
   line-height: 1.5;
 }
+/* 卡片内子分区（设置页整合4）：主题选择卡内的「预设主题选择 / 主题颜色选择」、
+   动效设置卡内的「鼠标拖尾 / 动效选择」共用此子分区样式 */
+.appearance-sub {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+.appearance-sub-head {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--fg-primary);
+  margin: 0 0 8px;
+}
+/* 背景模糊度滑块行（复用 bg-opacity-row 布局，仅补上边距） */
+.bg-blur-row { margin-top: 8px; }
 .accent-row {
   display: flex;
   align-items: center;
@@ -6526,6 +6545,47 @@ body.bg-image-on .layout::after {
   text-underline-offset: 3px;
 }
 .bg-dir-link:hover { color: var(--accent-hover); }
+
+/* P1：requiredStoppedProcesses 命中提示标签（执行前会跳过并写明原因） */
+.path-blocked-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 10.5px;
+  border-radius: 4px;
+  background: rgba(217, 119, 6, 0.16);
+  color: #d97706;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+body.theme-light .path-blocked-tag { background: rgba(217, 119, 6, 0.12); color: #b45309; }
+
+/* P3 明细弹窗：文件清单（路径 + 大小，等宽行，超出滚动） */
+.detail-file-list {
+  max-height: 46vh;
+  overflow-y: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-small);
+  background: var(--bg-card-hover);
+}
+.detail-file-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 10px;
+  font-size: 11.5px;
+  border-top: 1px solid var(--border-subtle);
+}
+.detail-file-row:first-child { border-top: none; }
+.detail-file-row:hover { background: var(--bg-hover); }
+.detail-file-path {
+  flex: 1;
+  min-width: 0;
+  font-family: Consolas, 'Courier New', monospace;
+  color: var(--fg-secondary);
+  word-break: break-all;
+}
+.detail-file-size { flex: none; color: var(--fg-tertiary); }
 
 /* 设置页布局回归基础双列 Grid（.settings-grid，1624 行）：
    曾经的「贴右对齐 + 固定 900px」覆盖导致最大化时左侧大面积留白（布局移位），
@@ -7173,8 +7233,8 @@ body.theme-light .ov-res-sub { color: #4b505b; }
 /* 未开启时彻底隐藏图层 */
 body:not(.mouse-trail-on) .mouse-trail-layer { display: none; }
 
-/* 设置页拖尾开关行 */
-.mouse-trail-card .mouse-trail-row {
+/* 设置页拖尾开关行（设置页整合4：并入「动效设置」卡，不再依赖 .mouse-trail-card 作用域） */
+.mouse-trail-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -7619,7 +7679,7 @@ body.lg-mode-full .usage-modal > *:not(.lg-shimmer-canvas) {
 /* ================================================================
    窗口界面升级3（文件末位覆盖层）
    ----------------------------------------------------------------
-   1) 磁盘清理：分段栏(左) 与当前子视图操作行(右) 同行齐平
+   1) 磁盘清理：分段栏(左) 与当前子视图操作行独立一行左对齐（初版为右对齐同行，按用户要求调整）
    2) 内存卡数值两行封顶（JS 自适应缩字号兜底见 memoryclean.js）
    3) 快捷指令 qc-tabs / 系统维护 maint-cat-tabs 收编 filter-tabs 分段体系
    4) 跟随聚光 · Spotlight（Motion.Lab spotlight-follow 改，仅选择块）
@@ -7635,7 +7695,8 @@ body.lg-mode-full .usage-modal > *:not(.lg-shimmer-canvas) {
   margin-bottom: 16px;
 }
 .cleanup-toolbar .cleanup-tabs { margin-bottom: 0; }
-.cleanup-toolbar-actions { display: none; margin-left: auto; }
+/* 操作行改为独立一行、左对齐（用户要求从右对齐移到左侧，与分段栏左缘对齐） */
+.cleanup-toolbar-actions { display: none; flex-basis: 100%; }
 .cleanup-toolbar-actions.active {
   display: flex;
   align-items: center;
@@ -7751,4 +7812,47 @@ body.lg-mode-frost .filter-tab.active .maint-tab-count {
 .appearance-card.material-off .material-grid { opacity: 0.45; pointer-events: none; }
 @media (prefers-reduced-motion: reduce) {
   .mt-switch-track, .mt-switch-knob { transition: none; }
+}
+
+/* ================================================================
+   设置页整合4 · 背景模糊度裁定层
+   「背景模糊度」滑块（body[data-skin="glass"] + --glass-blur）激活时，
+   卡片/侧栏的磨砂半径以滑块为准：本块置于文件末尾并以更高特异性
+   覆盖「窗口材质 2.0」层固定 blur(20px) 与「预设背景」层固定 blur(20px)，
+   避免原生材质/预设背景开启时滑块失效。增艳/亮度与玻璃描边高光
+   仍由文件头部 data-skin="glass" 主块提供。
+   ================================================================ */
+body[data-skin="glass"] .card,
+body[data-skin="glass"] .table-card,
+body[data-skin="glass"] .settings-section,
+body[data-skin="glass"] .appearance-card,
+body[data-skin="glass"] .overview-card,
+body[data-skin="glass"] .summary-card,
+body[data-skin="glass"] .empty-state {
+  -webkit-backdrop-filter: blur(var(--glass-blur, 26px)) saturate(1.65) brightness(1.04);
+  backdrop-filter: blur(var(--glass-blur, 26px)) saturate(1.65) brightness(1.04);
+}
+body.electron-mica[data-skin="glass"] .card,
+body.electron-mica[data-skin="glass"] .table-card,
+body.electron-mica[data-skin="glass"] .settings-section,
+body.electron-mica[data-skin="glass"] .appearance-card,
+body.electron-mica[data-skin="glass"] .overview-card,
+body.electron-mica[data-skin="glass"] .summary-card,
+body.electron-mica[data-skin="glass"] .empty-state {
+  -webkit-backdrop-filter: blur(var(--glass-blur, 26px)) saturate(1.65) brightness(1.04);
+  backdrop-filter: blur(var(--glass-blur, 26px)) saturate(1.65) brightness(1.04);
+}
+body[data-preset-bg][data-skin="glass"] .card,
+body[data-preset-bg][data-skin="glass"] .table-card,
+body[data-preset-bg][data-skin="glass"] .settings-section,
+body[data-preset-bg][data-skin="glass"] .appearance-card,
+body[data-preset-bg][data-skin="glass"] .overview-card,
+body[data-preset-bg][data-skin="glass"] .summary-card,
+body[data-preset-bg][data-skin="glass"] .empty-state {
+  -webkit-backdrop-filter: blur(var(--glass-blur, 26px)) saturate(1.65) brightness(1.04);
+  backdrop-filter: blur(var(--glass-blur, 26px)) saturate(1.65) brightness(1.04);
+}
+body.electron-mica[data-skin="glass"]:not(.win-maximized) .sidebar {
+  -webkit-backdrop-filter: blur(var(--glass-blur, 26px)) saturate(1.65) brightness(1.04);
+  backdrop-filter: blur(var(--glass-blur, 26px)) saturate(1.65) brightness(1.04);
 }
