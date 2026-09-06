@@ -1,107 +1,52 @@
-# Trim（TuneForge）项目文档
+# AGENTS.md — Trim 智能体协作约束
 
-> **Trim**（包名 `trim`，productName `Trim`，appId `com.xiaoxu.trim`）——Windows 11 清理与优化工具，中文 UI，Fluent Design 原生风格。
-> 由小旭个人开发制作，仅供个人测试交流使用。版本 2.0 · 适用 Windows 11 22H2+（已在 27H2 Build 29648 验证）· 需要 PowerShell 7。
-> 应用内「使用说明」弹窗的独立数据源为根目录《使用说明.md》；本文档 = 项目/架构/规范 + 末尾精简版智能体协作规则（原 readme.md 与 AGENTS.md 合并，2026-09「设置页整合4」）。
+> 面向在本仓库工作的 AI 智能体。**只写规则与红线，不写架构教材**：
+> 架构/规范/陷阱全量事实见 **`docs/architecture.md`**；用户使用说明（也是应用内弹窗数据源）见 **`readme.md`**。
+> Trim = Windows 11 清理优化工具（Electron + 原生 HTML/CSS/JS，零前端框架，中文 UI，Fluent Design），仓库 `C:\kaifa\TuneForge`。
 
-## 一、技术形态与仓库
+## 1. 工作流程
 
-- **零前端框架**：原生 HTML/CSS/JS 单窗口 SPA（`src/index.html` 每页一个 `.page` div）。禁止引入 React/Vue/组件库运行时；组件视觉参考 shadcn/ui，交互逻辑参考 antd。
-- 仓库 `C:\kaifa\TuneForge`；Tauri 安装器工程在兄弟目录 `TuneForge goujian\trim-installer`。原生组件 `native-scanner/`（Rust）编译出 `finder.exe`（重复/大文件/空项查找器），由 electron-builder 作为 extraResources 进包。
-- 运行时 npm 依赖仅 4 个（AI 简介联网拉取用），**默认不新增依赖**，确需新增先征得同意。electron ^44.1.1（`setBackgroundMaterial` 依赖 Electron 30+）。
+1. 接到修复/改造任务，先 **TodoWrite** 列清单供审核，存在分歧点先问清再动手；用户消息本身已是明确批准清单时，按单直接执行、逐项汇报。
+2. 只改任务点名范围，不主动扩展、不回滚用户既有未提交改动、**不主动 commit/push**。
+3. UI 文案、注释、汇报一律中文；注释写「为什么/约束/根因」，重要改造标批次。
+4. 完成后按第 4 节验收，交付说明写清验证方式、覆盖范围与遗留缺口。
 
-## 二、进程与窗口
+## 2. 定位代码
 
-| 部分 | 文件 | 要点 |
-|---|---|---|
-| 主进程 | `main.js`（约 2300+ 行） | 窗口创建、全部 ipcMain.handle、appearance.json 持久化、原生窗口材质、安全模块 SECURITY |
-| 预加载 | `preload.js` | contextIsolation + sandbox，白名单暴露 `window.api`；**新增 IPC 必须同步补这里** |
-| 主窗口 | `src/index.html` | 每页一个 `.page` div；脚本见第三节 |
-| 子窗口 | models-window / peripheral-window / process-manager-window | 共用 `src/scripts/window-material.js` 同步主题与材质 |
-| 预览窗 | preview-window.html | **刻意**不加载 window-material.js，保持纯黑底（看图对比场景），别"修复"它 |
+- 优先 **vexor-cli** 意图级搜索（英文查询、`--format porcelain`、pwsh 调用）；覆盖不到再用 Grep（中文乱码只是显示问题，语义确认用 Read）。
+- 改前先确认引用面：IPC 通道必查 main.js + preload.js + 渲染调用方；id/data 属性、文件路径全局搜过再动。
 
-## 三、渲染层脚本职责（src/scripts/）
+## 3. Shell 与环境
 
-| 脚本 | 职责 |
-|---|---|
-| `app.js` | 路由 switchPage、磁盘清理五合一视图（setCleanupView）、全局初始化；`liquidMotionSelect` 绑定在此 |
-| `theme.js` / `theme-boot.js` | 主题/背景模糊度/预设背景初装；theme-boot 是首帧前外置引导（勿内联回 index.html，CSP 会拦截） |
-| `pathbinding.js` | 设置页外观（主题/材质/背景图片+雾化度+**背景模糊度**/强调色/系统信息折叠）与安装路径绑定 |
-| `liquid-glass.js` | 液态玻璃引擎 2.0：`body.lg-mode-full/standard/frost/off` 四档（localStorage `winclean-liquid-motion`）；为 `.filter-tabs/.maint-tabs` 挂 `.lg-thumb` 弹簧滑块 |
-| `spotlight.js` | 跟随聚光（仅作用于 `.btn/.filter-tab/.maint-tab/.material-card/.radio-row`） |
-| `cleanup.js` / `finder.js` | 磁盘清理主视图 / 重复·大文件·空项·AppData 查找器（finder 按 `[data-finder-manifest]` 全局绑定清单按钮） |
-| `memoryclean.js` | 内存清理页（`#memUseValue` 有 fitMemValue + ResizeObserver + line-clamp 三重护栏） |
-| `ds.js` / `ds.css` | 设计系统运行时 `window.ds`，API 见 `design-system/README.md` |
-| `modal.js` | 弹窗/确认框（ds.focusTrap；删除类红色 confirmDanger） |
-| `xtable.js` | 表格组件（虚拟滚动、ResizeObserver，返回 relayout/dispose） |
-| 其余 | realtime / netspeed(-detector) / diskbench / startup / sysrestore / contextmenu / fontmanager / modelpicker / intro / logger 按名对域 |
+- Windows 一律 **PowerShell 7（pwsh）**，默认 UTF-8，禁止 Bash 语法；多行 Python 用 here-string 管道，禁止 heredoc。
+- Git Bash 工具内调 pwsh：外层单引号、内层双引号（防 bash 吞 `$变量`）。
+- 能用专用工具（Read/Edit/Glob/Grep）就不用 shell；文件操作避开 `find/grep/cat/sed/awk`。
 
-## 四、样式分层（src/styles/main.css 约 7600+ 行）
+## 4. 验收（改完必做）
 
-加载顺序 `main.css → ds.css`，后写覆盖先写。分层：`:root`/`.theme-light` token → `data-skin="glass"`（**背景模糊度**驱动，`--glass-blur` 0-26px）→ 基础组件 → 「Trim 2.0 final visual layer」→ 拖尾/预设背景/自定义背景图（`body.bg-image-on .layout::after`）→ 「窗口材质 2.0」（`body.electron-mica`）→ 「液态玻璃 2.0」→ 「窗口界面升级3」→ 「设置页整合4」（卡片子分区 `.appearance-sub` 等）。
+1. 改动的 JS 一律 `node --check`；涉及规则/模块/页面挂载跑 **`npm test`**（test-features.js 含语法、双源一致性、尺寸常量等断言）。
+2. 改了 `src/data/cleanup-rules.json`：跑 `node scripts/gen-fallback.js`；要发布再跑 `node scripts/sign-rules.js sign`。
+3. **渲染层改动必须 CDP 真机验证**（项目无自动化 UI 框架）：taskkill 清残留 → 后台起 `electron.exe . --remote-debugging-port=9333` → `curl http://127.0.0.1:9333/json` 拿 webSocketDebuggerUrl → Node ≥22 全局 WebSocket 发 `Runtime.evaluate`（returnByValue）读真实 DOM/computed style，必要时 `Page.captureScreenshot` 目检 → 测完 taskkill → **恢复验证中改过的用户偏好**（appearance.json 与 localStorage winclean-appearance，不许用脚本开头旧值硬覆盖）。
+4. CDP 陷阱：探查逻辑写临时 js 文件再 node 跑（禁 bash 双引号内联 `$()`）；reload 钩子用 `Page.addScriptToEvaluateOnNewDocument`；序列化的 backdropFilter 带引号 `url("#lg-f-x")`；静态 `.usage-modal` 用 `getBoundingClientRect().width > 0` 过滤；pathbinding 外观初始化有数秒时序，启动即探会误判；动画用定时采样 getBoundingClientRect 验证。
+5. Rust 侧改动跑 `cargo check`，并 `cargo build --release` 刷新 finder.exe（打包从 native-scanner/target/release 取件）。
 
-**教训**：覆盖层里的字面色（如 `#ffffff`）会让 token 体系失效。改表面颜色必须查两处：token 定义本身 + 文件尾各覆盖层的字面值。
+## 5. 硬性约定（违反即回退）
 
-## 五、状态与数据存储
+- 零前端框架，**不新增 npm 依赖**（确需先征得同意）；index.html **禁内联 script**（CSP 静默拦截）；脚本加载顺序：ds.js 先于一切 `window.ds` 使用方，spotlight.js 在 liquid-glass.js 之后。
+- 主进程共享 Node 模块放 `src/main/`；新增 IPC 必须同步 preload.js 白名单与 `window.api`。
+- 设计系统：只用 main.css 既有 token；圆角 ≤8px（胶囊/徽章除外），禁大圆角与彩色渐变；`prefers-reduced-motion` 无动画；文本一律转义禁拼 HTML；提示用 `data-tip` 不用 title；新交互先查 ds 有无现成件。
+- 主窗口 1294×870 最小尺寸、独立窗口黑闪握手、预览窗纯黑底——均为刻意设计，禁止「优化」删除（详见 architecture 第二、八节）。
+- 最大化/还原路径禁止原生材质操作；`body.win-maximized`、`data-material="none"` 必须完全不透明。
+- 图标统一放 `src/assets/ico/`（生成器 `scripts/fix_icons.py`），根目录不再留 `ico/`；文件路径类资源移动后，package.json files 清单与全部引用同步改。
 
-| 位置 | 键 / 字段 | 说明 |
-|---|---|---|
-| `%APPDATA%\Trim\appearance.json` | material / materialEnabled / windowState | 主进程持久化（`SECURITY.atomicWriteJson`） |
-| localStorage `winclean-appearance` | accent / bgPath / bgOpacity / **bgBlur** / presetBg / material / materialEnabled | 渲染层镜像，**与 appearance.json 是两套存储**；bgOpacity 与 bgBlur 均存百分数（0-100）。UI 标签「透明度」已更名「雾化度」（存储键 bgOpacity 不变，「设置页整合4」后续调整） |
-| localStorage 其他 | `winclean-active-page` / `winclean-cleanup-view` / `winclean-liquid-motion` / `winclean-systeminfo-open` / `winclean-theme` | 页面记忆 / 五合一视图 / 液态玻璃档位 / 折叠态 / 主题 |
-| `%APPDATA%\Trim\backgrounds\bg_*.png` / `tmp\` / `icons\` | — | 背景图 / 临时脚本（安全要求）/ 内置图标释放目录 |
+## 6. 安全红线
 
-**背景模糊度（设置页整合4）**：原「皮肤：经典/液态玻璃」二选一下拉已并入「背景图片」卡的 0-100% 无级滑块。0% = 经典不透明面板；>0% 挂 `body[data-skin="glass"]`，模糊半径 `--glass-blur` = 百分比 × 26px（`GLASS_MAX_BLUR_PX`，pathbinding.js 与 theme.js 两处共用约定，改动需同步）；旧 `skin` 键自动迁移（glass=100%）。
+- 所有 IPC 经 `handleSafe/onSafe` 注册（只读白名单外全校验来源），新增通道默认走包装器；preload 只做白名单转发。
+- 删除统一 `trashOrUnlink`（回收站优先）+ 删除清单 + 渲染层红色 confirmDanger；失败重试走 `cleanup:retry-failed-delete` 白名单。
+- 写 JSON 走 `SECURITY.atomicWriteJson`；配置损坏先 `quarantineFile`；临时脚本只写 `%APPDATA%\Trim\tmp\`；提权走 `elevate:request` 握手，禁静默提权。
+- 密钥不明文回渲染层（掩码 `••••••••`，掩码即未修改）；`isPrivateApiUrl` 校验不删，支持本地端点只能显式加白。
+- 日志不落敏感信息，危险操作前 `flushLogSync()`；快捷指令渲染层只发 id、主进程白名单 spawn。
 
-**材质值域**：`mica / mica-alt / acrylic / thin-acrylic / none`；「无材质」卡片已移除，`none` 仅作为总开关关闭时的「生效材质」广播值与存储等价态。链路：渲染层 → IPC `appearance:set-material` / `appearance:set-material-enabled` → 主进程对全部存活窗口 `setBackgroundMaterial` + 持久化 + 广播 `appearance:material-changed`（载荷是**生效材质**字符串，总开关关闭时为 `'none'`，勿改成对象）。
+## 7. 回归陷阱索引（动前先读 architecture 第十节全文）
 
-**Win11 27H2 红线**：最大化/还原路径禁止任何原生材质操作；`body.win-maximized` 与 `data-material="none"` 必须 100% 不透明。
-
-## 六、构建与发布
-
-| 命令 | 作用 |
-|---|---|
-| `npm start` | 开发运行 |
-| `npm test` / `npm run test:features` | `node test-features.js` 特性自检 |
-| `npm run build` / `build:dir` / `build:portable` | electron-builder --win --x64（输出 `build-release/`） |
-| `node --check <file.js>` | JS 语法检查（项目无 linter，改完 JS 必跑） |
-| `cargo check`（native-scanner/） | Rust 侧检查 |
-| `.\node_modules\electron\dist\electron.exe . --remote-debugging-port=9333` | 带 CDP 启动（见第九节） |
-
-发布链路：`npm run build` → `trim-installer` 执行 `npm run sync:resources`（robocopy `/MIR` 同步 win-unpacked → `src-tauri/resources/app`，退出码 <8 视为成功）→ Tauri 构建。打包 files 清单见 package.json `build.files`（含《使用说明.md》）。版本号以 package.json 为准；窗口/交互规范变更同步本文档相关章节。**工作树常态保留大量未提交改动：不主动 commit / push，也不得为实施新改动回滚既有未提交工作。**
-
-## 七、代码组织约定
-
-- 页面容器 id `page-*`；导航 `data-page`；磁盘清理五合一 `data-cleanup-view` / `data-cleanup-panel`；分类 chips `data-qcat` / `data-cat` / `data-optcat`。
-- CSS 前缀按域：`ov-` `qc-` `maint-` `ctx-` `mw-` `peri-` `pw-` `lg-` `ds-` `mt-`，新代码沿用就近前缀。
-- UI 文案、注释、汇报一律中文；注释解释「为什么/约束/根因」，重要改造标注批次（如「设置页整合4」）。
-- **index.html 禁止内联 `<script>`**（CSP 静默拦截）；`ds.js` 在一切 `window.ds` 使用方之前，`spotlight.js` 在 `liquid-glass.js` 之后。
-- 设计系统硬性约束（全文见 `design-system/README.md`）：只用 main.css 既有 token；圆角 ≤ 8px（胶囊/徽章除外），禁大圆角与彩色渐变；`prefers-reduced-motion` 下无动画；文本 API 一律转义禁拼 HTML；悬停提示用 `data-tip` 不用原生 title；新交互先查 ds 是否已有（badge/progress/slider/switch/focusTrap/tooltip/menu/skeletonRows/accordion）。
-
-## 八、交互与视觉规范
-
-- 主窗口默认并最小 **1294×870（客户区，`useContentSize: true`）**，不允许缩小，可最大化。
-- 独立窗口（应用进程管理 / 大模型管理 / 图片预览）`show:false` + `ready-to-show` 首帧后才显示 + 主窗口 `backgroundThrottling:false` + `window.api.window.notifyFirstPaint()` 握手——都是黑闪修复的一部分，**不要当冗余代码"优化"掉**。
-- 磁盘清理分类默认折叠；删除类确认走 modal.js 红色 `confirmDanger`。
-
-## 九、智能体协作规则（简略）
-
-1. **流程**：接到修复/改造任务，先 TodoWrite 列清单供审核，经 AskUserQuestion 确认范围与分歧点再动手；用户消息本身已是明确批准清单时，按单直接执行并逐项汇报。
-2. **定位代码**：优先 vexor-cli 意图级搜索（英文查询、`--format porcelain`，经 pwsh 调用）；覆盖不到再派 Explore 子代理（要求精确到行号）。
-3. **Shell**：Windows 一律 pwsh 7；Git Bash 工具内调 pwsh 用**单引号**包外层命令（防 bash 吞 `$变量`），内层字符串用双引号；rg 中文乱码仅显示问题，语义确认用 Read。
-4. **验收**：渲染层改动 = `node --check` + **CDP 真机验证**（无自动化测试框架）。CDP 流程：taskkill 清残留 → `electron.exe . --remote-debugging-port=9333` 后台启动 → `curl http://127.0.0.1:9333/json` 拿 webSocketDebuggerUrl → Node ≥22 全局 `WebSocket` 发 `Runtime.evaluate`（`returnByValue:true`）读真实 DOM/computed style → `Page.captureScreenshot` 目检 → 测完 taskkill 并**恢复被改过的用户偏好**（appearance.json 与 `winclean-appearance`，不要用脚本开头的旧值硬覆盖）。
-5. **CDP 陷阱**：探查逻辑写临时 js 文件再 `node` 运行（禁在 bash 双引号内联 `$()`）；reload 期钩子用 `Page.addScriptToEvaluateOnNewDocument`；`el.style.backdropFilter` 序列化带引号 `url("#lg-f-x")`；静态 `.usage-modal` 需按 `getBoundingClientRect().width > 0` 过滤；pathbinding 外观初始化有数秒时序（启动后立刻探测会误判"数据丢了"）；动画用定时采样 `getBoundingClientRect()` 验证。
-6. **安全边界**：新增 `ipcMain.handle` 一律 sender 校验 / `rejectUntrustedRenderer`；preload 只做白名单转发；写 JSON 走 `SECURITY.atomicWriteJson`；临时脚本只放 `%APPDATA%\Trim\tmp\`；删除类回收站兜底 + 确认弹窗统一 modal.js；提权走 `elevate:request` 握手（禁静默提权）；快捷指令渲染层只发 id，主进程按白名单 spawn；日志缓冲落盘、危险操作前 `flushLogSync()`、不打印敏感信息。
-
-## 十、回归陷阱速查（动这些地方前先看）
-
-- `liquid-glass.js` 的 `schedulePlace` 会 cancel 前一个 rAF——谁后调 `refreshAll(animate)` 滑块动画以谁为准（`app.js` setCleanupView 里必须是 `true`，改 false 会复发"切换无动效"）。
-- quickcmds / maintenance 分类栏 innerHTML 整体重渲染 → 滑块走 MutationObserver 路径，别改手动 `placeThumb(false)`。
-- 磁盘清理工具栏按钮可搬位置，但 finder.js 按 `[data-finder-manifest]` 全局绑定、其余按钮靠 id 通信——**别改 id / data 属性**。
-- 内存卡 `#memUseValue` 三重护栏，动 summary-value 结构前先看 memoryclean.js。
-- 悬停提示一律 `data-tip`；弹窗一律 modal.js（focusTrap）。
-- 液态玻璃性能护栏是刻意的：折射元素上限 28、>420px 大元素只磨砂、位移贴图缓存 48、rAF 节流——不要放开。
-- ds.js 未加载时相关功能必须优雅降级（参考 memoryclean 环形进度的无线环回退）。
-- 清理规则唯一数据源是 `src/data/cleanup-rules.json`（P1-9）。条目目标模型按优先级路由：`special:'dism'` → `fileKeys[]`（%ENV% + 通配路径、pattern、removeSelf、excludeKeys 排除）→ `regKeys[]`（value 语义：无=删树 / `'*'`=清键值 / 具名=删值）→ `pathPs`（目录型）；通用字段 `detect[]`（未命中不参与扫描，渲染层扫描后隐藏）、`requiredStoppedProcesses`（已接线：扫描出 blockedBy 标签，执行命中即整项跳过）。**改规则 JSON 后必须同步 `cleanup.js` 的 FALLBACK 副本**（浏览器预览兜底）。引擎细节陷阱：PS 里属性缺失时 `@($null).Count` 是 1（判空要先 `-not $x`）；哈希表 `$m.count` 命中内建 Count 属性（返回键数），要用 pscustomobject。
-- 规则库在线更新（P2）：数据目录 `%APPDATA%\Trim\cleanup\rules.json` 优先于内置生效（`cleanup-scripts.js loadRules()`，mtime 签名缓存），`custom\*.json` 同名 id 覆盖；更新走 `cleanup:update-rules` IPC（发布源常量 RULES_UPDATE_URLS 在 main.js，GitHub → jsDelivr → gh-proxy 回退，尺寸/结构/防降级校验，.downloading 原子替换），渲染层入口是磁盘清理工具栏「更新规则库」按钮（id `btnUpdateRules`）。私有仓库的匿名 HTTP 源会 404：可在数据目录 `update-source.json` 配 `{urls,headers}` 覆盖；另有 git 回退（应用在 git 仓库内时 `git fetch origin main` + `git show FETCH_HEAD:` 取远程文件，只 fetch 不动工作树）。`pathscan-scripts.js scan()` 接收注入的规则 JSON，缓存目录候选从 rules 的 candidatesPs/globCandidatesPs 求值（更新后路径扫描同步）。
-- P3 执行/明细：`cleanup:execute` 收到 `{items,force,toRecycle,autoRebuild}`；toRecycle 时 PS 只枚举输出 `@@RECYCLE@@`（path/size/isDir）行，主进程 `shell.trashItem` 实际移入回收站（注册表/DISM 无回收站语义仍 PS 直删）；删除后每项带 `residual` 残留计数。`cleanup:item-detail` 用 DETAIL_SCRIPT 只读枚举文件清单（上限 600 行，`@@ITEMFILE@@`/`@@DETAIL@@` 行协议，主进程按行切流不整块读 stdout）。渲染层：工具栏新增「删除进回收站」勾选框，全项目「明细」按钮弹窗；注意 ForceDelete/AutoRebuild 勾选框此前从未被读取，现已真实接线。
+液态玻璃滑块以最后一次 refreshAll 为准且分类栏重渲染走 MutationObserver · 工具栏靠 id/`[data-finder-manifest]` 绑定别改名 · `#memUseValue` 三重护栏 · 液态玻璃性能护栏（28/420px/48/rAF）刻意不放开 · ds 未加载须优雅降级 · 清理规则路由 special→fileKeys→regKeys→pathPs 与 detect/requiredStoppedProcesses 语义 · 规则库更新 ed25519 验签/防降级/自定义源/git 回退 · execute 的 toRecycle/force/autoRebuild 协议与 item-detail 行协议 · PS 判空陷阱（`@($null).Count=1`、哈希表 Count 冲突）· finder.exe 三级查找顺序。

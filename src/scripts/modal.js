@@ -115,7 +115,7 @@
     modalEl.innerHTML = `
       <div class="usage-header">
         <h2 id="${id}Title">${escapeHtml(opts.title || '')}</h2>
-        <button class="usage-close" type="button" title="关闭" aria-label="关闭">&times;</button>
+        <button class="usage-close" type="button" data-tip="关闭" aria-label="关闭">&times;</button>
       </div>
       <div class="usage-body ${opts.bodyClass || ''}">${opts.bodyHtml || ''}</div>
       ${useFooter ? `<div class="usage-footer ${opts.footerClass || ''}">${opts.footerHtml}</div>` : ''}

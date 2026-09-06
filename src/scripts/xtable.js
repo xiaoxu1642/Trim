@@ -34,10 +34,10 @@
       const sortable = col.sortable !== false;
       const align = col.align === 'end' ? 'end' : (col.align === 'center' ? 'center' : 'start');
       return `<div class="xtable-th${sortable ? ' sortable' : ''}${state && state.key === col.key ? ' sorted' : ''}${sortable ? '' : ' no-sort'}"
-        data-col="${col.key}" style="${style}" data-align="${align}"${sortable ? ' title="点击排序"' : ''}>
+        data-col="${col.key}" style="${style}" data-align="${align}"${sortable ? ' data-tip="点击排序"' : ''}>
         <span class="xtable-th-label">${col.label}</span>
         ${sortable && state ? sortIndicatorHtml(state, col.key) : ''}
-        ${col.resizable === false ? '' : `<span class="xtable-resizer" data-resize="${col.key}" title="拖动调整列宽"></span>`}
+        ${col.resizable === false ? '' : `<span class="xtable-resizer" data-resize="${col.key}" data-tip="拖动调整列宽"></span>`}
       </div>`;
     }).join('');
     return `<div class="xtable-head${opts.compact ? ' xtable-head-compact' : ''}">${cells}</div>`;

@@ -10,7 +10,7 @@
 // 删除：先备份到 deleted 目录（注册表 reg.exe 全键导出 / 文件夹复制 / 计划任务导出 XML）再删除
 // 备份目录：%APPDATA%\Trim\startup-backup\
 
-const DIAG = require('../diag');
+const DIAG = require('../main/diag');
 
 const SCAN_SCRIPT = `
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8

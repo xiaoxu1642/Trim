@@ -165,7 +165,7 @@
       <div class="usage-modal rt-sr-modal" role="dialog" aria-modal="true" aria-labelledby="srTitle">
         <div class="usage-header">
           <h2 id="srTitle">系统还原点管理</h2>
-          <button class="usage-close" type="button" title="关闭" aria-label="关闭">&times;</button>
+          <button class="usage-close" type="button" data-tip="关闭" aria-label="关闭">&times;</button>
         </div>
         <div class="usage-body rt-sr-body">
           <div class="summary-cards rt-sr-cards">

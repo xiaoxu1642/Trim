@@ -691,7 +691,7 @@
       <div class="usage-modal rt-report-modal" role="dialog" aria-modal="true">
         <div class="usage-header">
           <h2>网速记录报告</h2>
-          <button class="usage-close" type="button" title="关闭" aria-label="关闭">&times;</button>
+          <button class="usage-close" type="button" data-tip="关闭" aria-label="关闭">&times;</button>
         </div>
         <div class="usage-body rt-report-body">
           ${reportStatBody(report)}
@@ -733,7 +733,7 @@
       <div class="usage-modal rt-report-modal" role="dialog" aria-modal="true">
         <div class="usage-header">
           <h2>历史网速报告</h2>
-          <button class="usage-close" type="button" title="关闭" aria-label="关闭">&times;</button>
+          <button class="usage-close" type="button" data-tip="关闭" aria-label="关闭">&times;</button>
         </div>
         <div class="usage-body rt-report-body">
           ${reports.length ? reports.map(r => `

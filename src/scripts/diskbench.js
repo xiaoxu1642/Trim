@@ -164,7 +164,7 @@
           </div>
           <div style="display:flex;gap:8px;align-items:center">
             ${records.length > 0 ? '<button class="btn btn-secondary btn-small" id="benchHistoryClear">清空全部</button>' : ''}
-            <button class="preview-close" id="benchHistoryClose" title="关闭">&times;</button>
+            <button class="preview-close" id="benchHistoryClose" data-tip="关闭">&times;</button>
           </div>
         </div>
         <div class="bench-history-body">
@@ -192,14 +192,14 @@
                 ${records.map(r => `
                   <tr data-record-id="${r.id}">
                     <td class="bench-history-time">${formatTime(r.timestamp)}</td>
-                    <td class="bench-history-path" title="${escapeHtml(r.path || '')}">${escapeHtml(r.path || '--')}</td>
+                    <td class="bench-history-path" data-tip="${escapeHtml(r.path || '')}">${escapeHtml(r.path || '--')}</td>
                     <td>${formatBlock(r.blockSize)} / QD${r.queueDepth} / ${r.threads}T / ${r.duration}s</td>
                     <td class="bench-history-val">${Number(r.sequentialRead).toFixed(1)} MB/s</td>
                     <td class="bench-history-val">${Number(r.sequentialWrite).toFixed(1)} MB/s</td>
                     <td class="bench-history-val">${Number(r.randomRead).toFixed(1)} MB/s</td>
                     <td class="bench-history-val">${Math.round(r.iops)}</td>
                     <td class="bench-history-val">${Number(r.latency).toFixed(3)} ms</td>
-                    <td><button class="bench-history-delete" data-delete-id="${r.id}" title="删除此记录">&times;</button></td>
+                    <td><button class="bench-history-delete" data-delete-id="${r.id}" data-tip="删除此记录">&times;</button></td>
                   </tr>
                 `).join('')}
               </tbody>
@@ -362,7 +362,7 @@
           <div class="toast-title">磁盘测速功能解释说明</div>
           <div class="guide-content">${renderMarkdown(guideCache)}</div>
         </div>
-        <button class="toast-close" type="button" aria-label="关闭说明" title="关闭">&times;</button>
+        <button class="toast-close" type="button" aria-label="关闭说明" data-tip="关闭">&times;</button>
       `;
       container.appendChild(el);
       const remove = () => {

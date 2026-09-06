@@ -68,10 +68,10 @@
       const isRunning = running === t.id;
       const isSelected = selected.has(t.id);
       const badge = st !== 'idle' ? `<span class="maint-status maint-status-${st}">${STATUS_LABEL[st] || st}</span>` : '';
-      const adminTag = t.admin ? '<span class="maint-admin-tag" title="需要管理员权限">管理员</span>' : '';
+      const adminTag = t.admin ? '<span class="maint-admin-tag" data-tip="需要管理员权限">管理员</span>' : '';
       return `
         <div class="maint-card${isSelected ? ' selected' : ''}${isRunning ? ' running' : ''}" data-id="${escapeHtml(t.id)}">
-          <label class="maint-check" title="勾选后可批量执行">
+          <label class="maint-check" data-tip="勾选后可批量执行">
             <input type="checkbox" data-check="${escapeHtml(t.id)}" ${isSelected ? 'checked' : ''} ${busy ? 'disabled' : ''} />
           </label>
           <div class="maint-card-icon" aria-hidden="true">

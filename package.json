@@ -9,6 +9,9 @@
     "start": "electron .",
     "test": "node test-features.js",
     "test:features": "node test-features.js",
+    "prebuild": "node scripts/gen-fallback.js",
+    "prebuild:dir": "node scripts/gen-fallback.js",
+    "prebuild:portable": "node scripts/gen-fallback.js",
     "build": "electron-builder --win --x64",
     "build:portable": "electron-builder --win portable --x64",
     "build:dir": "electron-builder --win --x64 --dir",
@@ -22,6 +25,7 @@
     "appId": "com.xiaoxu.trim",
     "productName": "Trim",
     "copyright": "Copyright © 2026 xiaoxu",
+    "description": "审查 8-1：安装器由兄弟目录 TuneForge goujian/trim-installer 的 Tauri 工程承担（npm run sync:resources 同步 win-unpacked）；本配置仅产出 portable 便携包，build:dir 为开发用免打包目录输出。",
     "directories": {
       "output": "build-release",
       "buildResources": "build"
@@ -30,8 +34,11 @@
       "main.js",
       "preload.js",
       "src/**/*",
-      "ico/*.ico",
-      "使用说明.md",
+      "!src/assets/ico/source.png",
+      "!src/assets/ico/source_squared.png",
+      "!src/assets/ico/icon_*.png",
+      "src/assets/ico/*.ico",
+      "readme.md",
       "package.json"
     ],
     "asarUnpack": [
@@ -52,15 +59,10 @@
           ]
         }
       ],
-      "icon": "ico/Trim.ico",
+      "icon": "src/assets/ico/Trim.ico",
       "requestedExecutionLevel": "asInvoker",
       "artifactName": "${productName}-Portable-${version}.${ext}"
     }
   },
-  "dependencies": {
-    "agent-base": "^7.1.0",
-    "debug": "^4.3.7",
-    "http-proxy-agent": "^7.0.2",
-    "https-proxy-agent": "^7.0.6"
-  }
+  "dependencies": {}
 }

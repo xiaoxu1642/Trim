@@ -137,7 +137,7 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
                      value="${escapeAttr(value)}" placeholder="${escapeAttr(item.placeholder)}" spellcheck="false" />
               <div class="pw-hint ${hintCls}" data-hint="${escapeAttr(item.key)}">${escapeAttr(hint)}</div>
             </div>
-            <button class="btn btn-secondary btn-small pw-browse" data-key="${escapeAttr(item.key)}" title="浏览选择文件夹">浏览</button>
+            <button class="btn btn-secondary btn-small pw-browse" data-key="${escapeAttr(item.key)}" data-tip="浏览选择文件夹">浏览</button>
           </div>`;
       }).join('');
       return `
@@ -260,7 +260,7 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
       <div class="usage-modal path-binding-modal" role="dialog" aria-modal="true" aria-labelledby="pathBindingTitle">
         <div class="usage-header">
           <h2 id="pathBindingTitle">安装路径绑定</h2>
-          <button class="usage-close" id="pathBindingClose" type="button" title="关闭" aria-label="关闭">&times;</button>
+          <button class="usage-close" id="pathBindingClose" type="button" data-tip="关闭" aria-label="关闭">&times;</button>
         </div>
         <div class="usage-body pw-body path-binding-body" id="pathBindingBody">
           <div class="pw-empty">正在加载路径配置…</div>
@@ -380,19 +380,32 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
     return lum > 0.35 ? '#23244E' : '#FFFFFF';
   }
 
-  // 应用背景图片：body::before 水印式铺底（透明度可调，置于内容之上、弹窗之下）
+  // 应用背景图片：body::before 水印式铺底（置于内容之上、弹窗之下）。
+  // 批次：雾化度语义反转 —— 入参 opacity 现为「雾化度」（0=零效果纯展示图片，100=雾化效果100%），
+  // 图片不透明度 = (100 - 雾化度)/100；旧语义（值=图片不透明度）已在读取侧一次性迁移。
   function applyBackground(file, opacity) {
     const root = document.documentElement;
     if (file) {
       const url = file.startsWith('file:') ? file : 'file:///' + String(file).replace(/\\/g, '/').replace(/^\//, '');
       root.style.setProperty('--app-bg-image', `url("${url}")`);
-      root.style.setProperty('--app-bg-opacity', String((opacity == null ? 18 : opacity) / 100));
+      const fog = opacity == null ? 85 : opacity;
+      root.style.setProperty('--app-bg-opacity', String((100 - fog) / 100));
       document.body.classList.add('bg-image-on');
     } else {
       root.style.removeProperty('--app-bg-image');
       root.style.removeProperty('--app-bg-opacity');
       document.body.classList.remove('bg-image-on');
     }
+  }
+
+  // 批次：雾化度语义反转迁移 —— 旧值存的是「图片不透明度」（100=纯图），新值为「雾化强度」
+  // （0=纯图，100=全雾）。一次性换算 100-v（迁移前后视觉效果一致）并打 bgOpacityFog 标记防重复。
+  function migrateBgOpacityToFog(ap) {
+    if (ap.bgOpacityFog === true) return ap;
+    if (ap.bgOpacity != null) ap.bgOpacity = 100 - ap.bgOpacity;
+    ap.bgOpacityFog = true;
+    saveAppearance(ap);
+    return ap;
   }
 
   function renderBgList(ap) {
@@ -412,9 +425,9 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
       }
       listEl.style.display = 'block';
       bodyEl.innerHTML = files.map(f => `
-        <div class="bg-list-item${ap.bgPath === f.path ? ' active' : ''}" data-file="${escapeHtml(f.path)}" title="点击设为背景">
+        <div class="bg-list-item${ap.bgPath === f.path ? ' active' : ''}" data-file="${escapeHtml(f.path)}" data-tip="点击设为背景">
           <span class="bg-list-name">${escapeHtml(f.name)}</span>
-          <button class="bg-list-del" data-file="${escapeHtml(f.path)}" title="删除此图片">✕</button>
+          <button class="bg-list-del" data-file="${escapeHtml(f.path)}" data-tip="删除此图片">✕</button>
         </div>
       `).join('');
       bodyEl.querySelectorAll('.bg-list-item').forEach(el => {
@@ -457,15 +470,16 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
     if (currentRow) currentRow.style.display = ap.bgPath ? 'flex' : 'none';
     if (thumb && ap.bgPath) thumb.src = 'file:///' + String(ap.bgPath).replace(/\\/g, '/').replace(/^\//, '');
     if (slider) {
-      slider.value = ap.bgOpacity == null ? 15 : ap.bgOpacity;
+      slider.value = ap.bgOpacity == null ? 85 : ap.bgOpacity;
       // 编程式赋值不触发 input 事件，手动同步轨道填充（ds.slider）
       window.ds?.slider?.sync?.(slider);
     }
-    if (val) val.textContent = (ap.bgOpacity == null ? 15 : ap.bgOpacity) + '%';
+    if (val) val.textContent = (ap.bgOpacity == null ? 85 : ap.bgOpacity) + '%';
   }
 
   function initAppearance() {
-    const ap = migrateSkinToBlur(loadAppearance());
+    // 批次：雾化度语义反转 —— 皮肤键迁移后接着做雾化度一次性迁移（localStorage 侧）
+    const ap = migrateBgOpacityToFog(migrateSkinToBlur(loadAppearance()));
 
     // 系统信息折叠（默认折叠，点击展开）
     const sec = document.getElementById('systemInfoSection');
@@ -505,9 +519,8 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
         const resp = await window.api?.appearance?.setMaterialEnabled?.(next);
         if (resp && resp.success) {
           if (resp.material) document.body.dataset.material = resp.material;
-          const ap2 = loadAppearance();
-          ap2.materialEnabled = next;
-          saveAppearance(ap2);
+          // 审查 2-4：material/materialEnabled 单一真源 = appearance.json（主进程持久化），
+          // 不再镜像写入 localStorage（原双写导致两套存储可能漂移）
           window.app?.toast('success', next ? '窗口材质已开启' : '窗口材质已关闭（所选材质已记忆）');
         } else {
           materialOn = !next;
@@ -553,17 +566,15 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
         if (resp && resp.success) {
           // 同步材质标识到 body，CSS 据此做材质差异化着色
           document.body.dataset.material = m;
-          const ap2 = loadAppearance();
-          ap2.material = m;
-          saveAppearance(ap2);
+          // 审查 2-4：material 单一真源 = appearance.json，不再镜像写入 localStorage
           window.app?.toast('success', '窗口材质已切换：' + card.querySelector('.material-name')?.textContent);
         } else {
           // 失败回滚到主进程记录的真实材质
           try {
             const cur = await window.api?.appearance?.getMaterial?.();
-            refreshMaterialCards((cur && cur.material) || loadAppearance().material || 'mica');
+            refreshMaterialCards((cur && cur.material) || 'mica');
           } catch (e) {
-            refreshMaterialCards(loadAppearance().material || 'mica');
+            refreshMaterialCards('mica');
           }
           window.app?.toast('error', (resp && resp.message) || '材质切换失败');
         }
@@ -605,7 +616,7 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
       }
       const ap2 = loadAppearance();
       ap2.bgPath = resp.data.path;
-      if (ap2.bgOpacity == null) ap2.bgOpacity = 15;
+      if (ap2.bgOpacity == null) ap2.bgOpacity = 85;
       saveAppearance(ap2);
       applyBackground(ap2.bgPath, ap2.bgOpacity);
       refreshBgCurrent(ap2);
@@ -654,7 +665,8 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
     // 原「皮肤：经典/液态玻璃」二选一下拉与背景磨砂合并为 0-100% 无级「背景模糊度」滑块：
     // 0% = 经典不透明面板（无 data-skin）；>0% = 液态玻璃面板，模糊半径按百分比线性缩放
     // （100% = 26px，与原液态玻璃一致；theme.js 启动期应用共用同一常量约定，改动需两处同步）
-    const GLASS_MAX_BLUR_PX = 26;
+    // 审查 5-5：上限常量收敛到 window.ds（theme.js 同源读取），ds 未加载时退回同值兜底
+    const GLASS_MAX_BLUR_PX = window.ds?.GLASS_MAX_BLUR_PX || 26;
     function applyBgBlur(pct) {
       const v = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
       if (v > 0) {
@@ -697,13 +709,18 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
       // 编程式赋值不触发 input 事件，手动同步轨道填充（ds.slider）
       window.ds?.slider?.sync?.(blurSlider);
       applyBgBlur(blurSlider.value);
+      // 审查 3-3：视觉即时生效，存储防抖 150ms——一次拖动不再产生上百次同步 localStorage 写
+      let blurSaveTimer = null;
       blurSlider.addEventListener('input', () => {
         const v = parseInt(blurSlider.value, 10) || 0;
         if (blurVal) blurVal.textContent = v + '%';
-        const ap2 = migrateSkinToBlur(loadAppearance());
-        ap2.bgBlur = v;
-        saveAppearance(ap2);
         applyBgBlur(v);
+        clearTimeout(blurSaveTimer);
+        blurSaveTimer = setTimeout(() => {
+          const ap2 = migrateSkinToBlur(loadAppearance());
+          ap2.bgBlur = v;
+          saveAppearance(ap2);
+        }, 150);
       });
     }
   }

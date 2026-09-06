@@ -12,6 +12,12 @@ dist/
 # 安装器编译缓存
 trim-installer/
 
+# Rust 构建缓存（finder.exe 构建后由 extraResources 取件，不入库）
+native-scanner/target/
+
+# 智能体工作目录
+.workbuddy/
+
 # 日志与临时文件
 *.log
 .tmp-ps-syntax-check.ps1

@@ -35,7 +35,7 @@
 
   function badgeHtml(type, text, { dotless = false, title = '', small = false } = {}) {
     const cls = 'ds-badge ' + (BADGE_VARIANT[type] || 'neutral') + (dotless ? ' dotless' : '') + (small ? ' sm' : '');
-    return `<span class="${cls}"${title ? ` title="${escapeHtml(title)}"` : ''}>${escapeHtml(text)}</span>`;
+    return `<span class="${cls}"${title ? ` data-tip="${escapeHtml(title)}"` : ''}>${escapeHtml(text)}</span>`;
   }
 
   // ---------- ② Progress ----------
@@ -417,6 +417,9 @@
   } else {
     boot();
   }
+
+  // 审查 5-5：背景模糊度百分比 → 玻璃模糊半径（px）换算上限，pathbinding 与 theme 共用
+  ds.GLASS_MAX_BLUR_PX = 26;
 
   window.ds = ds;
 })();

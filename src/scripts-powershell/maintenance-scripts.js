@@ -6,7 +6,7 @@
 // 每项独立执行、独立确认；脚本统一注入诊断四元组（P1-11）。
 // 命令均为幂等修复型操作，不删除用户数据（WU/Store 缓存重置仅停服务+改名缓存目录）。
 
-const DIAG = require('../diag');
+const DIAG = require('../main/diag');
 
 // 生成一段带回车行的干净 .reg 块（与 optimizer-scripts.regBlock 同规则）
 function regBlock(entries) {

@@ -311,7 +311,7 @@
       const items = byGroup[group];
       // 外设调优：列头提供「更多调优项」入口 → 打开外设优化窗口（Win32PrioritySeparation 等深度调优）
       const moreBtn = group === '外设调优'
-        ? `<button type="button" class="opt-col-more" data-more-group="外设调优" title="打开外设优化：鼠标注册表 / 键盘注册表 / 鼠标队列深度调优">更多调优项</button>`
+        ? `<button type="button" class="opt-col-more" data-more-group="外设调优" data-tip="打开外设优化：鼠标注册表 / 键盘注册表 / 鼠标队列深度调优">更多调优项</button>`
         : '';
       return `
       <section class="opt-col" style="--c:${accent};--cf:${colFg}">
@@ -324,7 +324,7 @@
           ${items.map((o, i) => renderOptRow(o, i + 1)).join('')}
         </div>
         <div class="opt-col-foot">
-          <button type="button" class="opt-col-selectall" data-selectall-group="${escapeHtml(group)}" title="全选本分类全部优化项">全选本类</button>
+          <button type="button" class="opt-col-selectall" data-selectall-group="${escapeHtml(group)}" data-tip="全选本分类全部优化项">全选本类</button>
         </div>
       </section>`;
     }).join('') + `</div>`;
@@ -350,8 +350,8 @@
     const id = escapeHtml(o.id);
     const isOpt = optimizedIds.has(o.id);
     return `
-      <div class="opt-row${isOpt ? ' optimized' : ''}" data-id="${id}" title="${isOpt ? '该项优化已生效，点击可还原' : '点击查看「' + escapeHtml(o.title) + '」详情'}">
-        <div class="checkbox${selectedIds.has(o.id) ? ' checked' : ''}${isOpt ? ' disabled' : ''}" data-check="${id}" title="${isOpt ? '已优化的项不可勾选，点击行可还原' : '勾选/取消选择该优化项'}"></div>
+      <div class="opt-row${isOpt ? ' optimized' : ''}" data-id="${id}" data-tip="${isOpt ? '该项优化已生效，点击可还原' : '点击查看「' + escapeHtml(o.title) + '」详情'}">
+        <div class="checkbox${selectedIds.has(o.id) ? ' checked' : ''}${isOpt ? ' disabled' : ''}" data-check="${id}" data-tip="${isOpt ? '已优化的项不可勾选，点击行可还原' : '勾选/取消选择该优化项'}"></div>
         <span class="opt-row-index">${index}</span>
         <span class="opt-row-name">${escapeHtml(o.title)}</span>
         ${riskBadge(o.risk)}${isOpt ? '<span class="opt-row-opttag">已优化</span>' : ''}
@@ -553,7 +553,7 @@
     const memWrap = modalOverlay.querySelector('.opt-modal-mem');
     if (o.dynamic) {
       memWrap.style.display = '';
-      memWrap.innerHTML = '<select class="field-input optimizer-mem-select opt-mem-select" title="选择内存大小或重置">' +
+      memWrap.innerHTML = '<select class="field-input optimizer-mem-select opt-mem-select" data-tip="选择内存大小或重置">' +
         MEMORY_OPTIONS.map(m => `<option value="${m.gb}">${m.label}</option>`).join('') + '</select>';
       const sel = memWrap.querySelector('.opt-mem-select');
       // 根据下拉档位实时刷新优缺点与步骤显示

@@ -234,7 +234,7 @@
       <div class="usage-modal font-modal" role="dialog" aria-modal="true" aria-labelledby="fontModalTitle">
         <div class="usage-header">
           <h2 id="fontModalTitle">字体选择</h2>
-          <button class="usage-close" id="fontModalClose" type="button" title="关闭" aria-label="关闭">&times;</button>
+          <button class="usage-close" id="fontModalClose" type="button" data-tip="关闭" aria-label="关闭">&times;</button>
         </div>
         <div class="usage-body fm-body">
           <p class="model-picker-tip">选择应用界面显示字体，支持系统字体、内嵌 MiSans 与自定义导入字体。字重滑块调节字体粗细（100-1000，MiSans 可变字体支持无级连续调节），字号滑块（12-24px）在所有字体通用。调整仅实时预览于下方「字体预览」，点击右下角「应用」后才会应用到整体界面。</p>
@@ -243,7 +243,7 @@
             <div class="fm-field-main">
               <div class="fm-row">
                 <select class="field-input" id="fontModalSelect" aria-label="选择界面字体"></select>
-                <button class="btn btn-secondary btn-small" id="fontModalImport" type="button" title="导入 1 款外部字体文件（.ttf / .otf / .woff / .woff2），将替换当前已导入字体">导入字体</button>
+                <button class="btn btn-secondary btn-small" id="fontModalImport" type="button" data-tip="导入 1 款外部字体文件（.ttf / .otf / .woff / .woff2），将替换当前已导入字体">导入字体</button>
                 <button class="btn btn-secondary btn-small" id="fontModalDelete" type="button">删除导入字体</button>
               </div>
               <span class="fm-field-tip" id="fontModalTip">正在读取字体配置…</span>

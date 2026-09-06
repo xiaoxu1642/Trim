@@ -8,8 +8,16 @@ contextBridge.exposeInMainWorld('api', {
     getInfo: () => ipcRenderer.invoke('app:get-info'),
     getTheme: () => ipcRenderer.invoke('app:get-theme'),
     readUsage: () => ipcRenderer.invoke('app:read-usage'),
-    onThemeChanged: (callback) => ipcRenderer.on('app:theme-changed', (_, theme) => callback(theme)),
-    onMemoryTrim: (callback) => ipcRenderer.on('memory:trim', () => callback())
+    onThemeChanged: (callback) => {
+      const handler = (_, theme) => callback(theme);
+      ipcRenderer.on('app:theme-changed', handler);
+      return () => ipcRenderer.removeListener('app:theme-changed', handler);
+    },
+    onMemoryTrim: (callback) => {
+      const handler = () => callback();
+      ipcRenderer.on('memory:trim', handler);
+      return () => ipcRenderer.removeListener('memory:trim', handler);
+    }
   },
   device: {
     scan: () => ipcRenderer.invoke('device:scan')
@@ -25,7 +33,11 @@ contextBridge.exposeInMainWorld('api', {
     maximize: () => ipcRenderer.send('window:maximize'),
     close: () => ipcRenderer.send('window:close'),
     updateOverlay: (isDark) => ipcRenderer.invoke('window:update-overlay', { isDark }),
-    onResized: (callback) => ipcRenderer.on('window:resized', (_, bounds) => callback(bounds)),
+    onResized: (callback) => {
+      const handler = (_, bounds) => callback(bounds);
+      ipcRenderer.on('window:resized', handler);
+      return () => ipcRenderer.removeListener('window:resized', handler);
+    },
     // 启动黑闪修复：DOMContentLoaded 后连排两个 rAF（确保首帧 UI 已真实提交合成），
     // 再通知主进程显示窗口。主进程按 sender 识别窗口，仅主窗口首个通知生效。
     // rAF 万一被节流，用 200ms 定时器竞速兜底，保证通知一定能发出。
@@ -63,16 +75,26 @@ contextBridge.exposeInMainWorld('api', {
     execute: (items, force = false, toRecycle = false, autoRebuild = false) => ipcRenderer.invoke('cleanup:execute', { items, force, toRecycle, autoRebuild }),
     // P2 规则库在线更新：从发布源下载并经校验后写入数据目录（防降级 + 原子替换）
     updateRules: () => ipcRenderer.invoke('cleanup:update-rules'),
+    // 审查 4-4：回收站失败项经用户红色确认后永久删除重试（目标由主进程白名单留存，渲染层不可指定）
+    retryFailedDelete: () => ipcRenderer.invoke('cleanup:retry-failed-delete'),
     // P3 条目明细：枚举单个条目的文件清单（只读，供明细弹窗展示）
     itemDetail: (id, path = '') => ipcRenderer.invoke('cleanup:item-detail', { id, path }),
-    onScanProgress: (callback) => ipcRenderer.on('cleanup:scan-progress', (_, data) => callback(data))
+    onScanProgress: (callback) => {
+      const handler = (_, data) => callback(data);
+      ipcRenderer.on('cleanup:scan-progress', handler);
+      return () => ipcRenderer.removeListener('cleanup:scan-progress', handler);
+    }
   },
 
   // 磁盘清理 · Rust 原生查找器（重复/大文件/空/AppData）
   finder: {
     scan: (scanType, opts = {}) => ipcRenderer.invoke('finder:scan', { scanType, ...opts }),
     delete: (items) => ipcRenderer.invoke('finder:delete', { items }),
-    onProgress: (callback) => ipcRenderer.on('finder:progress', (_, data) => callback(data)),
+    onProgress: (callback) => {
+      const handler = (_, data) => callback(data);
+      ipcRenderer.on('finder:progress', handler);
+      return () => ipcRenderer.removeListener('finder:progress', handler);
+    },
     // 删除清单：查看最近删除项（含是否已进回收站）与打开清单目录
     deleteManifest: () => ipcRenderer.invoke('finder:delete-manifest'),
     openBackupDir: () => ipcRenderer.invoke('finder:open-backup-dir')
@@ -144,7 +166,11 @@ contextBridge.exposeInMainWorld('api', {
     // 材质总开关（窗口界面升级3）：关闭 = 生效材质置 none，所选材质保留记忆
     setMaterialEnabled: (enabled) => ipcRenderer.invoke('appearance:set-material-enabled', { enabled }),
     // 材质变更广播（主进程会发给全部存活窗口，子窗口的 window-material.js 依赖）
-    onMaterialChanged: (callback) => ipcRenderer.on('appearance:material-changed', (_, material) => callback(material)),
+    onMaterialChanged: (callback) => {
+      const handler = (_, material) => callback(material);
+      ipcRenderer.on('appearance:material-changed', handler);
+      return () => ipcRenderer.removeListener('appearance:material-changed', handler);
+    },
     importBg: () => ipcRenderer.invoke('appearance:bg-import'),
     deleteBg: (file) => ipcRenderer.invoke('appearance:bg-delete', { file }),
     listBg: () => ipcRenderer.invoke('appearance:bg-list'),
@@ -196,14 +222,22 @@ contextBridge.exposeInMainWorld('api', {
     status: () => ipcRenderer.invoke('elevate:status'),
     request: () => ipcRenderer.invoke('elevate:request'),
     // B5：提权后新实例未启动等异常情况的主进程通知
-    onNotice: (callback) => ipcRenderer.on('elevate:notice', (_, data) => callback(data))
+    onNotice: (callback) => {
+      const handler = (_, data) => callback(data);
+      ipcRenderer.on('elevate:notice', handler);
+      return () => ipcRenderer.removeListener('elevate:notice', handler);
+    }
   },
 
   // 关闭流程
   shutdown: {
     begin: () => ipcRenderer.send('shutdown:begin'),
     complete: () => ipcRenderer.send('shutdown:complete'),
-    onRequest: (callback) => ipcRenderer.on('app:shutdown', () => callback())
+    onRequest: (callback) => {
+      const handler = () => callback();
+      ipcRenderer.on('app:shutdown', handler);
+      return () => ipcRenderer.removeListener('app:shutdown', handler);
+    }
   },
 
   // 安装路径绑定
@@ -231,7 +265,11 @@ contextBridge.exposeInMainWorld('api', {
   maintenance: {
     tasks: () => ipcRenderer.invoke('maintenance:tasks'),
     run: (taskId) => ipcRenderer.invoke('maintenance:run', { taskId }),
-    onOutput: (callback) => ipcRenderer.on('maintenance:output', (_, data) => callback(data))
+    onOutput: (callback) => {
+      const handler = (_, data) => callback(data);
+      ipcRenderer.on('maintenance:output', handler);
+      return () => ipcRenderer.removeListener('maintenance:output', handler);
+    }
   },
 
   // 图片预览（磁盘清理 → 文件清理 → 预览图片，独立窗口）
@@ -239,11 +277,19 @@ contextBridge.exposeInMainWorld('api', {
     open: (payload) => ipcRenderer.invoke('preview:open-window', payload),
     close: () => ipcRenderer.invoke('preview:close-window'),
     // 独立窗口侧接收主窗口传入的图片数据
-    onData: (callback) => ipcRenderer.on('preview:data', (_, data) => callback(data)),
+    onData: (callback) => {
+      const handler = (_, data) => callback(data);
+      ipcRenderer.on('preview:data', handler);
+      return () => ipcRenderer.removeListener('preview:data', handler);
+    },
     // 预览窗口删除图片后通知主窗口刷新
     notifyDeleted: (filePath) => ipcRenderer.send('preview:image-deleted', filePath),
     // 主窗口侧监听：图片预览窗口删除图片后刷新文件列表
-    onImageDeleted: (callback) => ipcRenderer.on('preview:image-deleted', (_, filePath) => callback(filePath))
+    onImageDeleted: (callback) => {
+      const handler = (_, filePath) => callback(filePath);
+      ipcRenderer.on('preview:image-deleted', handler);
+      return () => ipcRenderer.removeListener('preview:image-deleted', handler);
+    }
   },
 
   // 内存清理（Mem Reduct 思路：NtSetSystemInformation 清理内存区域 + 进程管理）
@@ -263,7 +309,11 @@ contextBridge.exposeInMainWorld('api', {
     // 独立窗口操作完成后向主窗口推送统计（进程总数），供内存清理页进程卡片回显
     report: (payload) => ipcRenderer.send('processManager:report', { ...payload }),
     // 主窗口侧监听：进程管理窗口结束进程后的最新统计
-    onUpdate: (callback) => ipcRenderer.on('processManager:update', (_, data) => callback(data))
+    onUpdate: (callback) => {
+      const handler = (_, data) => callback(data);
+      ipcRenderer.on('processManager:update', handler);
+      return () => ipcRenderer.removeListener('processManager:update', handler);
+    }
   },
 
   // 外设优化（电脑优化中心-外设调优 → 「更多调优项」独立窗口）
@@ -295,7 +345,11 @@ contextBridge.exposeInMainWorld('api', {
     backupReg: (optionId, steps) => ipcRenderer.invoke('optimizer:backup-reg', { optionId, steps }),
     // 按备份还原注册表键值（无备份返回 missing:true）
     restoreReg: (optionId) => ipcRenderer.invoke('optimizer:restore-reg', { optionId }),
-    onProgress: (callback) => ipcRenderer.on('optimizer:progress', (_, data) => callback(data))
+    onProgress: (callback) => {
+      const handler = (_, data) => callback(data);
+      ipcRenderer.on('optimizer:progress', handler);
+      return () => ipcRenderer.removeListener('optimizer:progress', handler);
+    }
   },
 
   // 启动项管理：扫描 / 启停 / 删除 / 打开所在位置 / 添加

@@ -188,9 +188,9 @@
         : (window.ds ? window.ds.badgeHtml('warn', '已禁用', { small: true }) : '<span class="startup-badge off">已禁用</span>');
       const cmd = i.command || '';
       const loc = i.location || meta.label;
-      const pub = i.publisher ? `<span class="startup-item-pub" title="发布者">${escapeHtml(i.publisher)}</span>` : '';
+      const pub = i.publisher ? `<span class="startup-item-pub" data-tip="发布者">${escapeHtml(i.publisher)}</span>` : '';
       const cmdHtml = cmd
-        ? `<div class="startup-item-cmd" title="${escapeHtml(cmd)}">${escapeHtml(truncate(cmd, 120))}</div>`
+        ? `<div class="startup-item-cmd" data-tip="${escapeHtml(cmd)}">${escapeHtml(truncate(cmd, 120))}</div>`
         : '';
       const locPath = i.resolvedPath || i.filePath || '';
       const locBtn = locPath
@@ -375,7 +375,7 @@
       <div class="usage-modal startup-intro-modal" role="dialog" aria-modal="true" aria-labelledby="startupIntroTitle">
         <div class="usage-header">
           <h2 id="startupIntroTitle">${escapeHtml(item.name || '未命名')}</h2>
-          <button class="usage-close" id="startupIntroClose" type="button" title="关闭" aria-label="关闭">&times;</button>
+          <button class="usage-close" id="startupIntroClose" type="button" data-tip="关闭" aria-label="关闭">&times;</button>
         </div>
         <div class="usage-body startup-intro-body">
           <div class="startup-intro-meta">启动项 · ${escapeHtml(sourceLabel)}${item.publisher ? ' · ' + escapeHtml(item.publisher) : ''}</div>

@@ -76,15 +76,15 @@
     el.innerHTML = list.map(c => {
       const meta = CAT_META[c.cat] || CAT_META['系统工具'];
       return `
-        <div class="qc-card" data-id="${escapeHtml(c.id)}" title="${escapeHtml(c.cmd)}">
+        <div class="qc-card" data-id="${escapeHtml(c.id)}" data-tip="${escapeHtml(c.cmd)}">
           <div class="qc-icon" style="background:${meta.grad}">${catIcon(c.cat)}</div>
           <div class="qc-body">
             <div class="qc-name">${escapeHtml(c.name)}</div>
             <div class="qc-desc">${escapeHtml(c.desc)}</div>
           </div>
           <div class="qc-actions">
-            <button class="btn btn-secondary btn-small" data-qcopy="${escapeHtml(c.id)}" title="复制命令到剪贴板">复制</button>
-            <button class="btn btn-primary btn-small" data-qrun="${escapeHtml(c.id)}" title="打开「${escapeHtml(c.name)}」">打开</button>
+            <button class="btn btn-secondary btn-small" data-qcopy="${escapeHtml(c.id)}" data-tip="复制命令到剪贴板">复制</button>
+            <button class="btn btn-primary btn-small" data-qrun="${escapeHtml(c.id)}" data-tip="打开「${escapeHtml(c.name)}」">打开</button>
           </div>
         </div>`;
     }).join('');

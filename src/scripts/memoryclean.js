@@ -175,7 +175,7 @@
           <div class="xtable-th" style="width:110px">操作</div>
         </div>
         ${REGIONS.map(r => `
-          <div class="xtable-row mem-region-row ${r.sysUnavailable ? 'mem-region-disabled' : ''}" data-id="${r.id}" title="点击查看该区域的详细简介">
+          <div class="xtable-row mem-region-row ${r.sysUnavailable ? 'mem-region-disabled' : ''}" data-id="${r.id}" data-tip="点击查看该区域的详细简介">
             <div class="xtable-td" style="width:44px">
               <label class="mem-check">
                 <input type="checkbox" data-check="${r.id}" ${r.sysUnavailable ? 'disabled' : ''} ${r.checked ? 'checked' : ''} />
@@ -243,7 +243,7 @@
       <div class="usage-modal" role="dialog" aria-modal="true" aria-labelledby="memRegionIntroTitle">
         <div class="usage-header">
           <h2 id="memRegionIntroTitle">${escapeHtml(region.name)}</h2>
-          <button class="usage-close" type="button" title="关闭" aria-label="关闭">&times;</button>
+          <button class="usage-close" type="button" data-tip="关闭" aria-label="关闭">&times;</button>
         </div>
         <div class="usage-body">
           <div class="startup-intro-meta">内存清理区域 · ${RISK_LABELS[region.risk]}</div>

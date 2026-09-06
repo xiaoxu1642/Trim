@@ -154,7 +154,7 @@
         const keepRole = r.role === 'kept';
         html += `<tr class="${s.selected.has(r.path) ? 'finder-row-selected' : ''}">
           <td>${keepRole ? '' : checkboxHtml('dup_' + esc(r.path), true)}</td>
-          <td><div class="finder-cell"><span class="finder-name-text">${esc(nameOf(r.path))}</span><span class="finder-name-text" style="opacity:.55">·</span><span class="finder-path-text" title="${esc(r.path)}">${esc(middleEllipsis(r.path, 70))}</span></div></td>
+          <td><div class="finder-cell"><span class="finder-name-text">${esc(nameOf(r.path))}</span><span class="finder-name-text" style="opacity:.55">·</span><span class="finder-path-text" data-tip="${esc(r.path)}">${esc(middleEllipsis(r.path, 70))}</span></div></td>
           <td class="finder-col-size">${formatSize(r.size)}</td>
           <td class="finder-col-size"><span class="finder-role ${keepRole ? 'finder-role-kept' : 'finder-role-candidate'}">${keepRole ? '保留' : '可删'}</span></td>
         </tr>`;
@@ -190,7 +190,7 @@
     for (const r of s.results) {
       html += `<tr class="${s.selected.has(r.path) ? 'finder-row-selected' : ''}">
         <td>${checkboxHtml('big_' + esc(r.path), true)}</td>
-        <td><div class="finder-cell"><span class="finder-name-text">${esc(nameOf(r.path))}</span><span class="finder-name-text" style="opacity:.55">·</span><span class="finder-path-text" title="${esc(r.path)}">${esc(middleEllipsis(r.path, 76))}</span></div></td>
+        <td><div class="finder-cell"><span class="finder-name-text">${esc(nameOf(r.path))}</span><span class="finder-name-text" style="opacity:.55">·</span><span class="finder-path-text" data-tip="${esc(r.path)}">${esc(middleEllipsis(r.path, 76))}</span></div></td>
         <td class="finder-col-size">${formatSize(r.size)}</td>
       </tr>`;
     }
@@ -219,7 +219,7 @@
       html += '<div class="finder-group-header"><span>空文件（0 字节）· ' + files.length + ' 个</span></div>';
       html += '<table class="finder-table"><thead><tr><th style="width:34px"></th><th>名称 / 路径</th></tr></thead><tbody>';
       for (const r of files) {
-        html += `<tr class="${s.selected.has(r.path) ? 'finder-row-selected' : ''}"><td>${checkboxHtml('ef_' + esc(r.path), true)}</td><td><div class="finder-cell"><span class="finder-name-text">${esc(nameOf(r.path))}</span><span class="finder-name-text" style="opacity:.55">·</span><span class="finder-path-text" title="${esc(r.path)}">${esc(middleEllipsis(r.path, 80))}</span></div></td></tr>`;
+        html += `<tr class="${s.selected.has(r.path) ? 'finder-row-selected' : ''}"><td>${checkboxHtml('ef_' + esc(r.path), true)}</td><td><div class="finder-cell"><span class="finder-name-text">${esc(nameOf(r.path))}</span><span class="finder-name-text" style="opacity:.55">·</span><span class="finder-path-text" data-tip="${esc(r.path)}">${esc(middleEllipsis(r.path, 80))}</span></div></td></tr>`;
       }
       html += '</tbody></table>';
     }
@@ -227,7 +227,7 @@
       html += '<div class="finder-group-header"><span>空目录 · ' + dirs.length + ' 个</span><span class="finder-group-sum">删除空目录可释放少量空间，并可避免应用误判</span></div>';
       html += '<table class="finder-table"><thead><tr><th style="width:34px"></th><th>路径</th></tr></thead><tbody>';
       for (const r of dirs) {
-        html += `<tr><td>${checkboxHtml('ed_' + esc(r.path), false)}</td><td><div class="finder-cell"><span class="finder-path-text" title="${esc(r.path)}">${esc(r.path)}</span></div></td></tr>`;
+        html += `<tr><td>${checkboxHtml('ed_' + esc(r.path), false)}</td><td><div class="finder-cell"><span class="finder-path-text" data-tip="${esc(r.path)}">${esc(r.path)}</span></div></td></tr>`;
       }
       html += '</tbody></table>';
     }
@@ -259,7 +259,7 @@
       for (const r of rows) {
         html += `<tr>
           <td>${checkboxHtml('ad_' + esc(r.path), false)}</td>
-          <td><div class="finder-cell"><span class="finder-name-text">${esc(nameOf(r.path))}</span><span class="finder-name-text" style="opacity:.55">·</span><span class="finder-path-text" title="${esc(r.path)}">${esc(middleEllipsis(r.path, 60))}</span></div></td>
+          <td><div class="finder-cell"><span class="finder-name-text">${esc(nameOf(r.path))}</span><span class="finder-name-text" style="opacity:.55">·</span><span class="finder-path-text" data-tip="${esc(r.path)}">${esc(middleEllipsis(r.path, 60))}</span></div></td>
           <td class="finder-col-size">${formatSize(r.size)}</td>
         </tr>`;
       }
@@ -423,7 +423,7 @@
     const items = Array.isArray(resp.data?.items) ? resp.data.items : [];
     const rows = items.slice(0, 50).map(it => `
       <tr>
-        <td title="${esc(it.path)}">${esc(middleEllipsis(it.path, 56))}</td>
+        <td data-tip="${esc(it.path)}">${esc(middleEllipsis(it.path, 56))}</td>
         <td class="finder-col-size">${esc(formatSize(it.size))}</td>
         <td>${it.recycled ? '回收站' : '永久删除'}</td>
         <td>${esc(String(it.deletedAt || '').replace('T', ' ').slice(0, 19))}</td>

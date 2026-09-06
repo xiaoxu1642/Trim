@@ -42,7 +42,8 @@
       viewer.innerHTML = shown.map(formatLine).join('') +
         (lines.length > MAX_LINES ? `<div class="log-line"><span class="log-message">…（日志过长，仅显示最近 ${MAX_LINES} 条）</span></div>` : '');
     } catch (e) {
-      viewer.innerHTML = `<div class="empty-state"><p>读取日志失败: ${e.message}</p></div>`;
+      // 审查 7-7：文本一律转义后插入（与项目「文本 API 一律转义」约束一致）
+      viewer.innerHTML = `<div class="empty-state"><p>读取日志失败: ${escapeHtml(e.message)}</p></div>`;
     }
   }
 

@@ -21,11 +21,8 @@
   }
 
   function getSystemTheme() {
-    // Electron 模式：优先用主进程的 nativeTheme（更准确，反映 AppsUseLightTheme）
-    if (IS_ELECTRON && window.api?.app?.getTheme) {
-      // 同步调用不可用，使用 matchMedia 作为渲染进程的近似
-      // 主进程会通过 app:theme-changed 主动推送准确值
-    }
+    // Electron 模式：主进程的 nativeTheme 更准确（反映 AppsUseLightTheme），但同步调用
+    // 不可用——这里用 matchMedia 作渲染进程近似，主进程经 app:theme-changed 主动推送准确值
     if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
       return 'dark';
     }
@@ -46,7 +43,7 @@
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute('content', '#f3f3f3');
 
-    updateRingGradient();
+    ensureRingGradientDef();
 
     // 同步设置页的单选按钮状态
     document.querySelectorAll('input[name="theme"]').forEach(radio => {
@@ -54,7 +51,9 @@
     });
   }
 
-  function updateRingGradient() {
+  // 审查 7-2：名实一致——本函数只在首次调用时创建 defs（之后幂等返回），非每次更新
+  // 审查 5-2：环形进度渐变改走强调色 token（两 stop 同色保 url() 引用结构），主题/强调色切换自动跟随
+  function ensureRingGradientDef() {
     let defs = document.getElementById('ringGradientDef');
     if (!defs) {
       defs = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -62,8 +61,8 @@
       defs.setAttribute('height', '0');
       defs.style.position = 'absolute';
       defs.innerHTML = '<defs><linearGradient id="ringGradient" x1="0%" y1="0%" x2="100%" y2="100%">' +
-        '<stop offset="0%" stop-color="#8B8EE0"/>' +
-        '<stop offset="100%" stop-color="#A6A9F2"/>' +
+        '<stop offset="0%" stop-color="var(--accent, #8B8EE0)"/>' +
+        '<stop offset="100%" stop-color="var(--accent, #8B8EE0)"/>' +
         '</linearGradient></defs>';
       defs.id = 'ringGradientDef';
       document.body.appendChild(defs);
@@ -121,7 +120,8 @@
     }
     if (blur > 0) {
       document.body.dataset.skin = 'glass';
-      document.documentElement.style.setProperty('--glass-blur', (blur / 100 * 26).toFixed(1) + 'px');
+      // 审查 5-5：上限与 pathbinding 共用 ds 常量（GLASS_MAX_BLUR_PX），消除两处硬编码漂移
+      document.documentElement.style.setProperty('--glass-blur', (blur / 100 * (window.ds?.GLASS_MAX_BLUR_PX || 26)).toFixed(1) + 'px');
     } else {
       delete document.body.dataset.skin;
       document.documentElement.style.removeProperty('--glass-blur');

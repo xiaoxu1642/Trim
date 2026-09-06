@@ -12,7 +12,7 @@
 // 扫描分类：文件、EXE文件、LNK文件、目录、文件夹、驱动器、回收站、目录背景、
 //           桌面背景、此电脑、库、发送到、UWP应用
 
-const DIAG = require('../diag');
+const DIAG = require('../main/diag');
 
 const SCAN_SCRIPT = `
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8

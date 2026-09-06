@@ -27,7 +27,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const DIAG = require('../diag');
+const DIAG = require('../main/diag');
 
 const RULES_FILE = path.join(__dirname, '..', 'data', 'cleanup-rules.json');
 // 数据目录与 main.js APP_DATA_DIR（%APPDATA%\Trim）保持一致；此处不依赖 electron app

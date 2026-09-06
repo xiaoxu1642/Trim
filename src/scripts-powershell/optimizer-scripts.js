@@ -13,7 +13,7 @@
 //   service -> { label, service, disable }  Stop-Service + 可选 Set-Service Disabled
 //   pwsh    -> { label, pwsh }  内联 PowerShell 语句（可多行；禁止内含独立成行的 '@）
 
-const DIAG = require('../diag');
+const DIAG = require('../main/diag');
 
 // PS 单引号字面量（用于把步骤 label 安全嵌入诊断 Detail 表达式）
 function psQuoteForScript(s) {

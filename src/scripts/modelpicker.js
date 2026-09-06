@@ -77,7 +77,7 @@
           <div class="usage-modal model-picker-modal" role="dialog" aria-modal="true" aria-labelledby="modelPickerTitle">
             <div class="usage-header">
               <h2 id="modelPickerTitle">选择 AI 简介模型 · ${escapeHtml(meta.label)}</h2>
-              <button class="usage-close" id="modelPickerClose" type="button" title="关闭" aria-label="关闭">&times;</button>
+              <button class="usage-close" id="modelPickerClose" type="button" data-tip="关闭" aria-label="关闭">&times;</button>
             </div>
             <div class="usage-body model-picker-body">
               <p class="model-picker-tip">

@@ -111,12 +111,12 @@
       return `
         <div class="xtable-row mem-group-row" data-path="${escapeAttr(key)}" aria-expanded="${expanded}">
           <div class="xtable-td" style="flex:1.4">
-            <span class="mem-tree-toggle" title="展开/收起该应用的 ${multi ? '多个进程' : '进程'}"><span class="mem-tree-toggle-icon">${toggleSvg}</span></span>
+            <span class="mem-tree-toggle" data-tip="展开/收起该应用的 ${multi ? '多个进程' : '进程'}"><span class="mem-tree-toggle-icon">${toggleSvg}</span></span>
             <img class="pm-app-icon" data-icon-path="${escapeAttr(exePath)}" alt="" width="18" height="18" />
             <span class="mem-tree-name">${escapeHtml(main.ProcessName || '未知')}</span>
             ${multi ? `<span class="mem-tree-count">${procs.length} 个进程</span>` : ''}
           </div>
-          <div class="xtable-td" style="flex:1.4"><span class="xtable-cell-text xtable-cell-path" title="${escapeAttr(path || '')}">${escapeHtml(window.xtable && xtable.middleEllipsis ? xtable.middleEllipsis(path || '—', 72) : (path || '—'))}</span></div>
+          <div class="xtable-td" style="flex:1.4"><span class="xtable-cell-text xtable-cell-path" data-tip="${escapeAttr(path || '')}">${escapeHtml(window.xtable && xtable.middleEllipsis ? xtable.middleEllipsis(path || '—', 72) : (path || '—'))}</span></div>
           <div class="xtable-td" style="width:120px" data-align="end"><span class="xtable-cell-text">${fmtBytes(total)}</span></div>
           <div class="xtable-td" style="width:110px">${killBtn(main.Id, main.ProcessName, multi ? '结束全部' : '结束进程')}</div>
         </div>`;

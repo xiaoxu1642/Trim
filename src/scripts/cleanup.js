@@ -7,123 +7,12 @@
   // Electron 运行时经 IPC（cleanup.rules）读取该 JSON 构建 CATEGORIES；
   // 下方 FALLBACK 副本仅用于浏览器预览模式与 IPC 不可用时的兜底。
   // Windows 系统采用二级菜单分类（参考截图），其它仍为扁平。
-  const CATEGORIES_FALLBACK = {
-    windows: {
-      title: 'Windows 系统',
-      icon: '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M3 12V6.75l6-1.32v6.48L3 12zm17-9v8.75l-10 .15V5.21L20 3zM3 13l6 .09v6.81l-6-1.15V13zm17 .25V22l-10-1.91V13.1l10 .15z"/></svg>',
-      // 二级分类：每个 subGroup 是一个可折叠、可批量勾选的分类
-      subGroups: [
-        {
-          id: 'outdated', name: '过时文件', icon: '⏳',
-          items: [
-            { id: 'dismPlusOld', name: '以前的Dism++组件', risk: 'low' },
-            { id: 'chromeOldBackup', name: 'Chrome浏览器老版本备份', risk: 'low' },
-            { id: 'wpsOldBackup', name: 'WPS老版本备份', risk: 'low' }
-          ]
-        },
-        {
-          id: 'system', name: '系统相关', icon: '⚙️',
-          items: [
-            { id: 'windowsReport', name: 'Windows报告', risk: 'low' },
-            { id: 'windowsUpdateLog', name: 'Windows更新安装记录', risk: 'low' },
-            { id: 'diagnosisData', name: '诊断数据目录', risk: 'low' },
-            { id: 'explorerRecentDocs', name: '最近文档注册表记录', risk: 'low' },
-            { id: 'explorerRunMRU', name: '运行对话框历史', risk: 'low' },
-            { id: 'shellMuiCache', name: '资源管理器名称缓存', risk: 'low' }
-          ]
-        },
-        {
-          id: 'cache', name: '缓存文件', icon: '🗂️',
-          items: [
-            { id: 'windowsDownloadCache', name: 'Windows下载缓存', risk: 'medium' },
-            { id: 'deliveryOptimization', name: '传递优化缓存', risk: 'low' },
-            { id: 'terminalServerCache', name: 'Terminal Server Client缓存', risk: 'low' },
-            { id: 'dotNetCache', name: '.NET程序集缓存', risk: 'low' },
-            { id: 'prefetchFiles', name: 'Windows预读取文件', risk: 'low' },
-            { id: 'thumbnailCacheFiles', name: '缩略图缓存(需重启explorer)', risk: 'low' },
-            { id: 'iconCacheFiles', name: '图标缓存(需重启explorer)', risk: 'low' },
-            { id: 'winINetCache', name: 'WinINet网页缓存', risk: 'low' },
-            { id: 'winINetCookies', name: 'WinINet Cookies', risk: 'low' },
-            { id: 'userCrashDumps', name: '用户崩溃转储', risk: 'low' }
-          ]
-        },
-        {
-          id: 'app', name: '应用程序', icon: '📦',
-          items: [
-            { id: 'packageCache', name: 'Windows Installer 补丁缓存', risk: 'high' },
-            { id: 'defenderHistoryRecords', name: 'Windows Defender保护历史记录', risk: 'low' }
-          ]
-        },
-        {
-          id: 'temp', name: '临时文件', icon: '📄',
-          items: [
-            { id: 'winSxsTempFile', name: 'WinSxS临时文件', risk: 'medium' },
-            { id: 'winSxsTempFile2', name: 'WinSxS临时文件', risk: 'medium' },
-            { id: 'windowsLogs', name: 'Windows日志', risk: 'low' },
-            { id: 'tempFiles', name: '临时文件', risk: 'low' },
-            { id: 'driverTempExtract', name: '常见的驱动临时解压目录', risk: 'medium' },
-            { id: 'qqTemp', name: 'QQ临时数据', risk: 'low' },
-            { id: 'baiduNetdiskLog', name: '百度网盘日志', risk: 'low' },
-            { id: 'recycleBin', name: '回收站', risk: 'medium' },
-            { id: 'memoryDumpFiles', name: '系统以及程序崩溃dmp文件（by YukiSakura）', risk: 'low' },
-            { id: 'recentFiles', name: '最近文档快捷方式', risk: 'low' },
-            { id: 'dismComponentCleanup', name: 'DISM 组件清理 (WinSxS /ResetBase)', risk: 'medium' },
-            { id: 'directXShaderCache', name: 'DirectX 着色器缓存', risk: 'low' }
-          ]
-        }
-      ]
-    },
-    gpu: {
-      title: '显卡缓存',
-      icon: '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M2 7v10l3 2v-3h2v3l3 2v-3h2v3l3 2v-3h2v3l3 2V7l-3-2v3h-2V5l-3-2v3h-2V3l-3 2v3H7V5L4 7v3H2z"/></svg>',
-      items: [
-        { id: 'nvidiaCache', name: 'NVIDIA 显卡缓存 (GLCache/DXCache)', risk: 'low' },
-        { id: 'nvidiaNvCache', name: 'NVIDIA 全局缓存 (NV_Cache)', risk: 'low' },
-        { id: 'amdCache', name: 'AMD 显卡缓存 (DxCache/Cache)', risk: 'low' },
-        { id: 'intelShaderCache', name: 'Intel 着色器缓存', risk: 'low' }
-      ]
-    },
-    browser: {
-      title: '浏览器',
-      icon: '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>',
-      items: [
-        { id: 'chromeCache', name: 'Chrome 浏览器缓存', risk: 'low' },
-        { id: 'chromeCodeCache', name: 'Chrome 代码缓存', risk: 'low' },
-        { id: 'chromeMediaCache', name: 'Chrome 媒体缓存', risk: 'low' },
-        { id: 'edgeMediaCache', name: 'Edge 媒体缓存', risk: 'low' },
-        { id: 'edgeCache', name: 'Edge 浏览器缓存', risk: 'low' },
-        { id: 'firefoxCache', name: 'Firefox 浏览器缓存', risk: 'low' },
-        { id: 'qqBrowserCache', name: 'QQ浏览器缓存', risk: 'low' }
-      ]
-    },
-    apps: {
-      title: '应用程序',
-      icon: '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M4 8h4V4H4v4zm6 12h4v-4h-4v4zm-6 0h4v-4H4v4zm0-6h4v-4H4v4zm6 0h4v-4h-4v4zm6-10v4h4V4h-4zm-6 4h4V4h-4v4zm6 6h4v-4h-4v4zm0 6h4v-4h-4v4z"/></svg>',
-      items: [
-        { id: 'steamCache', name: 'Steam 下载与缓存', risk: 'low' },
-        { id: 'neteaseMusicCache', name: '网易云音乐缓存', risk: 'low' },
-        { id: 'wechatCache', name: '微信缓存', risk: 'low' },
-        { id: 'qqCache', name: 'QQ缓存', risk: 'low' },
-        { id: 'douyinCache', name: '抖音缓存', risk: 'low' },
-        { id: 'steamHtmlCache', name: 'Steam 内置浏览器缓存', risk: 'low' },
-        { id: 'epicWebCache', name: 'Epic 启动器网页缓存', risk: 'low' },
-        { id: 'officeFileCache', name: 'Office 文件缓存', risk: 'medium' },
-        { id: 'vscodeCache', name: 'VS Code 缓存', risk: 'low' },
-        { id: 'jetbrainsCache', name: 'JetBrains IDE 缓存', risk: 'low' },
-        { id: 'npmCache', name: 'npm 包缓存', risk: 'low' },
-        { id: 'pipCache', name: 'pip 包缓存', risk: 'low' },
-        { id: 'nugetCache', name: 'NuGet 全局包缓存', risk: 'medium' }
-      ]
-    },
-    fileclean: {
-      title: '文件清理',
-      icon: '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 18c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>',
-      items: [
-        { id: 'qqFileClean', name: 'QQ文件清理', risk: 'low', fileCleanType: 'qq' },
-        { id: 'wechatFileClean', name: '微信文件清理', risk: 'low', fileCleanType: 'wechat' }
-      ]
-    }
-  };
+  // 审查 2-2：FALLBACK 改为构建期生成——原始规则 JSON 由 cleanup-fallback.generated.js 提供
+  // （scripts/gen-fallback.js 产出，勿手改），经与 IPC 相同的 buildCategoriesFromRules 构建，
+  // 从结构上消除「FALLBACK 副本与规则 JSON 双源漂移」。改规则后重新生成即可，无需手工同步。
+  const CATEGORIES_FALLBACK = buildCategoriesFromRules(
+    (typeof window !== 'undefined' ? window : globalThis).CLEANUP_RULES_FALLBACK || { groups: [] }
+  );
 
   // 从 cleanup-rules.json 的分组项提取渲染层所需字段（id/name/risk/fileCleanType）
   function pickRuleItem(it) {
@@ -375,7 +264,7 @@
   }
 
   function previewBtnHtml(item, hasImages, imageCount) {
-    return `<button class="fileclean-preview-btn" data-preview="${item.id}" ${hasImages ? '' : 'disabled'} title="${hasImages ? `预览 ${imageCount} 张图片` : '无可预览图片'}">
+    return `<button class="fileclean-preview-btn" data-preview="${item.id}" ${hasImages ? '' : 'disabled'} data-tip="${hasImages ? `预览 ${imageCount} 张图片` : '无可预览图片'}">
       <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
       预览${hasImages ? ` (${imageCount})` : ''}
     </button>`;
@@ -402,7 +291,7 @@
           break;
         case 'name':
           // 中缝省略：超长文件名保留首尾（title 仍展示完整原文）
-          inner = `<span class="xtable-cell-text" title="${escapeHtml(item.name)}">${escapeHtml(xtable.middleEllipsis(item.name, 40))}</span>`;
+          inner = `<span class="xtable-cell-text" data-tip="${escapeHtml(item.name)}">${escapeHtml(xtable.middleEllipsis(item.name, 40))}</span>`;
           break;
         case 'path':
           if (result && result.path) {
@@ -412,7 +301,7 @@
             const regTag = result.regCount > 0 ? ` <span class="path-auto-tag">注册表 ${result.regCount} 项</span>` : '';
             const blockedTag = Array.isArray(result.blockedBy) && result.blockedBy.length
               ? ` <span class="path-blocked-tag" data-tip="执行前会跳过此项目并提示原因">需关闭: ${escapeHtml(result.blockedBy.join(', '))}</span>` : '';
-            inner = `<span class="xtable-cell-text xtable-cell-path" title="${escapeHtml(result.path)}">${escapeHtml(xtable.middleEllipsis(result.path, 72))}${autoTag}${fileTag}${regTag}${blockedTag}</span>`;
+            inner = `<span class="xtable-cell-text xtable-cell-path" data-tip="${escapeHtml(result.path)}">${escapeHtml(xtable.middleEllipsis(result.path, 72))}${autoTag}${fileTag}${regTag}${blockedTag}</span>`;
           } else {
             inner = '<span class="xtable-cell-muted">—</span>';
           }
@@ -803,7 +692,7 @@
       const regTag = r.regCount > 0 ? ` <span class="path-auto-tag">注册表 ${r.regCount} 项</span>` : '';
       const blockedTag = Array.isArray(r.blockedBy) && r.blockedBy.length
         ? ` <span class="path-blocked-tag" data-tip="执行前会跳过此项目并提示原因">需关闭: ${escapeHtml(r.blockedBy.join(', '))}</span>` : '';
-      pathCell.innerHTML = `<span class="xtable-cell-text xtable-cell-path" title="${escapeHtml(r.path)}">${escapeHtml(xtable.middleEllipsis(r.path, 72))}${autoTag}${fileTag}${regTag}${blockedTag}</span>`;
+      pathCell.innerHTML = `<span class="xtable-cell-text xtable-cell-path" data-tip="${escapeHtml(r.path)}">${escapeHtml(xtable.middleEllipsis(r.path, 72))}${autoTag}${fileTag}${regTag}${blockedTag}</span>`;
     }
   }
 
@@ -917,7 +806,8 @@
           path: MOCK_PATHS[id] || `C:\\Windows\\...\\${id}`,
           pathSource: MOCK_PATHS[id] ? 'configured' : 'configured',
           size: MOCK_SIZES[id] || Math.floor(Math.random() * 500) * 1024 * 1024,
-          risk: getItemById(id)?.risk || 'low',
+          // 审查 7-1：fail-safe——条目在规则表查不到时按高危处理（触发红色二次确认），禁止静默降级为低危
+          risk: getItemById(id)?.risk || 'high',
           exists: true
         }));
         // 模拟文件清理数据
@@ -1128,6 +1018,9 @@
           window.app?.toast('warning', `${result.failed} 项清理失败（可能文件被占用）`);
           maybeOfferElevation(`${result.failed} 项清理失败，可能需要管理员权限才能删除这些文件。`);
         }
+        // 审查 4-4：回收站失败项 → 红色确认后改永久删除（回收站被禁用/已满时的降级出口）
+        const trashFailures = Array.isArray(result.trashFailures) ? result.trashFailures : [];
+        if (trashFailures.length > 0) offerTrashRetry(trashFailures);
       }, 600);
     } catch (e) {
       clearInterval(progressTimer);
@@ -1150,6 +1043,32 @@
         window.app?.requestElevation?.(reason);
       }
     } catch (_) { /* 提权提示失败不影响主流程 */ }
+  }
+
+  // 审查 4-4：回收站失败项的永久删除引导——不可逆操作，必须走红色二次确认（confirmDanger）。
+  // 目标清单由主进程留存（cleanup:retry-failed-delete 只处理最近一次执行留存的失败项），
+  // 渲染层不能指定任意路径。
+  async function offerTrashRetry(failures) {
+    try {
+      const total = failures.reduce((s, f) => s + (Number(f.size) || 0), 0);
+      const ok = await window.app?.confirmDanger({
+        title: '部分项目无法移入回收站',
+        message: `有 ${failures.length} 项（共 ${formatSize(total)}）无法移入回收站（回收站可能已满或已禁用）。\n是否改为永久删除？`,
+        confirmText: '永久删除',
+        dangerHint: '永久删除不可恢复，文件不会进入回收站。'
+      });
+      if (!ok) return;
+      const resp = await window.api?.cleanup?.retryFailedDelete();
+      if (resp && resp.success) {
+        window.app?.toast('success', `已永久删除 ${resp.data.ok} 项，释放 ${formatSize(resp.data.totalFreed)} 空间`);
+      } else {
+        window.app?.toast('error', (resp && resp.message) || '永久删除失败');
+      }
+      renderCategoryList();
+      updateUI();
+    } catch (e) {
+      window.app?.toast('error', '永久删除失败: ' + e.message);
+    }
   }
 
   // ==================== 图片预览（独立窗口） ====================
@@ -1240,7 +1159,7 @@
       <div class="usage-modal" role="dialog" aria-modal="true" aria-labelledby="itemDetailTitle">
         <div class="usage-header">
           <h2 id="itemDetailTitle">${escapeHtml((item && item.name) || id)} · 文件明细</h2>
-          <button class="usage-close" id="itemDetailClose" type="button" title="关闭" aria-label="关闭">&times;</button>
+          <button class="usage-close" id="itemDetailClose" type="button" data-tip="关闭" aria-label="关闭">&times;</button>
         </div>
         <div class="usage-body" id="itemDetailBody">
           <div class="empty-state"><p>正在枚举文件清单…</p></div>
@@ -1278,7 +1197,7 @@
           body.innerHTML = `<div class="empty-state"><p>未枚举到文件（目录为空或已被清理）。</p></div>`;
         } else {
           body.innerHTML = `<div class="detail-file-list">${files.map(f =>
-            `<div class="detail-file-row"><span class="detail-file-path" title="${escapeHtml(f.path)}">${escapeHtml(xtable.middleEllipsis(f.path, 96))}</span><span class="detail-file-size">${formatSize(f.size)}</span></div>`
+            `<div class="detail-file-row"><span class="detail-file-path" data-tip="${escapeHtml(f.path)}">${escapeHtml(xtable.middleEllipsis(f.path, 96))}</span><span class="detail-file-size">${formatSize(f.size)}</span></div>`
           ).join('')}</div>`;
         }
         if (meta) meta.textContent = `共 ${total} 个文件${truncated ? '（仅展示前 600 条）' : ''}`;
@@ -1338,6 +1257,8 @@
     scan,
     clean,
     formatSize,
-    MOCK_SIZES
+    MOCK_SIZES,
+    // 审查 4-2：供 app.js 优雅关闭前判断清理任务是否在执行（执行中最长等待 10 分钟）
+    isCleaning: () => isCleaning
   };
 })();
