@@ -6,6 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const { spawn, spawnSync, exec } = require('child_process');
 const { promisify } = require('util');
+const net = require('net');
 
 const execAsync = promisify(exec);
 
@@ -16,8 +17,9 @@ app.commandLine.appendSwitch('disk-cache-size', '33554432');
 app.commandLine.appendSwitch('js-flags', '--expose-gc');
 
 // P1-11：失败诊断四元组（failure_stage/mutation_state/diagnostic_digest/native_error_code）
-const DIAG = require('./src/diag');
-const SECURITY = require('./src/security');
+const DIAG = require('./src/main/diag');
+const SECURITY = require('./src/main/security');
+const RULES_SIG = require('./src/main/rules-signature');
 
 // ==================== 防止多开 ====================
 // 必须在任何重初始化逻辑（数据迁移、窗口创建、IPC 注册）之前请求单实例锁：
@@ -53,7 +55,9 @@ app.on('second-instance', () => {
 
 // ==================== 全局状态 ====================
 let mainWindow = null;
-let lastCleanupSnapshot = new Map();
+// 审查 2-3：清理快照按发送方（webContents.id）分桶，消除全局单例的竞态窗口——
+// 并发扫描不再互相抹除快照；扫描期间的 execute 校验到空快照会 fail-safe 拒绝
+const cleanupSnapshots = new Map(); // webContentsId -> Map(item.id -> item)
 let lastContextmenuSnapshot = new Map();
 let lastStartupSnapshot = new Map();
 let lastProcessSnapshot = new Map();
@@ -82,6 +86,79 @@ function isTrustedRenderer(event) {
 
 function rejectUntrustedRenderer(event) {
   return isTrustedRenderer(event) ? null : { success: false, message: '请求来源不受信任' };
+}
+
+// 审查 1-5：模型 API 地址 SSRF 防护——models:save/test 会携带密钥向任意 URL 发请求，
+// 必须拒绝环回/私有/链路本地网段，防止被攻陷的渲染层探测内网或把密钥外带到内网收集端。
+// 判定只覆盖 IP 字面量与 localhost 主机名；域名解析到内网 IP 的 rebinding 不在此防线内。
+// 若将来需要支持本地模型端点（如 Ollama），在此处显式加白名单，不要直接删掉整个校验。
+function isPrivateApiUrl(rawUrl) {
+  try {
+    const u = new URL(String(rawUrl));
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return true;
+    const host = (u.hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
+    if (!host) return true;
+    if (host === 'localhost' || host.endsWith('.localhost') || host === '0.0.0.0') return true;
+    if (net.isIPv4(host)) {
+      const o = host.split('.').map(Number);
+      if (o[0] === 0 || o[0] === 10 || o[0] === 127) return true;
+      if (o[0] === 169 && o[1] === 254) return true;              // 链路本地
+      if (o[0] === 172 && o[1] >= 16 && o[1] <= 31) return true;  // 172.16/12
+      if (o[0] === 192 && o[1] === 168) return true;              // 192.168/16
+      if (o[0] === 100 && o[1] >= 64 && o[1] <= 127) return true; // CGNAT 100.64/10
+      return false;
+    }
+    if (net.isIPv6(host)) {
+      if (host === '::' || host === '::1') return true;
+      if (/^f[cd]/.test(host)) return true;    // fc00::/7 唯一本地
+      if (/^fe[89ab]/.test(host)) return true; // fe80::/10 链路本地
+      return false;
+    }
+    return false;
+  } catch (_) {
+    return true; // 解析失败按私有处理（fail-safe）
+  }
+}
+
+// 审查 1-5：settings:load 返回密钥的统一掩码。渲染层表单回显掩码，主进程在 save/test
+// 侧识别掩码视为「未修改」保留已存真值——明文密钥不再常驻渲染层。
+const API_KEY_MASK = '••••••••';
+
+// 审查 1-3（全量）：统一 IPC 包装器——除显式只读白名单外，所有通道一律校验请求来源，
+// 「忘记校验」在结构上不再可能。白名单只收确定只读、无子进程副作用、无敏感面的通道；
+// 有疑问的通道一律不进白名单（多一层校验对可信窗口无感，方向安全）。新增通道默认经包装器。
+// 审查v4-L9：来源校验由本包装器统一把关，各 handler 内不再重复调用 rejectUntrustedRenderer。
+const SIDE_EFFECT_FREE = new Set([
+  'app:get-info', 'app:get-theme', 'app:read-usage',           // 应用信息/主题/使用统计查询
+  'appearance:get-material', 'appearance:bg-list',             // 材质与背景图列表查询
+  'bench-history:list',                                        // 测速历史列表
+  'cleanup:rules',                                             // 清理规则查询（渲染层展示）
+  'elevate:status',                                            // 提权状态查询
+  'fonts:list', 'intro:load', 'log:read',                      // 字体列表/本地简介库/日志读取
+  'maintenance:tasks',                                         // 维护任务清单
+  'memory:info', 'memory:processes',                           // 内存信息/进程列表
+  'optimizer:list', 'overview:hardware', 'overview:metrics',   // 优化项清单/硬件信息/指标查询
+  'paths:load', 'realtime:adapters', 'realtime:report-list'    // 路径配置/网络适配器/测速报告列表
+]);
+
+function handleSafe(channel, fn) {
+  return ipcMain.handle(channel, async (event, ...args) => {
+    if (!SIDE_EFFECT_FREE.has(channel)) {
+      const denied = rejectUntrustedRenderer(event);
+      if (denied) return denied;
+    }
+    return fn(event, ...args);
+  });
+}
+
+function onSafe(channel, fn) {
+  return ipcMain.on(channel, (event, ...args) => {
+    if (!SIDE_EFFECT_FREE.has(channel)) {
+      const denied = rejectUntrustedRenderer(event);
+      if (denied) return; // on 通道无返回值，拒绝即不执行 handler
+    }
+    return fn(event, ...args);
+  });
 }
 
 function isAllowedLocalUrl(rawUrl) {
@@ -163,9 +240,11 @@ function migrateLegacyData() {
     if (fs.existsSync(APP_DATA_DIR)) return;
     fs.mkdirSync(APP_DATA_DIR, { recursive: true });
     fs.cpSync(LEGACY_DATA_DIR, APP_DATA_DIR, { recursive: true });
-    console.log(`[迁移] 已从 ${LEGACY_DATA_DIR} 迁移既有数据到 ${APP_DATA_DIR}`);
+    // 审查v4-L10：迁移是用户可感知事件，改走 writeLog 落「操作日志」页（原仅 console 不可见；
+    // 调用点在 whenReady 内，此时日志系统已就绪）
+    writeLog('info', `已从 ${LEGACY_DATA_DIR} 迁移既有数据到 ${APP_DATA_DIR}`);
   } catch (e) {
-    console.error('迁移旧数据目录失败:', e);
+    writeLog('error', `迁移旧数据目录失败: ${e.message}`);
   }
 }
 
@@ -191,22 +270,20 @@ function notifyRendererResize() {
 //   2) DWM 圆角偏好未生效（窗口四角呈直角，而窗口样式 WS_CAPTION|WS_THICKFRAME 完好）
 // 修复：最大化时校验客户区与显示器工作区，不一致则强制 setContentBounds 并触发重绘；
 //       圆角通过 DWMWA_WINDOW_CORNER_PREFERENCE(33)=DWMWCP_ROUND(2) 显式声明。
+let cornersDeclared = false; // 审查 1-7：Add-Type 编译缓存，进程内只编译一次（避免每次最大化/还原都重复编译 C#）
 function forceRoundCorners() {
   if (process.platform !== 'win32' || !mainWindow || mainWindow.isDestroyed()) return;
   try {
     const buf = mainWindow.getNativeWindowHandle();
     const hwnd = process.arch === 'x64' ? buf.readBigUInt64LE(0) : buf.readUInt32LE(0);
-    // C# 签名内含双引号，经 cmd 转发会被截断 —— 改用 base64 传递（实测有效）
+    // C# 签名内含双引号 —— 走 writeTempScript 临时文件执行后引号天然安全（审查 1-7：弃用
+    // powershell 5.1 字符串拼接 exec，统一走已封装的 pwsh7 运行时 + 超时兜底）
     const sig = '[DllImport("dwmapi.dll")] public static extern int DwmSetWindowAttribute(IntPtr h, int a, ref int v, int s);';
     const b64 = Buffer.from(sig, 'utf8').toString('base64');
-    const ps = '$s=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(\'' + b64 + '\')); ' +
-      'Add-Type -MemberDefinition $s -Name D -Namespace W32; ' +
-      '[void][W32.D]::DwmSetWindowAttribute([IntPtr]' + hwnd + ', 33, [ref]2, 4)';
-    require('child_process').exec(
-      'powershell -NoProfile -WindowStyle Hidden -Command "' + ps + '"',
-      { windowsHide: true },
-      () => {}
-    );
+    const declare = cornersDeclared ? '' : '$s=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(\'' + b64 + '\')); Add-Type -MemberDefinition $s -Name D -Namespace W32; ';
+    cornersDeclared = true;
+    const ps = declare + '[void][W32.D]::DwmSetWindowAttribute([IntPtr]' + hwnd + ', 33, [ref]2, 4)';
+    runPowerShell(ps, { timeout: 8000 }).catch(() => {}); // 圆角为视觉增强，失败不阻塞
   } catch (e) { /* 圆角为视觉增强，失败不阻塞 */ }
 }
 
@@ -316,6 +393,11 @@ function writeLog(level, message) {
 
 // ==================== PowerShell 7 执行 ====================
 let powerShell7Path = null;
+// 审查v4-M7：探测失败负缓存——损坏/卡死的 pwsh 候选会拖满 5s 超时且失败不写缓存，
+// 之后每次 pwsh 类 IPC 都重复整套同步探测并冻结主进程事件循环；60s 内直接复用失败结论
+const PWSH_PROBE_FAIL_TTL_MS = 60000;
+let pwshProbeFailedAt = 0;
+let pwshProbeError = null;
 
 function isPowerShell7Executable(executable) {
   try {
@@ -332,6 +414,10 @@ function isPowerShell7Executable(executable) {
 
 function resolvePowerShell7Path() {
   if (powerShell7Path) return powerShell7Path;
+  // 审查v4-M7：命中负缓存直接快速失败，不再对损坏候选反复 spawnSync 阻塞事件循环
+  if (pwshProbeError && Date.now() - pwshProbeFailedAt < PWSH_PROBE_FAIL_TTL_MS) {
+    throw pwshProbeError;
+  }
 
   const candidates = [
     process.env.PWSH7_PATH,
@@ -362,12 +448,15 @@ function resolvePowerShell7Path() {
   for (const candidate of candidates) {
     if (fs.existsSync(candidate) && isPowerShell7Executable(candidate)) {
       powerShell7Path = candidate;
+      pwshProbeError = null; // 审查v4-M7：探测成功即解除负缓存
       return powerShell7Path;
     }
   }
 
   const error = new Error('未找到 PowerShell 7（pwsh.exe），请先安装 PowerShell 7 后重试。');
   error.code = 'PWSH7_NOT_FOUND';
+  pwshProbeFailedAt = Date.now(); // 审查v4-M7：失败结论入负缓存
+  pwshProbeError = error;
   throw error;
 }
 
@@ -523,7 +612,10 @@ function cleanupTempScripts() {
       for (const f of files) {
         const fp = path.join(dir, f);
         try {
-          const stat = fs.statSync(fp);
+          // 审查 1-6：lstatSync 不跟随符号链接——与 writeTempScript 的目录检查一致，
+          // 避免解析到链接目标的元数据；非常规文件（链接/设备）直接跳过
+          const stat = fs.lstatSync(fp);
+          if (!stat.isFile()) continue;
           // 删除超过 1 小时的临时文件
           if (now - stat.mtimeMs > 3600 * 1000) {
             fs.unlinkSync(fp);
@@ -797,7 +889,7 @@ function createWindow() {
 
 // ==================== IPC 处理 ====================
 // 应用信息
-ipcMain.handle('app:get-info', async () => {
+handleSafe('app:get-info', async () => {
   return {
     name: APP_NAME,
     version: app.getVersion(),
@@ -819,13 +911,13 @@ ipcMain.handle('app:get-info', async () => {
 });
 
 // 系统主题
-ipcMain.handle('app:get-theme', () => {
+handleSafe('app:get-theme', () => {
   return nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
 });
 
-// 读取使用说明（《使用说明.md》独立文档，不再读 readme.md；设置页整合4）
-ipcMain.handle('app:read-usage', () => {
-  const mdPath = path.join(__dirname, '使用说明.md');
+// 读取使用说明（数据源统一为根目录 readme.md：用户文档与应用内弹窗同源，2026-09 目录梳理）
+handleSafe('app:read-usage', () => {
+  const mdPath = path.join(__dirname, 'readme.md');
   try {
     if (!fs.existsSync(mdPath)) return { success: false, message: '使用说明文件不存在' };
     const content = fs.readFileSync(mdPath, 'utf8');
@@ -836,32 +928,32 @@ ipcMain.handle('app:read-usage', () => {
   }
 });
 
-ipcMain.on('app:theme-changed', (event, theme) => {
+onSafe('app:theme-changed', (event, theme) => {
   writeLog('info', `主题切换: ${theme}`);
 });
 
 // 窗口控制
-ipcMain.on('window:minimize', () => mainWindow?.minimize());
-ipcMain.on('window:maximize', () => {
+onSafe('window:minimize', () => mainWindow?.minimize());
+onSafe('window:maximize', () => {
   if (mainWindow?.isMaximized()) {
     mainWindow.unmaximize();
   } else {
     mainWindow?.maximize();
   }
 });
-ipcMain.on('window:close', () => mainWindow?.close());
+onSafe('window:close', () => mainWindow?.close());
 
 // 启动黑闪修复：渲染层首帧握手。各窗口的 preload 都可能上报，只认主窗口的
 // 首个通知；回调在 createWindow 里赋值（showMainWindowWhenReady）。
 let mainWindowOnFirstPaint = null;
-ipcMain.on('app:first-paint', (event) => {
+onSafe('app:first-paint', (event) => {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   if (event.sender !== mainWindow.webContents) return;
   if (typeof mainWindowOnFirstPaint === 'function') mainWindowOnFirstPaint();
 });
 
 // 兼容旧渲染层调用：无论应用主题为何，标题栏覆盖层都保持固定系统色。
-ipcMain.handle('window:update-overlay', () => {
+handleSafe('window:update-overlay', () => {
   try {
     mainWindow?.setTitleBarOverlay(TITLEBAR_OVERLAY);
     return true;
@@ -871,11 +963,11 @@ ipcMain.handle('window:update-overlay', () => {
 });
 
 // 日志
-ipcMain.handle('log:write', (event, { level, message }) => {
+handleSafe('log:write', (event, { level, message }) => {
   return writeLog(level, message);
 });
 
-ipcMain.handle('log:read', async (event, { date } = {}) => {
+handleSafe('log:read', async (event, { date } = {}) => {
   try {
     const requestedDate = date || new Date().toISOString().slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(requestedDate)) return '读取日志失败: 日期格式无效';
@@ -902,7 +994,7 @@ ipcMain.handle('log:read', async (event, { date } = {}) => {
   }
 });
 
-ipcMain.handle('log:export', async () => {
+handleSafe('log:export', async () => {
   try {
     const result = await dialog.showSaveDialog(mainWindow, {
       title: '导出日志',
@@ -925,7 +1017,7 @@ ipcMain.handle('log:export', async () => {
 const CLEANUP_SCRIPT = require('./src/scripts-powershell/cleanup-scripts');
 
 // P1-9：向渲染层暴露清理规则唯一数据源（src/data/cleanup-rules.json）
-ipcMain.handle('cleanup:rules', () => {
+handleSafe('cleanup:rules', () => {
   try {
     return { success: true, data: CLEANUP_SCRIPT.rules() };
   } catch (e) {
@@ -934,13 +1026,16 @@ ipcMain.handle('cleanup:rules', () => {
   }
 });
 
-ipcMain.handle('cleanup:scan', async (event, { categories }) => {
-  const denied = rejectUntrustedRenderer(event);
-  if (denied) return denied;
+handleSafe('cleanup:scan', async (event, { categories }) => {
   if (!Array.isArray(categories) || categories.length < 1 || categories.length > 200 || categories.some(c => typeof c !== 'string' || c.length > 160)) {
     return { success: false, message: '清理分类参数无效', data: [] };
   }
-  lastCleanupSnapshot = new Map();
+  cleanupSnapshots.set(event.sender.id, new Map()); // 审查 2-3：先置空桶，扫描成功后填充
+  // 窗口销毁后回收桶，防 Map 泄漏
+  const snapSender = event.sender;
+  if (!snapSender.listenerCount('destroyed')) {
+    snapSender.once('destroyed', () => cleanupSnapshots.delete(snapSender.id));
+  }
   // 清理扫描读取已保存的路径绑定，让自动发现结果在后续扫描中持续生效。
   const script = CLEANUP_SCRIPT.scan(categories, loadPathsConfig());
   const scriptPath = writeTempScript(script);
@@ -977,7 +1072,7 @@ ipcMain.handle('cleanup:scan', async (event, { categories }) => {
       return { success: false, message: stderr || '扫描失败', data: [] };
     }
     writeLog('info', `扫描完成: ${data.length} 项`);
-    lastCleanupSnapshot = snapshotById(data);
+    cleanupSnapshots.set(event.sender.id, snapshotById(data)); // 审查 2-3：写入本窗口快照
     return { success: true, data };
   } catch (e) {
     writeLog('error', `扫描异常: ${e.message}`);
@@ -988,16 +1083,18 @@ ipcMain.handle('cleanup:scan', async (event, { categories }) => {
   }
 });
 
-ipcMain.handle('cleanup:execute', async (event, { items, force, toRecycle, autoRebuild }) => {
-  const denied = rejectUntrustedRenderer(event);
-  if (denied) return denied;
-  const safeItems = validateSnapshotItems(items, lastCleanupSnapshot);
+handleSafe('cleanup:execute', async (event, { items, force, toRecycle, autoRebuild }) => {
+  const safeItems = validateSnapshotItems(items, cleanupSnapshots.get(event.sender.id) || new Map()); // 审查 2-3：取本窗口快照
   if (!safeItems) return { success: false, message: '清理项不是最近一次扫描结果，已拒绝执行' };
   const script = CLEANUP_SCRIPT.execute(safeItems, !!force, !!toRecycle);
   const scriptPath = writeTempScript(script);
   const sender = event.sender;
   // P3 回收站模式：PS 输出 @@RECYCLE@@ 目标行，实际移入回收站由主进程 shell.trashItem 完成
   const recycleEntries = [];
+  // 审查 4-4：回收站失败项留存，供渲染层红色确认后永久删除重试。
+  // 审查v4 附带修复：原 const 声明在下方 if 块内，而 if 块外（trashFailures 回写行）
+  // 也引用了它——任何一次 cleanup:execute 走到该行都会 ReferenceError，清理必失败
+  const trashFailures = [];
   const cleanLines = [];
   let buf = '';
   const onStdout = (chunk) => {
@@ -1018,6 +1115,7 @@ ipcMain.handle('cleanup:execute', async (event, { items, force, toRecycle, autoR
   };
   try {
     writeLog('info', `开始清理: ${safeItems.length} 项, force=${!!force}, toRecycle=${!!toRecycle}, autoRebuild=${!!autoRebuild}`);
+    flushLogSync(); // 审查v4-L3：危险操作执行前强制刷盘，清理过程崩溃不丢诊断日志
     const { stdout, stderr, code } = await runPowerShellFile(scriptPath, { diagOp: 'cleanup.execute', timeout: 600000, onStdout });
     if (code !== 0) {
       writeLog('error', `清理失败: ${stderr}`);
@@ -1034,6 +1132,14 @@ ipcMain.handle('cleanup:execute', async (event, { items, force, toRecycle, autoR
     if (toRecycle && recycleEntries.length > 0) {
       const perItem = new Map();
       for (const entry of recycleEntries) {
+        // 审查 1-4：entry.path 来自脚本 stdout 解析，信任级别低于快照校验项，与 finder:delete 对齐拒绝受保护路径
+        if (isProtectedDeletePath(entry.path)) {
+          const st0 = perItem.get(entry.id) || { freed: 0, ok: 0, fail: 0 };
+          st0.fail++;
+          perItem.set(entry.id, st0);
+          writeLog('warn', `拒绝移入回收站（受保护路径）: ${entry.path}`);
+          continue;
+        }
         const st = perItem.get(entry.id) || { freed: 0, ok: 0, fail: 0 };
         try {
           await shell.trashItem(entry.path);
@@ -1045,10 +1151,12 @@ ipcMain.handle('cleanup:execute', async (event, { items, force, toRecycle, autoR
           }
         } catch (e) {
           st.fail++;
+          trashFailures.push({ id: entry.id, path: entry.path, size: Number(entry.size) || 0, isDir: !!entry.isDir });
           writeLog('warn', `移入回收站失败: ${entry.path} -> ${e.message}`);
         }
         perItem.set(entry.id, st);
       }
+      if (trashFailures.length) lastTrashFailures = trashFailures;
       for (const d of data.details || []) {
         if (d.status !== 'recycle') continue;
         const st = perItem.get(d.id);
@@ -1064,6 +1172,7 @@ ipcMain.handle('cleanup:execute', async (event, { items, force, toRecycle, autoR
       data.failed = (data.details || []).filter(d => d.status === 'error' || d.status === 'partial').length;
       data.skipped = (data.details || []).filter(d => d.status === 'skip').length;
     }
+    data.trashFailures = trashFailures || []; // 审查 4-4：渲染层据此弹「改为永久删除」引导
     try {
       writeLog('info', `清理完成: 释放 ${data.totalFreed} 字节`);
       return { success: Number(data.failed || 0) === 0, data };
@@ -1078,10 +1187,38 @@ ipcMain.handle('cleanup:execute', async (event, { items, force, toRecycle, autoR
   }
 });
 
+// 审查 4-4：回收站失败项的永久删除重试——只处理最近一次 cleanup:execute 留存的失败项
+//（主进程白名单，渲染层不能指定任意路径），渲染层需先弹红色确认（modal.js confirmDanger）再调用。
+let lastTrashFailures = [];
+handleSafe('cleanup:retry-failed-delete', async (event) => {
+  const targets = lastTrashFailures;
+  lastTrashFailures = []; // 取走即清空：重试只处理最近一批，且同一批不会被二次重删
+  if (!targets.length) return { success: false, message: '没有待重试的失败项' };
+  writeLog('warn', `开始永久删除回收站失败项: ${targets.length} 项`);
+  flushLogSync(); // 审查v4-L3：危险操作执行前强制刷盘
+  let freed = 0, ok = 0, failed = 0;
+  const details = [];
+  for (const t of targets) {
+    try {
+      if (!fs.existsSync(t.path)) { details.push({ path: t.path, status: 'skip', freed: 0, message: '文件不存在' }); continue; }
+      if (isProtectedDeletePath(t.path)) { failed++; details.push({ path: t.path, status: 'error', freed: 0, message: '受保护路径，已拒绝' }); continue; }
+      const stat = fs.lstatSync(t.path);
+      const size = stat.size;
+      fs.rmSync(t.path, { recursive: !!t.isDir, force: true });
+      freed += size;
+      ok++;
+      details.push({ path: t.path, status: 'ok', freed: size });
+      writeLog('warn', `回收站失败项经用户确认后永久删除: ${t.path}`);
+    } catch (e) {
+      failed++;
+      details.push({ path: t.path, status: 'error', freed: 0, message: e.message });
+    }
+  }
+  return { success: failed === 0, data: { totalFreed: freed, ok, failed, details } };
+});
+
 // P3 条目明细：枚举单个条目将删除的文件清单（只读，供「明细」弹窗展示）
-ipcMain.handle('cleanup:item-detail', async (event, { id, path: itemPath }) => {
-  const denied = rejectUntrustedRenderer(event);
-  if (denied) return denied;
+handleSafe('cleanup:item-detail', async (event, { id, path: itemPath }) => {
   if (typeof id !== 'string' || id.length < 1 || id.length > 160) return { success: false, message: '参数无效' };
   let safePath = '';
   if (typeof itemPath === 'string' && itemPath.length > 0 && itemPath.length <= 600) safePath = itemPath;
@@ -1136,7 +1273,27 @@ const RULES_UPDATE_URLS = [
   'https://gh-proxy.com/https://raw.githubusercontent.com/xiaoxu1642/TuneForge/main/src/data/cleanup-rules.json'
 ];
 const RULES_MIN_SIZE = 4096;          // 内容下限（当前规则约 20KB，低于 4KB 视为异常）
+const RULES_MAX_SIZE = 2 * 1024 * 1024; // 内容上限（审查 1-1）：先拦超大响应再解析，防 OOM
 const RULES_DOWNLOAD_TIMEOUT = 15000; // 单源超时（毫秒）
+
+// 审查 1-1：流式读取响应体并限量，防止超大响应整体进内存
+async function readBodyLimited(resp, maxBytes) {
+  const reader = resp.body && typeof resp.body.getReader === 'function' ? resp.body.getReader() : null;
+  if (!reader) return resp.text(); // 无流式能力时退回（Content-Length 已前置拦截）
+  const chunks = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      try { await reader.cancel(); } catch (_) {}
+      throw new Error('响应体超过尺寸上限');
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
 
 // 读取可选的更新源覆盖配置（数据目录优先，支持自定义 URL 列表与请求头）
 function loadRulesUpdateOverride() {
@@ -1173,9 +1330,7 @@ function gitFetchRulesFile() {
   });
 }
 
-ipcMain.handle('cleanup:update-rules', async (event) => {
-  const denied = rejectUntrustedRenderer(event);
-  if (denied) return denied;
+handleSafe('cleanup:update-rules', async (event) => {
   const currentVersion = Number(CLEANUP_SCRIPT.rules()?.rulesVersion) || 0;
   const override = loadRulesUpdateOverride();
   const sources = [
@@ -1185,9 +1340,14 @@ ipcMain.handle('cleanup:update-rules', async (event) => {
   const seen = new Set();
   const attempts = [];
   let lastError = '';
-  // 内容校验链：尺寸 → JSON 结构 → 条目形状 → 版本防降级
+  // 内容校验链（审查 1-1）：尺寸 → 验签 → JSON 结构 → 条目形状 → 版本防降级。
+  // 验签用内置公钥（rules-signature.js），任何源（含 gh-proxy / update-source.json 自定义源）
+  // 都只是传输通道，内容必须自证可信——签名未通过直接拒绝，不再依赖「源可信」假设。
   const validate = (text) => {
     if (!text || text.length < RULES_MIN_SIZE) return { error: '内容过小，疑似异常响应' };
+    if (text.length > RULES_MAX_SIZE) return { error: '内容过大，疑似异常响应' };
+    const sig = RULES_SIG.verifyRulesSignature(text);
+    if (!sig.ok) return { error: sig.reason };
     let parsed;
     try { parsed = JSON.parse(text); } catch (e) { return { error: 'JSON 解析失败' }; }
     if (!parsed || !Array.isArray(parsed.groups) || parsed.groups.length < 1) return { error: '缺少 groups 结构' };
@@ -1223,7 +1383,9 @@ ipcMain.handle('cleanup:update-rules', async (event) => {
         clearTimeout(timer);
       }
       if (!resp.ok) { lastError = `HTTP ${resp.status}`; continue; }
-      const text = await resp.text();
+      const declared = Number(resp.headers.get('content-length') || 0);
+      if (declared > RULES_MAX_SIZE) { lastError = '响应体超过尺寸上限'; continue; }
+      const text = await readBodyLimited(resp, RULES_MAX_SIZE);
       const checked = validate(text);
       if (checked.error) { lastError = checked.error; continue; }
       const done = writeValidated(checked);
@@ -1263,12 +1425,12 @@ function expandEnvPath(p) {
 }
 
 // 重复文件查找内置目录：缺哪个跳哪个，全部缺失时报错（前端 toast）
+// 审查 7-6：只保留标准用户目录，不内置开发者本机的个人路径
 const FINDER_DEFAULT_DUP_DIRS = [
   '%USERPROFILE%\\Downloads',
   '%USERPROFILE%\\Desktop',
   '%USERPROFILE%\\Documents',
-  '%USERPROFILE%\\Pictures',
-  'C:\\yule'
+  '%USERPROFILE%\\Pictures'
 ];
 
 function resolveExistingDirs(plist) {
@@ -1303,6 +1465,10 @@ function runRustScanner(scanType, args, opts = {}) {
     if (!exe) return reject(new Error('未找到原生扫描器 finder.exe'));
     const child = spawn(exe, [scanType, ...args], { windowsHide: true });
     registerBackendChild(child, exe, [scanType, ...args]);
+    // 审查 3-2：对齐 runPwshChild 的超时兜底——finder.exe 遇到无响应网络盘/死锁时
+    // 不再出现 Promise 永不 settle、IPC 永久挂起（B4 同款取向）
+    let settled = false, timer = null;
+    const finish = (fn, v) => { if (settled) return; settled = true; if (timer) clearTimeout(timer); fn(v); };
     let stderr = '';
     let buf = '';
     const items = [];
@@ -1323,19 +1489,23 @@ function runRustScanner(scanType, args, opts = {}) {
       }
     });
     child.stderr.on('data', d => { stderr += d.toString('utf8'); });
-    child.on('error', err => reject(err));
+    child.on('error', err => finish(reject, err));
     child.on('close', code => {
-      if (code !== 0) return reject(new Error(stderr || `原生扫描器退出码 ${code}`));
-      resolve(items);
+      if (code !== 0) return finish(reject, new Error(stderr || `原生扫描器退出码 ${code}`));
+      finish(resolve, items);
     });
+    const ms = Number(opts.timeoutMs) || 300000; // 默认 5 分钟：超大目录扫描的宽松上限
+    timer = setTimeout(() => {
+      try { child.kill(); } catch (e) {}
+      writeLog('warn', `原生扫描器超时已终止: ${scanType}`);
+      finish(reject, new Error(`扫描超时（超过 ${Math.round(ms / 1000)} 秒），请缩小扫描范围后重试`));
+    }, ms);
   });
 }
 
 const FINDER_SCAN_TYPES = ['duplicates', 'bigfiles', 'empty', 'appdata'];
 
-ipcMain.handle('finder:scan', async (event, { scanType, paths, minSize, count, minSizeMb }) => {
-  const denied = rejectUntrustedRenderer(event);
-  if (denied) return denied;
+handleSafe('finder:scan', async (event, { scanType, paths, minSize, count, minSizeMb }) => {
   if (!FINDER_SCAN_TYPES.includes(scanType)) return { success: false, message: '未知扫描类型' };
   const sender = event.sender;
   const args = [];
@@ -1402,13 +1572,25 @@ ipcMain.handle('finder:scan', async (event, { scanType, paths, minSize, count, m
 });
 
 // 保护路径：拒绝删除系统关键目录与磁盘根
+// 审查v4-L1：根路径盘符跟随 SystemDrive 动态生成（原硬编码 C:，系统目录装于其他盘时不设防）
+const PROTECTED_DELETE_ROOTS = (() => {
+  const drive = (process.env.SystemDrive || 'C:').toLowerCase().replace(/[\\]+$/, '');
+  return [
+    `${drive}\\windows`,
+    `${drive}\\program files`,
+    `${drive}\\program files (x86)`,
+    `${drive}\\programdata`,
+    `${drive}\\$recycle.bin`,
+    `${drive}\\system volume information`
+  ];
+})();
+
 function isProtectedDeletePath(p) {
   const norm = path.normalize(String(p || '')).replace(/[\\/]+$/, '');
   if (!norm) return true;
   if (/^[A-Za-z]:$/.test(norm)) return true;
   const lower = norm.toLowerCase();
-  const roots = ['c:\\windows', 'c:\\program files', 'c:\\program files (x86)', 'c:\\programdata', 'c:\\$recycle.bin', 'c:\\system volume information'];
-  for (const r of roots) {
+  for (const r of PROTECTED_DELETE_ROOTS) {
     if (lower === r || lower.startsWith(r + '\\')) return true;
   }
   return false;
@@ -1419,17 +1601,36 @@ function isProtectedDeletePath(p) {
 const FILECLEAN_BACKUP_DIR = path.join(APP_DATA_DIR, 'fileclean-backup');
 const FILECLEAN_MANIFEST_KEEP = 50; // 只保留最近 50 个批次清单，避免目录无限膨胀
 
+// 统一删除出口（审查 1-2）：删除类操作一律先尝试移入回收站（可逆），仅当明确允许永久删除
+// 且回收站失败（被禁用/已满/目标被锁）时才降级 unlinkSync。调用方按返回的 recycled 回写清单标记。
+async function trashOrUnlink(target, { allowPermanent = true } = {}) {
+  try {
+    await shell.trashItem(target);
+    return { ok: true, recycled: true };
+  } catch (e) {
+    if (!allowPermanent) return { ok: false, recycled: false, message: e.message };
+    try {
+      fs.unlinkSync(target);
+      return { ok: true, recycled: false };
+    } catch (e2) {
+      return { ok: false, recycled: false, message: e2.message };
+    }
+  }
+}
+
 function saveDeleteManifest(batchId, entries) {
   try {
     if (!entries.length) return '';
     fs.mkdirSync(FILECLEAN_BACKUP_DIR, { recursive: true });
     const manifestPath = path.join(FILECLEAN_BACKUP_DIR, `deleted-${batchId}.json`);
-    fs.writeFileSync(manifestPath, JSON.stringify({
+    // 审查v4-L2：清单是误删追溯的唯一凭据，与其他 JSON 落盘统一走原子写（fsync+rename），
+    // 避免崩溃瞬间留下半行 JSON 使整批清单不可读
+    SECURITY.atomicWriteJson(manifestPath, {
       batchId,
       deletedAt: new Date().toISOString(),
       count: entries.length,
       items: entries
-    }, null, 2), 'utf8');
+    });
     const files = fs.readdirSync(FILECLEAN_BACKUP_DIR)
       .filter(f => f.startsWith('deleted-') && f.endsWith('.json'))
       .sort();
@@ -1444,9 +1645,7 @@ function saveDeleteManifest(batchId, entries) {
   }
 }
 
-ipcMain.handle('finder:delete', async (event, { items }) => {
-  const denied = rejectUntrustedRenderer(event);
-  if (denied) return denied;
+handleSafe('finder:delete', async (event, { items }) => {
   const requested = (Array.isArray(items) ? items : []).filter(it => it && typeof it.path === 'string').slice(0, 500);
   const safe = requested.map(it => {
     const known = lastFinderSnapshot.get(path.resolve(it.path).toLowerCase());
@@ -1464,6 +1663,7 @@ ipcMain.handle('finder:delete', async (event, { items }) => {
   }
   try {
     writeLog('info', `finder 删除(原生): ${validSafe.length} 项`);
+    flushLogSync(); // 审查v4-L3：危险操作执行前强制刷盘
     const results = await runRustScanner('delete', args);
     const details = (Array.isArray(results) ? results : []).filter(r => r && r.type === 'delresult');
     let totalFreed = 0, success = 0, failed = 0, recycled = 0;
@@ -1497,9 +1697,7 @@ ipcMain.handle('finder:delete', async (event, { items }) => {
 });
 
 // 读取删除清单（最近批次在前，最多返回 200 条）
-ipcMain.handle('finder:delete-manifest', (event) => {
-  const denied = rejectUntrustedRenderer(event);
-  if (denied) return denied;
+handleSafe('finder:delete-manifest', (event) => {
   try {
     if (!fs.existsSync(FILECLEAN_BACKUP_DIR)) {
       return { success: true, data: { items: [], dir: FILECLEAN_BACKUP_DIR } };
@@ -1533,9 +1731,7 @@ ipcMain.handle('finder:delete-manifest', (event) => {
 });
 
 // 打开删除清单所在目录（已进回收站的文件可在系统回收站中还原）
-ipcMain.handle('finder:open-backup-dir', async (event) => {
-  const denied = rejectUntrustedRenderer(event);
-  if (denied) return denied;
+handleSafe('finder:open-backup-dir', async (event) => {
   try {
     fs.mkdirSync(FILECLEAN_BACKUP_DIR, { recursive: true });
     const err = await shell.openPath(FILECLEAN_BACKUP_DIR);
@@ -1548,9 +1744,7 @@ ipcMain.handle('finder:open-backup-dir', async (event) => {
 // ==================== 右键菜单管理 IPC ====================
 const CONTEXTMENU_SCRIPT = require('./src/scripts-powershell/contextmenu-scripts');
 
-ipcMain.handle('contextmenu:scan', async (event) => {
-  const denied = rejectUntrustedRenderer(event);
-  if (denied) return denied;
+handleSafe('contextmenu:scan', async (event) => {
   lastContextmenuSnapshot = new Map();
   const script = CONTEXTMENU_SCRIPT.scan();
   const scriptPath = writeTempScript(script);
@@ -1580,9 +1774,7 @@ ipcMain.handle('contextmenu:scan', async (event) => {
   }
 });
 
-ipcMain.handle('contextmenu:backup', async (event, { items, clsids } = {}) => {
-  const denied = rejectUntrustedRenderer(event);
-  if (denied) return denied;
+handleSafe('contextmenu:backup', async (event, { items, clsids } = {}) => {
   // 兼容旧版调用方：新版传完整 items，旧版若只传 clsids 则无法导出路径，直接返回明确错误
   const backupItems = Array.isArray(items) ? items : (Array.isArray(clsids) ? clsids : []);
   const safeBackupItems = validateSnapshotItems(backupItems, lastContextmenuSnapshot);
@@ -1611,9 +1803,7 @@ ipcMain.handle('contextmenu:backup', async (event, { items, clsids } = {}) => {
   }
 });
 
-ipcMain.handle('contextmenu:remove', async (event, { items, clsids } = {}) => {
-  const denied = rejectUntrustedRenderer(event);
-  if (denied) return denied;
+handleSafe('contextmenu:remove', async (event, { items, clsids } = {}) => {
   const removeItems = Array.isArray(items) ? items : (Array.isArray(clsids) ? clsids : []);
   const safeRemoveItems = validateSnapshotItems(removeItems, lastContextmenuSnapshot);
   if (!safeRemoveItems) return { success: false, message: '删除项不是最近一次扫描结果，已拒绝执行' };
@@ -1638,9 +1828,7 @@ ipcMain.handle('contextmenu:remove', async (event, { items, clsids } = {}) => {
 });
 
 // 启停切换右键菜单项（勾选=启用，取消=禁用；禁用为可逆操作，不做备份）
-ipcMain.handle('contextmenu:toggle', async (event, { items } = {}) => {
-  const denied = rejectUntrustedRenderer(event);
-  if (denied) return denied;
+handleSafe('contextmenu:toggle', async (event, { items } = {}) => {
   const safeItems = validateSnapshotItems(items, lastContextmenuSnapshot);
   if (!safeItems) return { success: false, message: '切换项不是最近一次扫描结果，已拒绝执行' };
   const toggleItems = safeItems
@@ -1670,9 +1858,7 @@ ipcMain.handle('contextmenu:toggle', async (event, { items } = {}) => {
   }
 });
 
-ipcMain.handle('contextmenu:restore', async (event) => {
-  const denied = rejectUntrustedRenderer(event);
-  if (denied) return denied;
+handleSafe('contextmenu:restore', async (event) => {
   const script = CONTEXTMENU_SCRIPT.restore();
   const scriptPath = writeTempScript(script);
   try {
@@ -1693,7 +1879,7 @@ ipcMain.handle('contextmenu:restore', async (event) => {
 });
 
 // 提取右键菜单项程序图标（CLSID → InprocServer32 DLL → PNG base64）
-ipcMain.handle('contextmenu:icons', async (event, { items } = {}) => {
+handleSafe('contextmenu:icons', async (event, { items } = {}) => {
   const iconItems = (Array.isArray(items) ? items : [])
     .filter(it => it && it.clsid && String(it.clsid).trim().startsWith('{'))
     .map(it => ({ clsid: String(it.clsid).trim() }));
@@ -1716,7 +1902,7 @@ ipcMain.handle('contextmenu:icons', async (event, { items } = {}) => {
 });
 
 // 在注册表编辑器中定位到指定注册表项（LastKey 方案；启动失败自动 UAC 提权）
-ipcMain.handle('contextmenu:open-in-regedit', async (event, { regPath } = {}) => {
+handleSafe('contextmenu:open-in-regedit', async (event, { regPath } = {}) => {
   let p = String(regPath || '').trim().replace(/\\+$/, '');
   if (!p) return { success: false, message: '无效的注册表路径' };
   // 根键别名 → 完整名称（regedit LastKey 需要完整根键名）
@@ -1779,9 +1965,7 @@ if (\$elevated) { Write-Output 'OK-ELEVATED' } else { Write-Output 'OK' }
 // 每个选项循序渐进执行，并把 "@@PROGRESS:n@@" 以流式进度推送到渲染层
 const OPTIMIZER = require('./src/scripts-powershell/optimizer-scripts');
 
-ipcMain.handle('optimizer:run', async (event, { optionId, params = {} } = {}) => {
-  const denied = rejectUntrustedRenderer(event);
-  if (denied) return denied;
+handleSafe('optimizer:run', async (event, { optionId, params = {} } = {}) => {
   const opt = OPTIMIZER.OPTIONS.find(o => o.id === optionId);
   if (!opt) return { success: false, message: '未知的优化选项' };
 
@@ -1835,7 +2019,7 @@ ipcMain.handle('optimizer:run', async (event, { optionId, params = {} } = {}) =>
   }
 });
 
-ipcMain.handle('optimizer:list', async () => {
+handleSafe('optimizer:list', async () => {
   // 供渲染层按需要拉取目录（通常由内置 JS 目录直接渲染，这里保底）
   return { success: true, data: OPTIMIZER.OPTIONS };
 });
@@ -1861,7 +2045,7 @@ const REG_ROOT_MAP = {
   HKEY_CURRENT_CONFIG: 'HKCC:'
 };
 
-ipcMain.handle('optimizer:check-optimized', async (event, { ids } = {}) => {
+handleSafe('optimizer:check-optimized', async (event, { ids } = {}) => {
   try {
     const list = Array.isArray(ids) ? ids : (ids ? [ids] : []);
     // 收集每个 id 的全部期望状态（reg 键值 + 服务禁用状态）
@@ -1960,7 +2144,7 @@ ipcMain.handle('optimizer:check-optimized', async (event, { ids } = {}) => {
 
 // 读取当前 SVCHost 拆分阈值（SvcHostSplitThresholdInKB）并映射为档位
 // 返回 { success, gb, kb }：gb 为命中 MEMORY_KB 的档位（'default' 或数字），null=注册表无值（系统默认）
-ipcMain.handle('optimizer:svc-mem-current', async () => {
+handleSafe('optimizer:svc-mem-current', async () => {
   const L = [
     '$ErrorActionPreference = "SilentlyContinue"',
     '$v = (Get-ItemProperty -Path "HKLM:\\SYSTEM\\ControlSet001\\Control" -Name SvcHostSplitThresholdInKB -ErrorAction SilentlyContinue).SvcHostSplitThresholdInKB',
@@ -1995,7 +2179,10 @@ function loadOptBackups() {
   try {
     const m = JSON.parse(fs.readFileSync(OPT_BACKUP_FILE, 'utf8'));
     return (m && typeof m === 'object') ? m : {};
-  } catch (e) { return {}; }
+  } catch (e) {
+    quarantineFile(OPT_BACKUP_FILE, e); // 审查 4-1：与 loadAppearance 一致，损坏先隔离再降级
+    return {};
+  }
 }
 
 function saveOptBackups(map) {
@@ -2047,9 +2234,7 @@ const OPT_REGEXE_MAP = {
 };
 
 // 执行前备份：读取目标键值当前状态并存档（optionId → values）
-ipcMain.handle('optimizer:backup-reg', async (event, { optionId, steps } = {}) => {
-  const denied = rejectUntrustedRenderer(event);
-  if (denied) return denied;
+handleSafe('optimizer:backup-reg', async (event, { optionId, steps } = {}) => {
   try {
     if (!optionId || !OPTIMIZER.OPTIONS.some(option => option.id === optionId)) return { success: false, message: '未知的优化选项' };
     // dynamic 项（svc_mem_gb）的注册表目标由档位脚本运行时生成，这里直接声明
@@ -2123,9 +2308,7 @@ ipcMain.handle('optimizer:backup-reg', async (event, { optionId, steps } = {}) =
 });
 
 // 按备份还原：将执行前记录的键值回写（不存在的 → 删除）；成功后清除该备份
-ipcMain.handle('optimizer:restore-reg', async (event, { optionId } = {}) => {
-  const denied = rejectUntrustedRenderer(event);
-  if (denied) return denied;
+handleSafe('optimizer:restore-reg', async (event, { optionId } = {}) => {
   try {
     if (!optionId || !OPTIMIZER.OPTIONS.some(option => option.id === optionId)) return { success: false, message: '未知的优化选项' };
     const map = loadOptBackups();
@@ -2194,7 +2377,7 @@ function parseDmtfDateTime(raw) {
 // 查询最近一次系统还原点（返回最近创建时间 ISO，无还原点返回 exists=false）。
 // PS 脚本直接输出原始 DMTF 串由 Node 侧解析；查询失败通过 RPERROR| 显式上报，
 // 不与「确无还原点」混为一谈——查询失败应放行并记日志，而非恒误报骚扰用户。
-ipcMain.handle('optimizer:check-restore', async () => {
+handleSafe('optimizer:check-restore', async () => {
   const script = [
     '$ErrorActionPreference = "Stop"',
     'try {',
@@ -2233,9 +2416,7 @@ ipcMain.handle('optimizer:check-restore', async () => {
 });
 
 // 创建系统还原点（复用 tf_restore_point 的脚本）
-ipcMain.handle('optimizer:create-restore', async (event) => {
-  const denied = rejectUntrustedRenderer(event);
-  if (denied) return denied;
+handleSafe('optimizer:create-restore', async (event) => {
   const opt = OPTIMIZER.OPTIONS.find(o => o.id === 'tf_restore_point');
   const steps = opt && opt.steps ? opt.steps : [];
   if (!steps.length) return { success: false, message: '缺少还原点脚本' };
@@ -2254,7 +2435,7 @@ ipcMain.handle('optimizer:create-restore', async (event) => {
 // 列出所有系统还原点 + 各卷系统保护状态（供"系统还原点管理"页面）。
 // created 输出原始 DMTF 串由 Node 侧 parseDmtfDateTime 解析（PS7 不加载
 // System.Management 程序集，见 optimizer:check-restore 处说明）。
-ipcMain.handle('optimizer:list-restore', async () => {
+handleSafe('optimizer:list-restore', async () => {
   const script = [
     '$ErrorActionPreference = "SilentlyContinue"',
     '$out = @{}',
@@ -2307,9 +2488,7 @@ ipcMain.handle('optimizer:list-restore', async () => {
 const STARTUP = require('./src/scripts-powershell/startup-scripts');
 
 // 扫描启动项（注册表 Run/RunOnce、启动文件夹、登录/开机计划任务）
-ipcMain.handle('startup:scan', async (event) => {
-  const denied = rejectUntrustedRenderer(event);
-  if (denied) return denied;
+handleSafe('startup:scan', async (event) => {
   lastStartupSnapshot = new Map();
   const scriptPath = writeTempScript(STARTUP.scan());
   try {
@@ -2332,9 +2511,7 @@ ipcMain.handle('startup:scan', async (event) => {
 });
 
 // 启停启动项（enable=true 启用 / false 禁用；注册表与文件夹项可逆，计划任务 Disable/Enable）
-ipcMain.handle('startup:toggle', async (event, { items = [], enable = true } = {}) => {
-  const denied = rejectUntrustedRenderer(event);
-  if (denied) return denied;
+handleSafe('startup:toggle', async (event, { items = [], enable = true } = {}) => {
   const safeItems = validateSnapshotItems(items, lastStartupSnapshot);
   if (!safeItems) return { success: false, message: '启动项不是最近一次扫描结果，已拒绝执行' };
   if (!Array.isArray(items) || !items.length) return { success: false, message: '缺少启动项' };
@@ -2355,9 +2532,7 @@ ipcMain.handle('startup:toggle', async (event, { items = [], enable = true } = {
 });
 
 // 删除启动项（先备份到 %APPDATA%\Trim\startup-backup\deleted 再删除）
-ipcMain.handle('startup:delete', async (event, { items = [] } = {}) => {
-  const denied = rejectUntrustedRenderer(event);
-  if (denied) return denied;
+handleSafe('startup:delete', async (event, { items = [] } = {}) => {
   const safeItems = validateSnapshotItems(items, lastStartupSnapshot);
   if (!safeItems) return { success: false, message: '启动项不是最近一次扫描结果，已拒绝执行' };
   if (!Array.isArray(items) || !items.length) return { success: false, message: '缺少启动项' };
@@ -2378,7 +2553,7 @@ ipcMain.handle('startup:delete', async (event, { items = [] } = {}) => {
 });
 
 // 打开启动项所在位置（shell.showItemInFolder）
-ipcMain.handle('startup:openlocation', async (event, { path: targetPath = '' } = {}) => {
+handleSafe('startup:openlocation', async (event, { path: targetPath = '' } = {}) => {
   if (!targetPath) return { success: false, message: '缺少路径' };
   try {
     shell.showItemInFolder(targetPath);
@@ -2390,10 +2565,8 @@ ipcMain.handle('startup:openlocation', async (event, { path: targetPath = '' } =
 });
 
 // 添加启动项（文件选择对话框 → 写入当前用户 Run 键）
-ipcMain.handle('startup:add', async (event, _payload = {}) => {
+handleSafe('startup:add', async (event, _payload = {}) => {
   // B12：与同族 startup:toggle/delete 对齐，补齐渲染进程来源校验（高风险持久化写操作）
-  const denied = rejectUntrustedRenderer(event);
-  if (denied) return denied;
   try {
     const win = BrowserWindow.fromWebContents(event.sender);
     const result = await dialog.showOpenDialog(win, {
@@ -2425,17 +2598,42 @@ ipcMain.handle('startup:add', async (event, _payload = {}) => {
 // ==================== 外观设置（背景图片导入 / 删除 / 列表 / 窗口材质） ====================
 // appearance.json：窗口材质等外观配置持久化（沿用 APP_DATA_DIR，保证与既有数据同位置）
 const APPEARANCE_FILE = path.join(APP_DATA_DIR, 'appearance.json');
+// 审查 4-1：配置文件损坏时先隔离保留现场（重命名 .corrupt-<ts>），再降级返回空对象——
+// 防止「下一次保存直接覆盖损坏文件」，事后可分析断电/磁盘错误根因
+function quarantineFile(file, err) {
+  try {
+    if (!fs.existsSync(file)) return;
+    const bak = `${file}.corrupt-${Date.now()}`;
+    fs.renameSync(file, bak);
+    writeLog('error', `配置文件损坏已隔离: ${path.basename(file)} -> ${path.basename(bak)} (${err.message})`);
+  } catch (_) {}
+}
 function loadAppearance() {
   try {
     const v = JSON.parse(fs.readFileSync(APPEARANCE_FILE, 'utf8'));
     return v && typeof v === 'object' ? v : {};
-  } catch (e) { return {}; }
+  } catch (e) {
+    quarantineFile(APPEARANCE_FILE, e);
+    return {};
+  }
 }
 function saveAppearance(v) {
   try { SECURITY.atomicWriteJson(APPEARANCE_FILE, v); } catch (e) { writeLog('error', `保存外观配置失败: ${e.message}`); }
 }
 
-ipcMain.handle('appearance:get-material', async () => {
+// 批次：雾化度语义反转 —— appearance.json 内旧 bgOpacity 存的是「图片不透明度」（100=纯图），
+// 一次性换算为「雾化强度」语义（0=纯图，100=全雾），与渲染层 pathbinding 的 localStorage
+// 迁移同款换算，保持两侧镜像一致；bgOpacityFog 标记防重复迁移
+(function migrateBgOpacityFog() {
+  const ap = loadAppearance();
+  if (ap.bgOpacity == null || ap.bgOpacityFog === true) return;
+  ap.bgOpacity = 100 - ap.bgOpacity;
+  ap.bgOpacityFog = true;
+  saveAppearance(ap);
+  writeLog('info', 'appearance.json 雾化度语义已迁移（旧图片不透明度 → 雾化强度）');
+})();
+
+handleSafe('appearance:get-material', async () => {
   const ap = loadAppearance();
   return { material: ap.material || 'mica', materialEnabled: ap.materialEnabled !== false };
 });
@@ -2467,7 +2665,7 @@ function broadcastMaterialChanged(effective) {
   });
 }
 
-ipcMain.handle('appearance:set-material', async (event, { material } = {}) => {
+handleSafe('appearance:set-material', async (event, { material } = {}) => {
   const allowed = ['mica', 'mica-alt', 'acrylic', 'thin-acrylic', 'none'];
   if (!allowed.includes(material)) return { success: false, message: '未知的材质' };
   try {
@@ -2488,7 +2686,7 @@ ipcMain.handle('appearance:set-material', async (event, { material } = {}) => {
 });
 
 // 材质总开关（窗口界面升级3）：关闭 = 生效材质置 none（各窗口即时不透明），所选材质保留记忆
-ipcMain.handle('appearance:set-material-enabled', async (event, { enabled } = {}) => {
+handleSafe('appearance:set-material-enabled', async (event, { enabled } = {}) => {
   try {
     const on = !!enabled;
     const ap = loadAppearance();
@@ -2506,7 +2704,7 @@ ipcMain.handle('appearance:set-material-enabled', async (event, { enabled } = {}
 });
 
 // 导入的背景图统一复制到 userData/backgrounds 持久保存；删除按文件名移除。
-ipcMain.handle('appearance:bg-import', async () => {
+handleSafe('appearance:bg-import', async () => {
   try {
     const result = await dialog.showOpenDialog(mainWindow, {
       title: '选择背景图片',
@@ -2530,9 +2728,7 @@ ipcMain.handle('appearance:bg-import', async () => {
   }
 });
 
-ipcMain.handle('appearance:bg-delete', async (event, { file } = {}) => {
-  const denied = rejectUntrustedRenderer(event);
-  if (denied) return denied;
+handleSafe('appearance:bg-delete', async (event, { file } = {}) => {
   try {
     const bgDir = path.join(app.getPath('userData'), 'backgrounds');
     const target = path.resolve(String(file || ''));
@@ -2544,7 +2740,7 @@ ipcMain.handle('appearance:bg-delete', async (event, { file } = {}) => {
   }
 });
 
-ipcMain.handle('appearance:bg-list', async () => {
+handleSafe('appearance:bg-list', async () => {
   try {
     const bgDir = path.join(app.getPath('userData'), 'backgrounds');
     if (!fs.existsSync(bgDir)) return { success: true, data: [] };
@@ -2558,7 +2754,7 @@ ipcMain.handle('appearance:bg-list', async () => {
   }
 });
 
-ipcMain.handle('appearance:bg-open-dir', async () => {
+handleSafe('appearance:bg-open-dir', async () => {
   const bgDir = path.join(app.getPath('userData'), 'backgrounds');
   try {
     if (!fs.existsSync(bgDir)) fs.mkdirSync(bgDir, { recursive: true });
@@ -2909,18 +3105,19 @@ function incrementBaiduDailyCount() {
 // 全部应用内弹窗（路径绑定 / 大模型管理 / 字体选择 / 模型选择 / AI简介等）
 // 打开与关闭都经此 IPC 记录日志；弹窗 DOM 由渲染进程统一服务 modal.js 构建，
 // 保证所有弹窗视觉风格一致（与「设置 → 安装路径绑定 → 去设置」弹窗相同）。
-ipcMain.handle('modal:open', (event, info = {}) => {
+handleSafe('modal:open', (event, info = {}) => {
   const id = String(info.id || info.title || 'modal').slice(0, 40);
   writeLog('info', '打开弹窗: ' + id);
   return { success: true };
 });
-ipcMain.handle('modal:close', (event, info = {}) => {
+handleSafe('modal:close', (event, info = {}) => {
   const id = String(info.id || info.title || 'modal').slice(0, 40);
   writeLog('info', '关闭弹窗: ' + id);
   return { success: true };
 });
 
-ipcMain.handle('settings:load', () => {
+handleSafe('settings:load', (event) => {
+  // 审查 1-5：本通道返回模型配置（含密钥掩码），仍属敏感面，拒绝非信任来源
   const s = loadAiSettings();
   const engine = AI_ENGINE_ORDER.includes(s.aiEngine) ? s.aiEngine : AI_ENGINE_ORDER[0];
   const resp = {
@@ -2929,22 +3126,22 @@ ipcMain.handle('settings:load', () => {
       aiDescEnabled: !!s.aiDescEnabled,
       aiEngine: engine,
       aiApiUrl: engine === 'baidu' ? baiduUrl(s) : metasoUrl(s),
-      aiApiKey: s.aiApiKey || '',
+      aiApiKey: s.aiApiKey ? API_KEY_MASK : '',
       baiduApiUrl: s.baiduApiUrl || '',
       metasoApiUrl: s.metasoApiUrl || '',
       // 百度千帆模型配置
-      baiduApiKey: baiduKey(s),
+      baiduApiKey: baiduKey(s) ? API_KEY_MASK : '',
       baiduModel: s.baiduModel || AI_DEFAULT_MODELS.baidu_pro.model,
       baiduPrompt: s.baiduPrompt || AI_DEFAULT_PROMPT,
       baiduTimeout: clampTimeout(s.baiduTimeout, 30),
       // 秘塔模型配置
-      metasoApiKey: metasoKey(s),
+      metasoApiKey: metasoKey(s) ? API_KEY_MASK : '',
       metasoModel: s.metasoModel || AI_DEFAULT_MODELS.metaso.model,
       metasoPrompt: s.metasoPrompt || AI_DEFAULT_PROMPT,
       metasoTimeout: clampTimeout(s.metasoTimeout, 30),
       // 知乎直答配置（兼容旧版遗留字段 zhihuAccessSecret）
       zhihuApiUrl: s.zhihuApiUrl || AI_DEFAULT_MODELS.zhihu.url,
-      zhihuApiKey: String(s.zhihuApiKey || s.zhihuAccessSecret || ''),
+      zhihuApiKey: String(s.zhihuApiKey || s.zhihuAccessSecret || '') ? API_KEY_MASK : '',
       zhihuModel: s.zhihuModel || AI_DEFAULT_MODELS.zhihu.model,
       zhihuPrompt: s.zhihuPrompt || AI_DEFAULT_PROMPT,
       zhihuTimeout: clampTimeout(s.zhihuTimeout, 30)
@@ -2952,6 +3149,10 @@ ipcMain.handle('settings:load', () => {
   };
   // 大模型管理：四个模型项 + 三大模块各自选择的模型（新增配置，与旧字段并存）
   const models = loadModelsConfig();
+  // 密钥掩码化（审查 1-5）：_keyPresent 供渲染层判断是否已配置，掩码值在 save/test 侧穿透还原
+  for (const mk of Object.keys(models)) {
+    models[mk] = { ...models[mk], apiKey: models[mk].apiKey ? API_KEY_MASK : '', _keyPresent: !!models[mk].apiKey };
+  }
   resp.data.models = models;
   resp.data.aiScopes = loadScopeEngines();
   resp.data.modelList = AI_MODEL_KEYS.map((key, index) => ({
@@ -2981,7 +3182,7 @@ ipcMain.handle('settings:load', () => {
 });
 
 // 保存单个模型项的配置（设置 → 大模型管理）
-ipcMain.handle('models:save', async (event, { key, config, scope } = {}) => {
+handleSafe('models:save', async (event, { key, config, scope } = {}) => {
   if (!AI_MODEL_KEYS.includes(key)) return { success: false, message: '未知的模型项' };
   const cfg = config || {};
   const rawUrl = String(cfg.apiUrl || '').trim() || AI_MODELS[key].apiUrl;
@@ -2993,10 +3194,12 @@ ipcMain.handle('models:save', async (event, { key, config, scope } = {}) => {
   const models = loadModelsConfig();
   // 百度千帆走专用 web_summary 接口（不归一化）；其余（知乎 / 秘塔 / 自定义模型）统一归一为 OpenAI 兼容的 chat/completions
   const apiUrl = key === 'baidu_pro' ? rawUrl : normalizeChatCompletionsUrl(rawUrl);
+  if (isPrivateApiUrl(apiUrl)) return { success: false, message: 'API 接口地址不允许指向本机或内网网段' };
   models[key] = {
     ...models[key],
     apiUrl,
-    apiKey: cfg.apiKey !== undefined ? String(cfg.apiKey).trim() : models[key].apiKey,
+    // 掩码穿透（审查 1-5）：渲染层回传掩码 = 用户未修改密钥，保留已存真值；空串仍表示清除
+    apiKey: (cfg.apiKey !== undefined && String(cfg.apiKey).trim() !== API_KEY_MASK) ? String(cfg.apiKey).trim() : models[key].apiKey,
     model: cfg.model !== undefined ? String(cfg.model).trim() : models[key].model,
     prompt: cfg.prompt !== undefined ? String(cfg.prompt).trim() : models[key].prompt,
     customName: cfg.customName !== undefined ? String(cfg.customName).trim() : (models[key].customName || ''),
@@ -3063,7 +3266,7 @@ async function callModelText(key, cfg, message) {
 }
 
 // 设置 AI 简介模型（统筹全局：所有模块的 AI 简介统一使用该配置）
-ipcMain.handle('models:set-scope', (event, { key } = {}) => {
+handleSafe('models:set-scope', (event, { key } = {}) => {
   if (!AI_MODEL_KEYS.includes(key)) return { success: false, message: '未知的模型项' };
   const selected = loadModelsConfig()[key];
   if (!selected || !selected.enabled || !selected.verified) return { success: false, message: '只能选择已验证且已启用的模型' };
@@ -3076,7 +3279,7 @@ ipcMain.handle('models:set-scope', (event, { key } = {}) => {
 });
 
 // 单独测试某个模型的连通性（不落盘）
-ipcMain.handle('models:test', async (event, { key, config } = {}) => {
+handleSafe('models:test', async (event, { key, config } = {}) => {
   if (!AI_MODEL_KEYS.includes(key)) return { success: false, message: '未知的模型项' };
   const base = loadModelsConfig()[key];
   const cfg = {
@@ -3084,11 +3287,12 @@ ipcMain.handle('models:test', async (event, { key, config } = {}) => {
     apiUrl: key === 'baidu_pro'
       ? String((config && config.apiUrl) || base.apiUrl).trim()
       : normalizeChatCompletionsUrl(String((config && config.apiUrl) || base.apiUrl).trim()),
-    apiKey: (config && config.apiKey !== undefined) ? String(config.apiKey).trim() : base.apiKey,
+    apiKey: (config && config.apiKey !== undefined && String(config.apiKey).trim() !== API_KEY_MASK) ? String(config.apiKey).trim() : base.apiKey,
     model: (config && config.model !== undefined) ? String(config.model).trim() : base.model,
     timeout: clampTimeout((config && config.timeout) !== undefined ? config.timeout : base.timeout, 30)
   };
   if (!/^https?:\/\//i.test(cfg.apiUrl)) return { success: false, message: 'API 接口地址格式无效，请以 http(s):// 开头' };
+  if (isPrivateApiUrl(cfg.apiUrl)) return { success: false, message: 'API 接口地址不允许指向本机或内网网段' };
   const start = Date.now();
   const reply = await callModelText(key, cfg, AI_VERIFY_PROMPT);
   const latencyMs = Date.now() - start;
@@ -3101,7 +3305,7 @@ ipcMain.handle('models:test', async (event, { key, config } = {}) => {
 // 本地内置简介库（离线）：电脑优化中心 / 启动项管理 / 右键管理 各条目简介，
 // 与联网 AI 简介严格区分——本地简介随应用分发，不联网、不上传任何本机信息。
 const ITEM_INTRO_FILE = path.join(__dirname, 'src', 'data', 'item-intro.json');
-ipcMain.handle('intro:load', () => {
+handleSafe('intro:load', () => {
   try {
     const raw = fs.readFileSync(ITEM_INTRO_FILE, 'utf8');
     const data = JSON.parse(raw);
@@ -3112,33 +3316,38 @@ ipcMain.handle('intro:load', () => {
   }
 });
 
-ipcMain.handle('settings:save', (event, { settings } = {}) => {
+handleSafe('settings:save', (event, { settings } = {}) => {
   if (!settings || typeof settings !== 'object') return { success: false, message: '无效配置' };
   const current = loadAiSettings();
   const engine = AI_ENGINE_ORDER.includes(settings.aiEngine) ? settings.aiEngine : AI_ENGINE_ORDER[0];
   // 仅当字段显式提供时才覆盖，避免清空未提交的引擎配置
   const str = (k) => (settings[k] !== undefined && settings[k] !== null) ? String(settings[k]).trim() : undefined;
+  // 掩码穿透（审查 1-5）：提交掩码视为未修改，返回 undefined 走「保留旧值」分支
+  const strKept = (k) => {
+    const v = str(k);
+    return v === API_KEY_MASK ? undefined : v;
+  };
   const next = {
     ...current,
     aiDescEnabled: !!settings.aiDescEnabled,
     aiEngine: engine,
     aiApiUrl: String(settings.aiApiUrl || '').trim() || (engine === 'baidu' ? baiduUrl(current) : metasoUrl(current)),
-    aiApiKey: String(settings.aiApiKey || '').trim() || current.aiApiKey || '',
+    aiApiKey: (String(settings.aiApiKey || '').trim() && String(settings.aiApiKey).trim() !== API_KEY_MASK) ? String(settings.aiApiKey).trim() : (current.aiApiKey || ''),
     baiduApiUrl: String(settings.baiduApiUrl || '').trim() || (engine === 'baidu' ? String(settings.aiApiUrl || '').trim() : current.baiduApiUrl) || '',
     metasoApiUrl: String(settings.metasoApiUrl || '').trim() || (engine === 'metaso' ? String(settings.aiApiUrl || '').trim() : current.metasoApiUrl) || '',
     // 百度千帆模型配置
-    baiduApiKey: str('baiduApiKey') ?? (current.baiduApiKey || ''),
+    baiduApiKey: strKept('baiduApiKey') ?? (current.baiduApiKey || ''),
     baiduModel: str('baiduModel') ?? (current.baiduModel || ''),
     baiduPrompt: str('baiduPrompt') ?? (current.baiduPrompt || ''),
     baiduTimeout: settings.baiduTimeout !== undefined ? clampTimeout(settings.baiduTimeout, 30) : (current.baiduTimeout || 30),
     // 秘塔模型配置
-    metasoApiKey: str('metasoApiKey') ?? (current.metasoApiKey || ''),
+    metasoApiKey: strKept('metasoApiKey') ?? (current.metasoApiKey || ''),
     metasoModel: str('metasoModel') ?? (current.metasoModel || ''),
     metasoPrompt: str('metasoPrompt') ?? (current.metasoPrompt || ''),
     metasoTimeout: settings.metasoTimeout !== undefined ? clampTimeout(settings.metasoTimeout, 30) : (current.metasoTimeout || 30),
     // 知乎直答配置
     zhihuApiUrl: str('zhihuApiUrl') ?? (current.zhihuApiUrl || ''),
-    zhihuApiKey: str('zhihuApiKey') ?? (current.zhihuApiKey || current.zhihuAccessSecret || ''),
+    zhihuApiKey: strKept('zhihuApiKey') ?? (current.zhihuApiKey || current.zhihuAccessSecret || ''),
     zhihuModel: str('zhihuModel') ?? (current.zhihuModel || ''),
     zhihuPrompt: str('zhihuPrompt') ?? (current.zhihuPrompt || ''),
     zhihuTimeout: settings.zhihuTimeout !== undefined ? clampTimeout(settings.zhihuTimeout, 30) : (current.zhihuTimeout || 30)
@@ -3186,7 +3395,7 @@ ipcMain.handle('settings:save', (event, { settings } = {}) => {
 
 // 获取条目简介（按模块隔离：电脑优化中心 / 启动项管理 / 右键管理 各自使用自己选择的模型）
 // 隐私约束：联网仅上传条目名称与厂商（或分组）名称，不含注册表路径等本机敏感信息
-ipcMain.handle('aidesc:get', async (event, { name, company, force, scope } = {}) => {
+handleSafe('aidesc:get', async (event, { name, company, force, scope } = {}) => {
   const menuName = String(name || '').trim();
   const vendor = String(company || '').trim();
   if (!menuName) return { success: false, message: '缺少名称' };
@@ -3257,7 +3466,7 @@ function parseProsCons(text) {
 }
 
 // 优先使用「电脑优化中心」所选模型，失败再按已启用的其他模型依次尝试，返回 { pros, cons, source }
-ipcMain.handle('optimizer:genadvice', async (event, { optionId } = {}) => {
+handleSafe('optimizer:genadvice', async (event, { optionId } = {}) => {
   const opt = OPTIMIZER.OPTIONS.find(o => o.id === optionId);
   if (!opt) return { success: false, message: '未知的优化选项' };
   const title = opt.title || optionId;
@@ -3295,7 +3504,7 @@ const DISKBENCH_SCRIPT = require('./src/scripts-powershell/diskbench-scripts');
 const REALTIME_SCRIPT = require('./src/scripts-powershell/realtime-scripts');
 const OVERVIEW_SCRIPT = require('./src/scripts-powershell/overview-scripts');
 
-ipcMain.handle('device:scan', async () => {
+handleSafe('device:scan', async () => {
   const scriptPath = writeTempScript(DEVICE_INFO_SCRIPT.scan());
   try {
     const { stdout, stderr, code } = await runPowerShellFile(scriptPath, { timeout: 60000 });
@@ -3328,7 +3537,7 @@ function saveSystemInfoCache(data) {
   } catch (e) { writeLog('error', `保存系统信息缓存失败: ${e.message}`); return false; }
 }
 
-ipcMain.handle('overview:hardware', async (event, { refresh = false } = {}) => {
+handleSafe('overview:hardware', async (event, { refresh = false } = {}) => {
   if (!refresh) {
     const cached = loadSystemInfoCache();
     if (cached) return { success: true, data: cached.data, cached: true, cachedAt: cached.timestamp };
@@ -3372,16 +3581,14 @@ async function collectOverviewMetrics() {
   return overviewMetricsInflight;
 }
 
-ipcMain.handle('overview:metrics', async () => {
+handleSafe('overview:metrics', async () => {
   if (overviewMetricsCache && Date.now() - overviewMetricsCache.at < 2500) {
     return { success: true, data: overviewMetricsCache.data, cached: true };
   }
   return collectOverviewMetrics();
 });
 
-ipcMain.handle('diskbench:run', async (event, options = {}) => {
-  const denied = rejectUntrustedRenderer(event);
-  if (denied) return denied;
+handleSafe('diskbench:run', async (event, options = {}) => {
   const requestedPath = String(options?.path || '').trim();
   if (!requestedPath || !fs.existsSync(requestedPath)) return { success: false, message: '测速路径不存在' };
   try {
@@ -3463,7 +3670,7 @@ function saveBenchHistory(records) {
   }
 }
 
-ipcMain.handle('bench-history:add', (event, { record }) => {
+handleSafe('bench-history:add', (event, { record }) => {
   try {
     const records = loadBenchHistory();
     records.unshift({
@@ -3478,11 +3685,11 @@ ipcMain.handle('bench-history:add', (event, { record }) => {
   }
 });
 
-ipcMain.handle('bench-history:list', () => {
+handleSafe('bench-history:list', () => {
   return { success: true, data: loadBenchHistory() };
 });
 
-ipcMain.handle('bench-history:delete', (event, { id }) => {
+handleSafe('bench-history:delete', (event, { id }) => {
   try {
     const records = loadBenchHistory().filter(r => r.id !== id);
     saveBenchHistory(records);
@@ -3492,7 +3699,7 @@ ipcMain.handle('bench-history:delete', (event, { id }) => {
   }
 });
 
-ipcMain.handle('bench-history:clear', () => {
+handleSafe('bench-history:clear', () => {
   try {
     saveBenchHistory([]);
     return { success: true };
@@ -3503,7 +3710,7 @@ ipcMain.handle('bench-history:clear', () => {
 
 // ==================== UAC 权限提升 IPC ====================
 // 应用以普通权限启动（asInvoker），需要管理员权限时通过 UAC 重新拉起
-ipcMain.handle('elevate:status', async () => {
+handleSafe('elevate:status', async () => {
   return { isAdmin: await isAdmin() };
 });
 
@@ -3542,7 +3749,8 @@ function armElevateHandshake() {
   }, 500);
 }
 
-ipcMain.handle('elevate:request', () => {
+handleSafe('elevate:request', (event) => {
+  // 审查 1-3：UAC 提权是最高价值 IPC 目标，必须校验请求来源
   return new Promise((resolve) => {
     writeLog('info', '请求管理员权限提升 (UAC)');
     const exe = process.execPath;
@@ -3607,15 +3815,16 @@ function performFinalClose() {
   app.quit();
 }
 
-ipcMain.on('shutdown:begin', () => {
-  // 渲染进程主动开始关闭流程（预留）
+onSafe('shutdown:begin', () => {
+  // 预留：尚未接线。渲染层当前走 shutdown:complete 直接触发 performFinalClose，
+  // 此通道保留作扩展点（如「关键操作完成后由渲染层主动上报再关闭」），勿当冗余删除。
 });
 
-ipcMain.on('shutdown:complete', () => {
+onSafe('shutdown:complete', () => {
   performFinalClose();
 });
 
-ipcMain.handle('netspeed:ping', async () => {
+handleSafe('netspeed:ping', async () => {
   const script = NETSPEED_SCRIPT.ping();
   const scriptPath = writeTempScript(script);
   try {
@@ -3629,7 +3838,7 @@ ipcMain.handle('netspeed:ping', async () => {
   }
 });
 
-ipcMain.handle('netspeed:throughput', async (event, { duration }) => {
+handleSafe('netspeed:throughput', async (event, { duration }) => {
   const requestedDuration = Math.max(1, Math.min(60, Number(duration) || 10));
   const script = NETSPEED_SCRIPT.throughput(requestedDuration);
   const scriptPath = writeTempScript(script);
@@ -3646,7 +3855,7 @@ ipcMain.handle('netspeed:throughput', async (event, { duration }) => {
 
 // ==================== 实时网速监控 IPC ====================
 // 枚举本机物理网卡
-ipcMain.handle('realtime:adapters', async () => {
+handleSafe('realtime:adapters', async () => {
   const scriptPath = writeTempScript(REALTIME_SCRIPT.adapters());
   try {
     const { stdout, code, timedOut, stderr } = await runPowerShellFile(scriptPath, { timeout: 10000 });
@@ -3762,7 +3971,7 @@ function ensureRealtimeSampler() {
 }
 
 // 单次流量采样（各活动网卡上下行速率 B/s）—— 返回流式采样器缓存
-ipcMain.handle('realtime:sample', async () => {
+handleSafe('realtime:sample', async () => {
   ensureRealtimeSampler();
   if (rtSampler.latest) {
     return { success: true, adapters: rtSampler.latest.adapters, t: rtSampler.latest.t };
@@ -3773,7 +3982,7 @@ ipcMain.handle('realtime:sample', async () => {
 });
 
 // 丢包检测（ping 默认网关）
-ipcMain.handle('realtime:loss', async () => {
+handleSafe('realtime:loss', async () => {
   const scriptPath = writeTempScript(REALTIME_SCRIPT.loss());
   try {
     const { stdout, code, timedOut } = await runPowerShellFile(scriptPath, { timeout: 10000 });
@@ -3835,7 +4044,7 @@ function readRealtimeReports() {
   return out;
 }
 
-ipcMain.handle('realtime:report-save', (event, { data } = {}) => {
+handleSafe('realtime:report-save', (event, { data } = {}) => {
   try {
     ensureRealtimeReportDir();
     cleanupRealtimeReports();
@@ -3848,9 +4057,9 @@ ipcMain.handle('realtime:report-save', (event, { data } = {}) => {
   }
 });
 
-ipcMain.handle('realtime:report-list', () => ({ success: true, reports: readRealtimeReports() }));
+handleSafe('realtime:report-list', () => ({ success: true, reports: readRealtimeReports() }));
 
-ipcMain.handle('realtime:report-delete', (event, { name } = {}) => {
+handleSafe('realtime:report-delete', (event, { name } = {}) => {
   try {
     const fp = path.join(REALTIME_REPORT_DIR, path.basename(String(name || '')));
     if (fs.existsSync(fp)) fs.unlinkSync(fp);
@@ -3858,7 +4067,7 @@ ipcMain.handle('realtime:report-delete', (event, { name } = {}) => {
   } catch (e) { return { success: false, message: e.message }; }
 });
 
-ipcMain.handle('realtime:report-clear', () => {
+handleSafe('realtime:report-clear', () => {
   try {
     ensureRealtimeReportDir();
     for (const f of fs.readdirSync(REALTIME_REPORT_DIR)) {
@@ -3873,7 +4082,7 @@ ipcMain.handle('realtime:report-clear', () => {
 // 备用列表 / 修改列表 / 注册表缓存 / 合并物理内存页。需管理员权限。
 const MEMORY_SCRIPT = require('./src/scripts-powershell/memory-scripts');
 
-ipcMain.handle('memory:info', async () => {
+handleSafe('memory:info', async () => {
   const scriptPath = writeTempScript(MEMORY_SCRIPT.MEM_INFO_SCRIPT);
   try {
     const { stdout, code, timedOut } = await runPowerShellFile(scriptPath, { timeout: 15000 });
@@ -3892,9 +4101,7 @@ ipcMain.handle('memory:info', async () => {
   }
 });
 
-ipcMain.handle('memory:clean', async (event, { items = [] } = {}) => {
-  const denied = rejectUntrustedRenderer(event);
-  if (denied) return denied;
+handleSafe('memory:clean', async (event, { items = [] } = {}) => {
   const list = Array.isArray(items) ? items.filter(i => typeof i === 'string') : [];
   if (!list.length) return { success: false, message: '未选择要清理的内存区域' };
   const scriptPath = writeTempScript(MEMORY_SCRIPT.cleanScript(list));
@@ -3916,7 +4123,7 @@ ipcMain.handle('memory:clean', async (event, { items = [] } = {}) => {
   }
 });
 
-ipcMain.handle('memory:processes', async () => {
+handleSafe('memory:processes', async () => {
   const scriptPath = writeTempScript(MEMORY_SCRIPT.PROCESSES_SCRIPT);
   try {
     const { stdout, code, timedOut } = await runPowerShellFile(scriptPath, { timeout: 20000 });
@@ -3939,9 +4146,7 @@ ipcMain.handle('memory:processes', async () => {
   }
 });
 
-ipcMain.handle('memory:kill', async (event, { pid } = {}) => {
-  const denied = rejectUntrustedRenderer(event);
-  if (denied) return denied;
+handleSafe('memory:kill', async (event, { pid } = {}) => {
   const n = Number(pid);
   if (!Number.isInteger(n) || n <= 0) return { success: false, message: '无效的进程 ID' };
   const known = lastProcessSnapshot.get(n);
@@ -3964,9 +4169,7 @@ ipcMain.handle('memory:kill', async (event, { pid } = {}) => {
 });
 
 // 顽固软件专杀：一次性结束 MuMu/UU远程/抖音/剪映/WPS/微软电脑管家 的后台常驻与守护进程
-ipcMain.handle('memory:stubborn-kill', async (event) => {
-  const denied = rejectUntrustedRenderer(event);
-  if (denied) return denied;
+handleSafe('memory:stubborn-kill', async (event) => {
   const scriptPath = writeTempScript(MEMORY_SCRIPT.STUBBORN_KILL_SCRIPT);
   try {
     const { stdout, code, timedOut } = await runPowerShellFile(scriptPath, { timeout: 30000 });
@@ -4016,7 +4219,7 @@ function savePathsConfig(config) {
 }
 
 // 自动扫描安装路径
-ipcMain.handle('paths:scan', async () => {
+handleSafe('paths:scan', async () => {
   // 任务3：注入当前生效规则库（数据目录覆盖/自定义合并后）——规则库在线更新后，
   // 路径绑定扫描的应用候选目录自动同步；规则不可用时 pathscan 走内置兜底。
   const scriptPath = writeTempScript(PATHSCAN_SCRIPT.scan(JSON.stringify(CLEANUP_SCRIPT.rules())));
@@ -4056,14 +4259,12 @@ ipcMain.handle('paths:scan', async () => {
 });
 
 // 读取已保存的路径配置
-ipcMain.handle('paths:load', () => {
+handleSafe('paths:load', () => {
   return { success: true, data: loadPathsConfig() };
 });
 
 // 保存单个路径
-ipcMain.handle('paths:save', (event, { key, value }) => {
-  const denied = rejectUntrustedRenderer(event);
-  if (denied) return denied;
+handleSafe('paths:save', (event, { key, value }) => {
   const allowedKeys = new Set(['qqFileDir', 'wechatFileDir', 'neteaseCacheDir', 'wechatCacheDir', 'douyinCacheDir', 'qqCacheDir']);
   if (!allowedKeys.has(key) || typeof value !== 'string' || value.length > 1024 || value.includes('\0')) {
     return { success: false, message: '路径配置无效' };
@@ -4077,7 +4278,7 @@ ipcMain.handle('paths:save', (event, { key, value }) => {
 });
 
 // 浏览选择文件夹
-ipcMain.handle('paths:browse', async (event, { title, defaultPath }) => {
+handleSafe('paths:browse', async (event, { title, defaultPath }) => {
   try {
     const result = await dialog.showOpenDialog(mainWindow, {
       title: title || '选择文件夹',
@@ -4092,9 +4293,7 @@ ipcMain.handle('paths:browse', async (event, { title, defaultPath }) => {
 });
 
 // 校验路径是否存在
-ipcMain.handle('paths:validate', (event, { path: dirPath }) => {
-  const denied = rejectUntrustedRenderer(event);
-  if (denied) return denied;
+handleSafe('paths:validate', (event, { path: dirPath }) => {
   try {
     return { success: true, exists: dirPath ? fs.existsSync(dirPath) : false };
   } catch (e) {
@@ -4104,7 +4303,7 @@ ipcMain.handle('paths:validate', (event, { path: dirPath }) => {
 
 // 提取指定安装目录下主程序 exe 的真实图标（dataURL），用于路径绑定弹窗分组标题头
 // exe 名称按软件固定候选依次探测，取第一个存在的
-ipcMain.handle('paths:app-icon', async (event, { installPath, exeCandidates = [] } = {}) => {
+handleSafe('paths:app-icon', async (event, { installPath, exeCandidates = [] } = {}) => {
   try {
     if (!installPath || !fs.existsSync(installPath)) return { success: false, dataUrl: null };
     const exeList = Array.isArray(exeCandidates) ? exeCandidates : [];
@@ -4133,7 +4332,7 @@ ipcMain.handle('paths:app-icon', async (event, { installPath, exeCandidates = []
 const ICON_EXT_WHITELIST = ['.ico', '.exe', '.dll'];
 // ==================== 内置图标释放 ====================
 // 打包为 asar 后，app.getFileIcon 走原生 Shell API，无法读取 asar 虚拟文件系统内的文件。
-// 因此随包分发的内置图标（如 ico/douyin.ico）必须先释放到用户目录，再按真实路径提取。
+// 因此随包分发的内置图标（如 src/assets/ico/douyin.ico）必须先释放到用户目录，再按真实路径提取。
 const BUNDLED_ICON_DIR = path.join(APP_DATA_DIR, 'icons');
 
 function ensureBundledIcon(relPath) {
@@ -4153,11 +4352,11 @@ function ensureBundledIcon(relPath) {
   }
 }
 
-ipcMain.handle('paths:file-icon', async (event, { filePath } = {}) => {
+handleSafe('paths:file-icon', async (event, { filePath } = {}) => {
   try {
     const raw = String(filePath || '').trim();
     if (!raw) return { success: false, dataUrl: null };
-    // 相对路径按应用根目录解析（用于随包分发的内置图标，如 ico/douyin.ico）
+    // 相对路径按应用根目录解析（用于随包分发的内置图标，如 src/assets/ico/douyin.ico）
     let target = path.isAbsolute(raw) ? path.normalize(raw) : path.resolve(__dirname, raw);
     // 相对路径必须落在应用目录内，避免目录穿越读取应用外的文件
     if (!path.isAbsolute(raw)) {
@@ -4232,7 +4431,7 @@ function isFontFileValid(filePath) {
   }
 }
 
-ipcMain.handle('fonts:list', () => {
+handleSafe('fonts:list', () => {
   try {
     const { settings, imported } = loadFontState();
     const system = FONT_SYSTEM_FAMILIES.map(f => ({
@@ -4263,7 +4462,7 @@ ipcMain.handle('fonts:list', () => {
 
 // 导入字体：文件对话框 → 魔数校验 → 复制副本到 userData/fonts/ → 记录到 settings.json
 // 单字体约束：仅保留 1 款导入字体，再次导入时替换（删除旧副本与旧记录）
-ipcMain.handle('fonts:import', async () => {
+handleSafe('fonts:import', async () => {
   try {
     const result = await dialog.showOpenDialog(mainWindow, {
       title: '导入字体文件（将替换当前已导入字体）',
@@ -4299,7 +4498,7 @@ ipcMain.handle('fonts:import', async () => {
 });
 
 // 删除导入字体：移除 JSON 记录 + 删除本地副本（不触碰用户原始文件）
-ipcMain.handle('fonts:remove-imported', () => {
+handleSafe('fonts:remove-imported', () => {
   try {
     const s = loadAiSettings();
     const prev = s.fontImported;
@@ -4322,7 +4521,7 @@ ipcMain.handle('fonts:remove-imported', () => {
 });
 
 // 保存字体配置（family / weight / size），持久化到 settings.json 的 font 字段
-ipcMain.handle('fonts:save-config', (event, { config } = {}) => {
+handleSafe('fonts:save-config', (event, { config } = {}) => {
   try {
     const cfg = config || {};
     const s = loadAiSettings();
@@ -4346,7 +4545,7 @@ ipcMain.handle('fonts:save-config', (event, { config } = {}) => {
 // 支持搜索 / 刷新 / 逐项或整体结束进程。
 let processManagerWindow = null;
 
-ipcMain.handle('processManager:open-window', async () => {
+handleSafe('processManager:open-window', async () => {
   if (processManagerWindow && !processManagerWindow.isDestroyed()) {
     processManagerWindow.focus();
     return { success: true, alreadyOpen: true };
@@ -4383,14 +4582,14 @@ ipcMain.handle('processManager:open-window', async () => {
 });
 
 // 关闭「应用进程管理」窗口（由窗口内「完成」按钮调用）
-ipcMain.handle('processManager:close-window', (event) => {
+handleSafe('processManager:close-window', (event) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (win && !win.isDestroyed()) win.close();
   return { success: true };
 });
 
 // 「应用进程管理」窗口操作完成后，向主窗口推送最新统计，供内存清理页进程卡片回显
-ipcMain.on('processManager:report', (event, payload = {}) => {
+onSafe('processManager:report', (event, payload = {}) => {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send('processManager:update', {
     totalCount: Number.isInteger(payload.totalCount) ? payload.totalCount : null,
@@ -4401,7 +4600,7 @@ ipcMain.on('processManager:report', (event, payload = {}) => {
 // ==================== 大模型管理 独立窗口 ====================
 let modelsWindow = null;
 
-ipcMain.handle('models:open-window', async () => {
+handleSafe('models:open-window', async () => {
   if (modelsWindow && !modelsWindow.isDestroyed()) {
     modelsWindow.focus();
     return { success: true, alreadyOpen: true };
@@ -4437,7 +4636,7 @@ ipcMain.handle('models:open-window', async () => {
   return { success: true };
 });
 
-ipcMain.handle('models:close-window', (event) => {
+handleSafe('models:close-window', (event) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (win && !win.isDestroyed()) win.close();
   return { success: true };
@@ -4446,7 +4645,7 @@ ipcMain.handle('models:close-window', (event) => {
 // ==================== 图片预览 独立窗口 ====================
 let previewWindow = null;
 
-ipcMain.handle('preview:open-window', async (event, payload = {}) => {
+handleSafe('preview:open-window', async (event, payload = {}) => {
   // payload: { images: [{filePath, name, size}], index: 0, itemName: 'xxx' }
   if (previewWindow && !previewWindow.isDestroyed()) {
     previewWindow.focus();
@@ -4485,14 +4684,14 @@ ipcMain.handle('preview:open-window', async (event, payload = {}) => {
   return { success: true };
 });
 
-ipcMain.handle('preview:close-window', (event) => {
+handleSafe('preview:close-window', (event) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (win && !win.isDestroyed()) win.close();
   return { success: true };
 });
 
 // 图片预览窗口删除图片后通知主窗口刷新文件列表
-ipcMain.on('preview:image-deleted', (event, filePath) => {
+onSafe('preview:image-deleted', (event, filePath) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('preview:image-deleted', filePath);
   }
@@ -4513,7 +4712,7 @@ const PERIPHERAL_ALLOWED = {
 // 数据即白名单：渲染层只传 id，命令原文从数据文件查询，绝不接受用户拼接输入。
 const QUICKCMDS = require('./src/scripts/quickcmds-data');
 
-ipcMain.handle('quickcmds:run', async (event, id) => {
+handleSafe('quickcmds:run', async (event, id) => {
   const item = QUICKCMDS.CMDS.find(c => c.id === id);
   if (!item) return { success: false, message: '未知指令' };
   try {
@@ -4530,7 +4729,7 @@ ipcMain.handle('quickcmds:run', async (event, id) => {
   }
 });
 
-ipcMain.handle('peripheral:open-window', async () => {
+handleSafe('peripheral:open-window', async () => {
   if (peripheralWindow && !peripheralWindow.isDestroyed()) {
     peripheralWindow.focus();
     return { success: true, alreadyOpen: true };
@@ -4566,14 +4765,14 @@ ipcMain.handle('peripheral:open-window', async () => {
   return { success: true };
 });
 
-ipcMain.handle('peripheral:close-window', (event) => {
+handleSafe('peripheral:close-window', (event) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (win && !win.isDestroyed()) win.close();
   return { success: true };
 });
 
 // 读取三组调优的当前注册表值（-1 表示读取失败）
-ipcMain.handle('peripheral:query', async () => {
+handleSafe('peripheral:query', async () => {
   const scriptPath = writeTempScript(PERIPHERAL_SCRIPT.query());
   try {
     const { stdout, code, stderr } = await runPowerShellFile(scriptPath, { timeout: 20000 });
@@ -4585,9 +4784,7 @@ ipcMain.handle('peripheral:query', async () => {
 });
 
 // 应用三组调优值（白名单校验；-1/缺省表示该组不修改）
-ipcMain.handle('peripheral:apply', async (event, options = {}) => {
-  const denied = rejectUntrustedRenderer(event);
-  if (denied) return denied;
+handleSafe('peripheral:apply', async (event, options = {}) => {
   const filtered = {};
   for (const key of ['win32', 'keyboard', 'mouse']) {
     const v = Number(options[key]);
@@ -4641,9 +4838,7 @@ function isPathUnderRoot(targetPath, root) {
 }
 
 // 扫描 QQ/微信 文件目录中的垃圾文件（缓存接收图片、视频等）
-ipcMain.handle('fileclean:scan', async (event, { type, customPath }) => {
-  const denied = rejectUntrustedRenderer(event);
-  if (denied) return denied;
+handleSafe('fileclean:scan', async (event, { type, customPath }) => {
   const config = loadPathsConfig();
   let scanPath = '';
 
@@ -4740,7 +4935,7 @@ ipcMain.handle('fileclean:scan', async (event, { type, customPath }) => {
 });
 
 // 读取图片文件为 base64（用于预览）——仅限已扫描目录内的文件
-ipcMain.handle('fileclean:read-image', async (event, { filePath }) => {
+handleSafe('fileclean:read-image', async (event, { filePath }) => {
   try {
     if (!filePath || !fs.existsSync(filePath)) {
       return { success: false, message: '文件不存在' };
@@ -4769,9 +4964,7 @@ ipcMain.handle('fileclean:read-image', async (event, { filePath }) => {
 });
 
 // 删除单个文件（图片预览中单独删除当前图片）——仅限已扫描目录内的文件
-ipcMain.handle('fileclean:delete-file', async (event, { filePath }) => {
-  const denied = rejectUntrustedRenderer(event);
-  if (denied) return denied;
+handleSafe('fileclean:delete-file', async (event, { filePath }) => {
   try {
     if (!filePath || !fs.existsSync(filePath)) {
       return { success: false, message: '文件不存在' };
@@ -4779,10 +4972,15 @@ ipcMain.handle('fileclean:delete-file', async (event, { filePath }) => {
     if (!isPathUnderRoot(filePath, lastFileCleanRoot) || !lastFileCleanFiles.has(path.resolve(filePath).toLowerCase())) {
       return { success: false, message: '路径不在扫描范围内，已拒绝删除' };
     }
-    if (!fs.lstatSync(filePath).isFile()) return { success: false, message: '目标不是普通文件，已拒绝删除' };
-    fs.unlinkSync(filePath);
-    writeLog('info', `删除预览图片: ${filePath}`);
-    return { success: true };
+    const stat = fs.lstatSync(filePath);
+    if (!stat.isFile()) return { success: false, message: '目标不是普通文件，已拒绝删除' };
+    // 审查 1-2：统一删除出口，回收站优先；仅回收站失败时才降级永久删除
+    const r = await trashOrUnlink(filePath, { allowPermanent: true });
+    if (!r.ok) throw new Error(r.message || '删除失败');
+    const batchId = new Date().toISOString().replace(/[:.]/g, '-');
+    const manifestPath = saveDeleteManifest(batchId, [{ path: filePath, kind: 'file', size: stat.size, recycled: r.recycled }]);
+    writeLog('info', `删除预览图片: ${filePath}（${r.recycled ? '已移入回收站' : '永久删除'}）`);
+    return { success: true, recycled: r.recycled, manifestPath };
   } catch (e) {
     writeLog('error', `删除预览图片失败: ${e.message}`);
     return { success: false, message: e.message };
@@ -4790,12 +4988,10 @@ ipcMain.handle('fileclean:delete-file', async (event, { filePath }) => {
 });
 
 // 执行文件清理——仅限已扫描目录内的文件
-ipcMain.handle('fileclean:execute', async (event, { files }) => {
-  const denied = rejectUntrustedRenderer(event);
-  if (denied) return denied;
+handleSafe('fileclean:execute', async (event, { files }) => {
   if (!files || !files.length) return { success: false, message: '没有选中文件' };
   writeLog('info', `文件清理: ${files.length} 个文件`);
-  let freed = 0, success = 0, failed = 0;
+  let freed = 0, success = 0, failed = 0, recycledCount = 0;
   const details = [];
 
   for (const file of files) {
@@ -4809,10 +5005,13 @@ ipcMain.handle('fileclean:execute', async (event, { files }) => {
         const stat = fs.lstatSync(file.path);
         if (!stat.isFile()) throw new Error('目标不是普通文件');
         const size = stat.size;
-        fs.unlinkSync(file.path);
+        // 审查 1-2：统一删除出口，回收站优先；仅回收站失败时才降级永久删除
+        const r = await trashOrUnlink(file.path, { allowPermanent: true });
+        if (!r.ok) throw new Error(r.message || '删除失败');
         freed += size;
         success++;
-        details.push({ path: file.path, status: 'ok', freed: size });
+        if (r.recycled) recycledCount++;
+        details.push({ path: file.path, status: 'ok', freed: size, recycled: r.recycled });
       } else {
         details.push({ path: file.path, status: 'skip', freed: 0, message: '文件不存在' });
       }
@@ -4822,8 +5021,14 @@ ipcMain.handle('fileclean:execute', async (event, { files }) => {
     }
   }
 
-  writeLog('info', `文件清理完成: 释放 ${freed} 字节, ${success} 成功, ${failed} 失败`);
-  return { success: failed === 0, data: { totalFreed: freed, success, failed, details } };
+  // 删除清单落盘（与 finder:delete 一致）：成功项记录是否已进回收站，误删可追溯还原
+  const batchId = new Date().toISOString().replace(/[:.]/g, '-');
+  const manifestPath = saveDeleteManifest(batchId, details
+    .filter(d => d.status === 'ok')
+    .map(d => ({ path: d.path, kind: 'file', size: d.freed || 0, recycled: !!d.recycled })));
+
+  writeLog('info', `文件清理完成: 释放 ${freed} 字节, ${success} 成功（回收站 ${recycledCount}）, ${failed} 失败${manifestPath ? ` 清单 ${path.basename(manifestPath)}` : ''}`);
+  return { success: failed === 0, data: { totalFreed: freed, success, failed, recycled: recycledCount, details, manifestPath } };
 });
 
 // ==================== 系统维护修复组 IPC（P2-16） ====================
@@ -4832,13 +5037,11 @@ const MAINTENANCE_SCRIPT = require('./src/scripts-powershell/maintenance-scripts
 // 同一时刻仅允许一个维护任务执行（修复类操作互相占用服务，串行更安全）
 let maintenanceRunning = null; // taskId
 
-ipcMain.handle('maintenance:tasks', () => {
+handleSafe('maintenance:tasks', () => {
   return { success: true, data: MAINTENANCE_SCRIPT.list(), categories: MAINTENANCE_SCRIPT.CATEGORY_ORDER };
 });
 
-ipcMain.handle('maintenance:run', async (event, { taskId } = {}) => {
-  const denied = rejectUntrustedRenderer(event);
-  if (denied) return denied;
+handleSafe('maintenance:run', async (event, { taskId } = {}) => {
   if (!taskId) return { success: false, message: '缺少任务 ID' };
   if (maintenanceRunning) return { success: false, message: `已有维护任务在执行中（${maintenanceRunning}），请等待完成` };
   let script;
@@ -4894,6 +5097,11 @@ app.whenReady().then(() => {
   migrateLegacyData();
   ensureLogDir();
   cleanupTempScripts();
+  // 审查 4-3：清理上次规则更新中断残留的 .downloading 孤儿（writeValidated 两步间崩溃遗留）
+  try {
+    const orphan = path.join(CLEANUP_SCRIPT.dataRulesDir(), 'rules.json.downloading');
+    if (fs.existsSync(orphan)) { fs.unlinkSync(orphan); writeLog('info', '已清理上次规则更新残留的 .downloading'); }
+  } catch (e) {}
   try {
     writeLog('info', `PowerShell 7: ${resolvePowerShell7Path()}`);
   } catch (e) {

@@ -59,8 +59,25 @@ fn progress(n: u64) {
     println!("@@PROGRESS:{}@@", n.min(100));
 }
 
-/// 递归收集文件（跳过符号链接与不可读目录）。
-fn walk(path: &Path, files: &mut Vec<(PathBuf, u64)>, dirs: &mut Vec<(PathBuf, u64)>, min_size: u64) {
+/// 审查v4-M6：是否重解析点（junction/挂载点）。Windows 目录联接点不是 symlink
+/// （file_type().is_symlink()==false），须按 FILE_ATTRIBUTE_REPARSE_POINT (0x400) 判定；
+/// 否则自引用联接点（如「Application Data」历史环）会逐层加深重复遍历，扫描卡到超时。
+#[cfg(windows)]
+fn is_reparse(ent: &fs::DirEntry) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    ent.metadata()
+        .map(|m| (m.file_attributes() & 0x400) != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(windows))]
+fn is_reparse(_ent: &fs::DirEntry) -> bool {
+    false
+}
+
+/// 递归收集文件（跳过符号链接、重解析点与不可读目录）。
+/// 审查v4-L5：移除从未使用的 dirs 参数（原收集目录后 let _ = dirs 丢弃，白耗内存）。
+fn walk(path: &Path, files: &mut Vec<(PathBuf, u64)>, min_size: u64) {
     let mut stack: Vec<PathBuf> = vec![path.to_path_buf()];
     while let Some(dir) = stack.pop() {
         let rd = match fs::read_dir(&dir) {
@@ -80,7 +97,10 @@ fn walk(path: &Path, files: &mut Vec<(PathBuf, u64)>, dirs: &mut Vec<(PathBuf, u
                 continue;
             }
             if ft.is_dir() {
-                // 不追踪固定系统重解析点之外的深层；直接压栈
+                // 审查v4-M6：联接点/挂载点不深入
+                if is_reparse(&ent) {
+                    continue;
+                }
                 stack.push(fp);
             } else if ft.is_file() {
                 let sz = fs::metadata(&fp).map(|m| m.len()).unwrap_or(0);
@@ -90,7 +110,6 @@ fn walk(path: &Path, files: &mut Vec<(PathBuf, u64)>, dirs: &mut Vec<(PathBuf, u
             }
         }
     }
-    let _ = dirs;
 }
 
 /// 快速返回某个顶层目录下的一级子目录大小（用于 AppData 迁移挑选）。
@@ -99,10 +118,15 @@ fn child_dir_sizes(root: &Path, out: &mut Vec<(PathBuf, u64)>) {
         Ok(r) => r,
         Err(_) => return,
     };
+    // 审查v4-M6：只统计真实目录——Path::is_dir 会跟随联接点/符号链接，
+    // 指向其他卷的联接点会把扫描范围外的内容重复计入
     let children: Vec<PathBuf> = rd
         .flatten()
+        .filter(|ent| match ent.file_type() {
+            Ok(t) => t.is_dir() && !is_reparse(ent),
+            Err(_) => false,
+        })
         .map(|ent| ent.path())
-        .filter(|path| path.is_dir())
         .collect();
     let sizes: Vec<(PathBuf, u64)> = children
         .par_iter()
@@ -124,7 +148,8 @@ fn dir_size(dir: &Path) -> u64 {
             let fp = ent.path();
             match ent.file_type() {
                 Ok(t) if t.is_symlink() => continue,
-                Ok(t) if t.is_dir() => stack.push(fp),
+                // 审查v4-M6：联接点/挂载点不深入（同 walk）
+                Ok(t) if t.is_dir() && !is_reparse(&ent) => stack.push(fp),
                 Ok(t) if t.is_file() => {
                     if let Ok(md) = fs::metadata(&fp) {
                         total += md.len();
@@ -160,7 +185,7 @@ fn cmd_duplicates(roots: &[String], min_size: u64) {
     for r in roots {
         if let Some(p) = canonical(r) {
             // 目录不存在时 walk 内部仅告警跳过，不影响其余目录
-            walk(&p, &mut files, &mut Vec::new(), 0);
+            walk(&p, &mut files, 0);
         }
     }
     let total = files.len() as f64;
@@ -624,7 +649,7 @@ fn cmd_bigfiles(roots: &[String], count: usize) {
     let mut files: Vec<(PathBuf, u64)> = Vec::new();
     for r in roots {
         if let Some(p) = canonical(r) {
-            walk(&p, &mut files, &mut Vec::new(), 0);
+            walk(&p, &mut files, 0);
         }
     }
     // 用堆取 Top-N
@@ -875,15 +900,21 @@ fn is_protected_path(p: &str) -> bool {
         return true; // 例如 C:
     }
     let lower = norm.to_lowercase();
+    // 审查v4-L1：根路径盘符跟随 SystemDrive（与主进程 isProtectedDeletePath 对齐），
+    // 原硬编码 C: 在系统目录装于其他盘时不设防
+    let sysdrive = std::env::var("SystemDrive")
+        .unwrap_or_else(|_| "C:".to_string())
+        .to_lowercase();
     let roots = [
-        "c:\\windows",
-        "c:\\program files",
-        "c:\\program files (x86)",
-        "c:\\programdata",
-        "c:\\$recycle.bin",
-        "c:\\system volume information",
+        format!("{}\\windows", sysdrive),
+        format!("{}\\program files", sysdrive),
+        format!("{}\\program files (x86)", sysdrive),
+        format!("{}\\programdata", sysdrive),
+        format!("{}\\$recycle.bin", sysdrive),
+        format!("{}\\system volume information", sysdrive),
     ];
-    for r in roots {
+    for r in &roots {
+        let r = r.as_str();
         if lower == r {
             return true;
         }
@@ -922,13 +953,14 @@ fn delete_one(p: &Path, kind: &str) -> Result<bool, String> {
 }
 
 /// 批量删除（文件或目录）：默认移入回收站，替代原 PowerShell Remove-Item 硬删除。
-fn cmd_delete(items: &[(String, String)]) {
+/// 审查v4-L4：路径保留原始 OsString，保护判定与输出展示用 lossy 字符串即可。
+fn cmd_delete(items: &[(String, OsString)]) {
     let mut ok = 0usize;
     let mut fail = 0usize;
     let mut freed: u64 = 0;
     for (kind, sp) in items {
         let p = Path::new(sp);
-        if is_protected_path(sp) {
+        if is_protected_path(&sp.to_string_lossy()) {
             fail += 1;
             del_item("delresult", p, kind, "fail", 0, "受保护的系统路径，已拒绝", "rejected");
             continue;
@@ -973,8 +1005,10 @@ fn parse_u64(s: &str) -> u64 {
 }
 
 fn main() {
-    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
-    let args: Vec<String> = args.into_iter().map(|a| a.to_string_lossy().to_string()).collect();
+    // 审查v4-L4：命令名/数值参数经 lossy 转换足够，但原始 OsString 必须保留——
+    // 文件路径含孤立代理对等非良构 UTF-16 时 to_string_lossy 会产生 U+FFFD，删除目标静默失配
+    let raw: Vec<OsString> = std::env::args_os().skip(1).collect();
+    let args: Vec<String> = raw.iter().map(|a| a.to_string_lossy().to_string()).collect();
     if args.is_empty() {
         println!("finder <duplicates|bigfiles|empty|appdata|sizes|delete> [args...]");
         return;
@@ -1056,13 +1090,14 @@ fn main() {
             cmd_sizes(&paths);
         }
         "delete" => {
-            let mut items: Vec<(String, String)> = Vec::new();
+            // 审查v4-L4：路径取原始 OsString，命令名与格式校验用 lossy 字符串
+            let mut items: Vec<(String, OsString)> = Vec::new();
             let mut i = 1;
-            while i < args.len() {
-                let kind = args.get(i).cloned().unwrap_or_default().to_lowercase();
-                let p = args.get(i + 1).cloned().unwrap_or_default();
+            while i + 1 < raw.len() {
+                let kind = args[i].to_lowercase();
+                let p = &args[i + 1];
                 if (kind == "file" || kind == "dir") && !p.is_empty() && !p.starts_with('-') {
-                    items.push((kind, p));
+                    items.push((kind, raw[i + 1].clone()));
                 }
                 i += 2;
             }

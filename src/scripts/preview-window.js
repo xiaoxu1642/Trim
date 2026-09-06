@@ -92,6 +92,25 @@
     const fileData = images[index];
     if (!fileData) return;
 
+    // 审查v4-M5：删除类操作必须红色二次确认；预览窗没有 app.js，直接用 modal.confirm
+    // （danger 渲染红色确认键、默认聚焦「取消」），modal.js 缺席时退回原生 confirm，
+    // 保证确认链路不因脚本加载顺序中断
+    const fileName = String(fileData.path || '').split('\\').pop() || fileData.path;
+    let confirmed = false;
+    if (window.modal?.confirm) {
+      confirmed = await window.modal.confirm({
+        title: '删除图片',
+        message: `将删除「${fileName}」。\n文件将进入回收站，可在回收站还原。`,
+        confirmText: '删除',
+        cancelText: '取消',
+        danger: true,
+        dangerHint: '删除后主窗口的文件列表与容量统计将实时同步刷新。'
+      });
+    } else {
+      confirmed = window.confirm(`将删除「${fileName}」（进入回收站，可在回收站还原）。\n是否继续？`);
+    }
+    if (!confirmed) return;
+
     let ok = false;
     try {
       if (window.api?.fileclean?.deleteFile) {
@@ -118,7 +137,7 @@
     if (images.length > 0) {
       const next = Math.min(index, images.length - 1);
       loadImage(next);
-      toast('已删除当前图片');
+      toast('已删除（可在回收站还原）');
     } else {
       toast('图片已全部删除');
       closeWindow();

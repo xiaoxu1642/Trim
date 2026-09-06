@@ -6,8 +6,11 @@
   const KEY = 'winclean-mouse-trail';
   const THROTTLE_MS = 22;      // 生成节流
   const FADE_MS = 520;         // 与 main.css 的过渡时长保持一致
-  const reduced = window.matchMedia &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // 审查v4-M1：reduced-motion 必须使用时实时求值，禁止模块加载时固化快照
+  // （固化会导致运行中切换系统「减少动态效果」偏好永不生效，9.6-B8 / v4-M1）
+  function isReducedMotion() {
+    return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  }
 
   let enabled = false;
   let layer = null;
@@ -28,7 +31,7 @@
     return layer;
   }
   function setEnabled(value) {
-    enabled = !reduced && Boolean(value);
+    enabled = !isReducedMotion() && Boolean(value);
     document.body.classList.toggle('mouse-trail-on', enabled);
     const toggle = document.getElementById('mouseTrailToggle');
     if (toggle) toggle.checked = enabled;
@@ -39,7 +42,7 @@
     }
   }
   function spawn(x, y) {
-    if (!enabled) return;
+    if (!enabled || isReducedMotion()) return;
     const now = performance.now();
     if (now - last < THROTTLE_MS) return;
     last = now;
@@ -63,6 +66,12 @@
   }
   function init() {
     setEnabled(readEnabled());
+    // 系统偏好运行中切换即时联动：开启→停用并移除图层（走 C6 路径清理节点），关闭→恢复
+    if (window.matchMedia) {
+      window.matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', () => {
+        setEnabled(readEnabled());
+      });
+    }
     document.addEventListener('pointermove', (e) => spawn(e.clientX, e.clientY), { passive: true });
     const toggle = document.getElementById('mouseTrailToggle');
     toggle && toggle.addEventListener('change', () => {

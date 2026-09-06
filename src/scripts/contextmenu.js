@@ -67,7 +67,7 @@
     const disabled = item.enabled === false
       ? ' ' + (window.ds
         ? window.ds.badgeHtml('neutral', '已禁用', { small: true, title: '已禁用（取消勾选即可重新启用）' })
-        : '<span class="badge off" title="已禁用（取消勾选即可重新启用）">已禁用</span>')
+        : '<span class="badge off" data-tip="已禁用（取消勾选即可重新启用）">已禁用</span>')
       : '';
     const risk = item.risk === 'protected'
       ? (window.ds ? window.ds.badgeHtml('bad', '系统保护', { small: true }) : '<span class="badge protected">系统保护</span>')
@@ -258,7 +258,7 @@
         </div>
         <div class="ctx-col-body">${rows}</div>
         <div class="ctx-col-foot">
-          <button type="button" class="ctx-col-selectall" data-col-selectall="${escapeHtml(cat)}" title="批量启用/禁用该分类全部可操作项">全选本类</button>
+          <button type="button" class="ctx-col-selectall" data-col-selectall="${escapeHtml(cat)}" data-tip="批量启用/禁用该分类全部可操作项">全选本类</button>
         </div>
       </div>
     `;
@@ -270,13 +270,13 @@
     const enabled = item.enabled !== false;
     const toggleable = isToggleable(item);
     return `
-      <div class="ctx-kanban-row ${item.risk === 'protected' ? 'protected' : ''} ${enabled ? '' : 'disabled-row'}" data-item-key="${escapeHtml(key)}" title="单击查看详情">
-        <div class="checkbox ${enabled ? 'checked' : ''} ${toggleable ? '' : 'disabled'}" title="${enabled ? '取消勾选禁用此项' : '勾选启用此项'}"></div>
+      <div class="ctx-kanban-row ${item.risk === 'protected' ? 'protected' : ''} ${enabled ? '' : 'disabled-row'}" data-item-key="${escapeHtml(key)}" data-tip="单击查看详情">
+        <div class="checkbox ${enabled ? 'checked' : ''} ${toggleable ? '' : 'disabled'}" data-tip="${enabled ? '取消勾选禁用此项' : '勾选启用此项'}"></div>
         <span class="ctx-row-index">${index}</span>
         <span class="ctx-row-main">
           <span class="ctx-row-name">${escapeHtml(item.name)}</span>
         </span>
-        <span class="ctx-row-side">${typeBadgeHtml(item)}<span class="ctx-row-detail" title="查看详情">
+        <span class="ctx-row-side">${typeBadgeHtml(item)}<span class="ctx-row-detail" data-tip="查看详情">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
         </span></span>
       </div>
@@ -303,11 +303,11 @@
             <div class="ctx-detail-name">${escapeHtml(item.name)}</div>
             <div class="ctx-detail-badges">${badge}<span class="ctx-detail-cat">${CATEGORY_ICONS[item.category] || ''} ${escapeHtml(item.category || '其他')}</span></div>
           </div>
-          <button class="ctx-detail-close" id="ctxDetailClose" title="关闭">&times;</button>
+          <button class="ctx-detail-close" id="ctxDetailClose" data-tip="关闭">&times;</button>
         </div>
         <div class="ctx-detail-body">
           <div class="ctx-detail-grid">
-            <div class="ctx-detail-row"><span class="ctx-detail-label">注册表路径</span><span class="ctx-detail-value mono ${regJumpable ? 'ctx-reg-jump' : ''}" ${regJumpable ? 'id="ctxRegJump" title="点击在注册表编辑器中定位（需要时会自动请求管理员权限）"' : ''}>${escapeHtml(regPath || '--')}</span></div>
+            <div class="ctx-detail-row"><span class="ctx-detail-label">注册表路径</span><span class="ctx-detail-value mono ${regJumpable ? 'ctx-reg-jump' : ''}" ${regJumpable ? 'id="ctxRegJump" data-tip="点击在注册表编辑器中定位（需要时会自动请求管理员权限）"' : ''}>${escapeHtml(regPath || '--')}</span></div>
              <div class="ctx-detail-row"><span class="ctx-detail-label">所属公司</span><span class="ctx-detail-value">${escapeHtml(item.company || '--')}</span></div>
              ${item.filePath ? `<div class="ctx-detail-row"><span class="ctx-detail-label">组件路径</span><span class="ctx-detail-value mono">${escapeHtml(item.filePath)}</span></div>` : ''}
              ${item.command ? `<div class="ctx-detail-row"><span class="ctx-detail-label">执行命令</span><span class="ctx-detail-value mono">${escapeHtml(item.command)}</span></div>` : ''}
@@ -320,7 +320,7 @@
             <div id="ctxIntroMount"></div>
           </div>
           <div class="ctx-detail-actions">
-            <button class="ctx-detail-delete" id="ctxDetailDelete" title="备份到桌面后删除此项（不可逆）">备份并删除</button>
+            <button class="ctx-detail-delete" id="ctxDetailDelete" data-tip="备份到桌面后删除此项（不可逆）">备份并删除</button>
           </div>
         </div>
       </div>
@@ -537,11 +537,15 @@
   }
 
   // ==================== 行内删除（先备份后删除，不可逆） ====================
+  // 审查v4-M3：右键项删除不可逆（注册表删除无回收站语义），按规范走红色二次确认，
+  // dangerHint 明示备份目录是唯一恢复手段
   async function removeItem(item) {
-    const ok = await window.app?.confirm(
+    const ok = await window.app?.confirmDanger(
       '删除右键菜单项',
       `即将备份并删除「${item.name}」。\n备份文件将保存到桌面"右键菜单备份_时间戳"目录。\n\n是否继续？`,
-      '确认删除'
+      '确认删除',
+      '取消',
+      '该操作不可逆（注册表删除无回收站语义），桌面备份目录是唯一恢复手段。'
     );
     if (!ok) return;
     try {
@@ -554,9 +558,10 @@
         if (!resp.success) throw new Error(resp.message);
         window.app?.toast('success', '已备份并删除所选菜单项');
       } else {
-        // 预览模式
+        // 预览模式（审查v4-L8：全局横幅替代逐条 [模拟] 前缀）
         await new Promise(r => setTimeout(r, 800));
-        window.app?.toast('success', `[模拟] 已备份到桌面，并删除「${item.name}」`);
+        window.app?.showPreviewModeBanner?.();
+        window.app?.toast('success', `已备份到桌面，并删除「${item.name}」`);
       }
       items = items.filter(i => getItemKey(i) !== getItemKey(item));
       if (detailItem === item) closeDetail();
@@ -627,7 +632,8 @@
         window.app?.toast('success', `已从 ${resp.data.backupDir} 导入 ${resp.data.imported} 项`);
       } else {
         await new Promise(r => setTimeout(r, 800));
-        window.app?.toast('info', '[模拟] 已恢复最新备份（浏览器预览模式无实际操作）');
+        window.app?.showPreviewModeBanner?.();
+        window.app?.toast('info', '已恢复最新备份（预览模式，无实际操作）');
       }
     } catch (e) {
       window.app?.toast('error', '恢复失败: ' + e.message);

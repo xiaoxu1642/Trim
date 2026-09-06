@@ -6,7 +6,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const SECURITY = require('./src/security');
+const SECURITY = require('./src/main/security');
 
 const ROOT = __dirname;
 let passed = 0;
@@ -31,17 +31,27 @@ function abs(p) {
 const SYNTAX_FILES = [
   'main.js',
   'preload.js',
-  'src/diag.js',
+  'src/main/diag.js',
   'src/scripts-powershell/cleanup-scripts.js',
   'src/scripts-powershell/maintenance-scripts.js',
   'src/scripts/app.js',
   'src/scripts/cleanup.js',
+  'src/scripts/cleanup-fallback.generated.js',
+  'src/scripts/ds.js',
+  'src/scripts/pathbinding.js',
+  'src/scripts/modal.js',
+  'src/scripts/logger.js',
   'src/scripts/intro.js',
   'src/scripts/maintenance.js',
   'src/scripts/netspeed-detector.js',
   'src/scripts/netspeed.js',
   'src/scripts/theme.js',
-  'src/scripts/xtable.js'
+  'src/scripts/xtable.js',
+  'src/scripts/preview-window.js',
+  'src/scripts/contextmenu.js',
+  'src/scripts/mouse-trail.js',
+  'src/scripts/tilt.js',
+  'src/scripts/spotlight.js'
 ];
 
 console.log('[1/5] JS 语法检查');
@@ -87,6 +97,18 @@ check('cleanup-rules.json 可解析且包含清理项', () => {
   if (items < 40) throw new Error('清理项数量异常: ' + items);
 });
 
+// 审查 2-2：双源一致性断言——generated FALLBACK 与规则 JSON 漂移时测试失败，提醒重新生成
+check('cleanup-fallback.generated.js 与 cleanup-rules.json 一致', () => {
+  const expected = JSON.parse(fs.readFileSync(abs('src/data/cleanup-rules.json'), 'utf8'));
+  delete globalThis.CLEANUP_RULES_FALLBACK;
+  require(abs('src/scripts/cleanup-fallback.generated.js')); // node 下挂到 globalThis
+  const embedded = globalThis.CLEANUP_RULES_FALLBACK;
+  if (!embedded) throw new Error('generated 文件缺少 CLEANUP_RULES_FALLBACK 赋值');
+  if (JSON.stringify(embedded) !== JSON.stringify(expected)) {
+    throw new Error('FALLBACK 数据与规则 JSON 不一致，请运行 node scripts/gen-fallback.js');
+  }
+});
+
 check('本地简介覆盖全部固定可点击项', () => {
   const intros = JSON.parse(fs.readFileSync(abs('src/data/item-intro.json'), 'utf8'));
   const scopes = intros.scopes || {};
@@ -100,6 +122,45 @@ check('本地简介覆盖全部固定可点击项', () => {
   const memoryIntros = scopes.memoryclean?.byId || {};
   const missingMemory = memoryIds.filter(id => !memoryIntros[id]);
   if (missingMemory.length) throw new Error('内存项缺少简介: ' + missingMemory.join(', '));
+});
+
+// 审查v4-M2：readme 是应用内「查看说明」弹窗数据源且打进安装包，
+// 关键数字与数据源脱节会误导用户风险判断（v4 报告实测优化中心数字全面漂移）。
+check('readme 使用说明数字与实现一致（防漂移）', () => {
+  const readme = fs.readFileSync(abs('readme.md'), 'utf8');
+  const optimizer = require(abs('src/scripts-powershell/optimizer-scripts.js'));
+  const options = optimizer.OPTIONS;
+  const groups = new Set(options.map(o => o.group)).size;
+  const high = options.filter(o => o.risk === 'high');
+  const highNoRestore = high.filter(o => !o.restoreAvailable).length;
+  const rules = JSON.parse(fs.readFileSync(abs('src/data/cleanup-rules.json'), 'utf8'));
+  let cleanupItems = 0;
+  let cleanupHigh = 0;
+  for (const g of rules.groups) {
+    for (const it of (g.items || [])) { cleanupItems++; if (it.risk === 'high') cleanupHigh++; }
+    for (const sg of (g.subGroups || [])) for (const it of (sg.items || [])) { cleanupItems++; if (it.risk === 'high') cleanupHigh++; }
+  }
+  const mustContain = [
+    `${groups} 个分组共 ${options.length} 个优化项`,
+    `${options.length} 个优化项按 ${groups} 个分组`,
+    `${options.length} 项里有 ${high.length} 项高风险，其中 ${highNoRestore} 项执行后无自动还原`,
+    `${high.length} 项高风险里 ${highNoRestore} 项无自动还原`,
+    `${rules.groups.length} 大类共 ${cleanupItems} 个清理项`,
+    `高风险项共 ${cleanupHigh} 个`
+  ];
+  // 去掉 markdown 加粗符号后比对，避免文案加粗调整造成误报
+  const plain = readme.replace(/\*/g, '');
+  const missing = mustContain.filter(s => !plain.includes(s));
+  if (missing.length) throw new Error('readme 数字漂移: ' + missing.join(' | '));
+});
+
+// 审查v4-M3：右键项删除不可逆（注册表无回收站语义），规范要求红色二次确认
+check('contextmenu 删除确认走 confirmDanger', () => {
+  const src = fs.readFileSync(abs('src/scripts/contextmenu.js'), 'utf8');
+  const idx = src.indexOf('async function removeItem');
+  if (idx < 0) throw new Error('removeItem 函数缺失');
+  const seg = src.slice(idx, idx + 800);
+  if (!seg.includes('confirmDanger')) throw new Error('removeItem 未走 confirmDanger 红色确认');
 });
 
 // ==================== 3. 纯模块可加载 + 脚本生成 ====================
@@ -137,7 +198,7 @@ check('优化器输出失败协议', () => {
 });
 
 check('diag 模块生成四元组诊断', () => {
-  const d = require(abs('src/diag.js'));
+  const d = require(abs('src/main/diag.js'));
   const fn = d.jsDiag || d.diag || d.make;
   if (typeof fn !== 'function') throw new Error('未找到诊断生成函数，exports=' + Object.keys(d).join(','));
   const diag = fn('test.stage', 'none', 'boom');

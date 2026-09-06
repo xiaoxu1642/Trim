@@ -8,7 +8,7 @@
 
 - **零前端框架**：原生 HTML/CSS/JS 单窗口 SPA（`src/index.html` 每页一个 `.page` div）。禁止引入 React/Vue/组件库运行时；组件视觉参考 shadcn/ui，交互逻辑参考 antd。
 - 仓库 `C:\kaifa\TuneForge`；Tauri 安装器工程在兄弟目录 `TuneForge goujian\trim-installer`。原生组件 `native-scanner/`（Rust）编译出 `finder.exe`（重复/大文件/空项查找器），由 electron-builder 作为 extraResources 进包。
-- 运行时 npm 依赖仅 4 个（AI 简介联网拉取用），**默认不新增依赖**，确需新增先征得同意。electron ^44.1.1（`setBackgroundMaterial` 依赖 Electron 30+）。
+- 运行时 npm 依赖 **0 个**（dependencies 为空；AI 简介联网拉取用内置 fetch），**默认不新增依赖**，确需新增先征得同意。electron ^44.1.1（`setBackgroundMaterial` 依赖 Electron 30+）。
 - 目录总图（2026-09 梳理后）：
   - 根目录：`main.js` / `preload.js`（Electron 入口）、`package.json`、`test-features.js`、`readme.md`、`AGENTS.md`、`LICENSE.md`
   - `src/assets/ico/`：**唯一图标目录**（品牌源、打包、运行时都用它；生成器是 `scripts/fix_icons.py`）
@@ -23,7 +23,7 @@
 
 | 部分 | 文件 | 要点 |
 |---|---|---|
-| 主进程 | `main.js`（约 4900 行，2026-09 实测；按域拆分待专项推进） | 窗口创建、全部 ipcMain.handle、appearance.json 持久化、原生窗口材质、安全模块 SECURITY（来自 `src/main/security.js`） |
+| 主进程 | `main.js`（约 5200 行，2026-09 实测；按域拆分待专项推进） | 窗口创建、全部 ipcMain.handle、appearance.json 持久化、原生窗口材质、安全模块 SECURITY（来自 `src/main/security.js`） |
 | 预加载 | `preload.js` | contextIsolation + sandbox，白名单暴露 `window.api`；**新增 IPC 必须同步补这里** |
 | 主窗口 | `src/index.html` | 每页一个 `.page` div；脚本见第三节 |
 | 子窗口 | models-window / peripheral-window / process-manager-window | 共用 `src/scripts/window-material.js` 同步主题与材质；窗口图标引用 `./assets/ico/Trim.ico` |

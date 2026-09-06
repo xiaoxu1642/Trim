@@ -68,11 +68,25 @@
   --warning-soft: rgba(245, 165, 36, 0.14);
   --danger-soft: rgba(240, 82, 77, 0.14);
   --info-soft: rgba(77, 157, 224, 0.14);
+  /* 审查 5-3：受保护/紫色语义（原覆盖层字面 var(--protected) 收敛）+ rgb 三元组（供 rgba(var(--x-rgb), a) 形态） */
+  --protected: #A78BFA;
+  --protected-soft: rgba(167, 139, 250, 0.14);
+  --warning-rgb: 245, 165, 36;
+  --success-rgb: 52, 199, 123;
+  --danger-rgb: 240, 82, 77;
+  --info-rgb: 77, 157, 224;
+  --protected-rgb: 167, 139, 250;
+  /* 审查 3-1：不透明表面（prefers-reduced-transparency 降级时玻璃/材质面回退到此色） */
+  --surface-solid: #171A21;
 
   /* 层级：卡片默认无投影，投影仅用于浮层/弹窗/Toast */
   --shadow-flyout: 0 8px 24px rgba(0, 0, 0, 0.5);
   --shadow-card: none;
   --shadow-tooltip: 0 4px 12px rgba(0, 0, 0, 0.45);
+  /* 批次：悬浮岛侧边栏 —— 岛浮影（两级克制投影，弱于弹窗级 --shadow-flyout）；
+     flyout 为收起态悬停浮出时的加强档（B 档） */
+  --shadow-island: 0 1px 2px rgba(0, 0, 0, 0.30), 0 6px 18px rgba(0, 0, 0, 0.26);
+  --shadow-island-flyout: 0 4px 10px rgba(0, 0, 0, 0.40), 0 14px 36px rgba(0, 0, 0, 0.42);
 
   /* 圆角刻度：4 徽章 / 6 输入·次级控件 / 8 按钮 / 10 普通卡片 / 14 大卡·弹窗 */
   --radius-badge: 4px;
@@ -150,20 +164,36 @@
   --accent-glow: rgba(94, 98, 198, 0.28);
   --accent-text: #FFFFFF;
 
-  /* 语义色（浅色下加深以保证白底可读）+ soft 底 */
-  --success: #1F9D63;
-  --warning: #C77F0A;
-  --danger: #E23D3A;
-  --info: #2B82C4;
-  --success-soft: rgba(31, 157, 99, 0.12);
-  --warning-soft: rgba(199, 127, 10, 0.12);
-  --danger-soft: rgba(226, 61, 58, 0.1);
-  --info-soft: rgba(43, 130, 196, 0.12);
+  /* 语义色（浅色下加深以保证可读）+ soft 底 */
+  /* 审查v4-M4：浅色语义色常作 10px 小字（风险徽章），须达 WCAG AA 4.5:1——
+     取值同时满足白底、自身 15% soft 软底叠白、叠 #F5F6F8 灰卡三种场景 ≥4.5:1
+     （报告原建议值叠软底仅 ≈4.3，故再深一档）；深色主题对应组本就达标，不动。 */
+  --success: #156B42;
+  --warning: #875708;
+  --danger: #AC2A27;
+  --info: #1D6493;
+  --success-soft: rgba(21, 107, 66, 0.12);
+  --warning-soft: rgba(135, 87, 8, 0.12);
+  --danger-soft: rgba(172, 42, 39, 0.1);
+  --info-soft: rgba(29, 100, 147, 0.12);
+  /* 审查 5-3：同上（浅色主题对应组） */
+  --protected: #7C5CE6;
+  --protected-soft: rgba(124, 92, 230, 0.12);
+  --warning-rgb: 135, 87, 8;
+  --success-rgb: 21, 107, 66;
+  --danger-rgb: 172, 42, 39;
+  --info-rgb: 29, 100, 147;
+  --protected-rgb: 124, 92, 230;
+  /* 审查 3-1：浅色不透明表面 */
+  --surface-solid: #FFFFFF;
 
   /* 浅色下白卡需轻投影分离；浮层投影更深 */
   --shadow-flyout: 0 8px 24px rgba(20, 24, 40, 0.16);
   --shadow-card: 0 1px 3px rgba(20, 24, 40, 0.06);
   --shadow-tooltip: 0 4px 12px rgba(20, 24, 40, 0.14);
+  /* 批次：悬浮岛侧边栏 —— 浅色岛浮影（冷墨低透明，浅色下投影更克制） */
+  --shadow-island: 0 1px 2px rgba(20, 24, 40, 0.06), 0 6px 18px rgba(20, 24, 40, 0.10);
+  --shadow-island-flyout: 0 4px 10px rgba(20, 24, 40, 0.10), 0 14px 36px rgba(20, 24, 40, 0.16);
 }
 
 /* ================================================================
@@ -220,11 +250,13 @@ body[data-skin="glass"] .table-card {
     0 4px 18px rgba(0, 0, 0, 0.10);
   background-image: var(--glass-sheen);
 }
-/* 侧边栏与顶栏：玻璃分层更明显（边缘高光沿窗口轮廓） */
+/* 侧边栏与顶栏：玻璃分层更明显（边缘高光沿窗口轮廓）。
+   批次：悬浮岛侧边栏 —— 原 inset -1px 0 0 是贴边栏的右缘轮廓高光；岛是整圈卡，
+   改为顶部内嵌高光 + 岛浮影，避免右缘出现一条孤立竖高光穿帮 */
 body[data-skin="glass"] .sidebar {
   box-shadow:
-    inset -1px 0 0 var(--glass-border),
-    inset 0 1px 0 var(--glass-highlight);
+    inset 0 1px 0 var(--glass-highlight),
+    var(--shadow-island);
 }
 body[data-skin="glass"] .topbar {
   box-shadow:
@@ -403,29 +435,46 @@ body {
   position: relative;
   isolation: isolate;
   background: var(--bg-base);
+  /* 批次：悬浮岛侧边栏 —— 岛与标题栏/窗口边缘/主内容的四周留白
+     （标题栏通栏不动，岛从标题栏下方 10px 开始悬浮；最大化由 win-maximized 段归零） */
+  gap: 12px;
+  padding: 10px 12px 12px;
 }
 
+/* 批次：悬浮岛侧边栏 B 档 —— .sidebar-rail 并入同一内容层级；
+   浮出主内容时由 B 档段在悬停期间提升轨道 z-index */
 .layout > .sidebar,
+.layout > .sidebar-rail,
 .layout > .main-content {
   position: relative;
   z-index: 2;
 }
 
-/* ---------- 侧边栏 ---------- */
+/* ---------- 侧边栏（批次：悬浮岛侧边栏 —— 独立悬浮圆角导航卡） ---------- */
 .sidebar {
   width: 232px;
-  background: var(--bg-mica);
+  /* 岛浮在 bg-base 上，用实体表面 --bg-card 拉开一级明度，不再用 --bg-mica；
+     材质激活时 --bg-card 会被「材质 2.0」段重定义为半透明，岛色由该段接管 */
+  background: var(--bg-card);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-  border-right: 1px solid var(--border-default);
+  /* 原 border-right 改整圈发丝边 */
+  border: 1px solid var(--border-default);
+  /* 圆角走 --radius-btn（8px，硬约束上限，刻意不用参考图的大圆角） */
+  border-radius: var(--radius-btn);
+  box-shadow: var(--shadow-island);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  overflow: hidden;
-  transition: width var(--duration-base) var(--ease-emphasized);
+  overflow: hidden; /* 负责把导航区裁进圆角 */
+  transition: width var(--duration-base) var(--ease-emphasized),
+              box-shadow var(--duration-fast) var(--ease-standard);
 }
 
-/* ---------- 侧边栏折叠/展开 ---------- */
+/* ---------- 侧边栏折叠/展开 ----------
+   批次：悬浮岛侧边栏 B 档 —— 宽度动画归 .sidebar-rail 管，本条在 B 档段被
+   同名高特异性规则覆盖为 width:100%（岛宽跟随轨道）；保留本条使删除 B 档
+   包裹层回退时折叠宽度仍生效。收起态自动继承岛的圆角/整圈边/阴影，即「窄岛」。 */
 .sidebar.collapsed {
   width: 56px;
 }
@@ -450,6 +499,70 @@ body {
 }
 .sidebar.collapsed .theme-toggle {
   display: none;
+}
+
+/* ---------- 批次：悬浮岛侧边栏 B 档 —— 收起态悬停浮层（零 JS，:has() 驱动） ----------
+   收起为 56px 窄岛后鼠标移入：岛脱离文档流加宽到 232px 浮在主内容之上，主内容不位移，
+   移出恢复（VSCode 式 flyout）。:has() 在 Electron 44（Chromium 远超 105）可用。
+   回滚本档 = 删除本段 + 还原 index.html 的 .sidebar-rail 包裹层即可。 */
+.sidebar-rail {
+  /* flex 纵向容器：岛作为其 flex 子项垂直拉伸到轨道全高（即 layout 内容区全高），
+     否则岛只有内容高、悬在窗口中部不落地，底部设置按钮也与主内容底不齐平 */
+  display: flex;
+  flex-direction: column;
+  width: 232px;
+  flex-shrink: 0;
+  position: relative; /* 岛浮出时的定位上下文 */
+  transition: width var(--duration-base) var(--ease-emphasized);
+}
+.sidebar-rail:has(.sidebar.collapsed) {
+  width: 56px;
+}
+/* 宽度归轨道管：压过上方 .sidebar.collapsed { width:56px }，岛宽 100% 跟随轨道动画，
+   避免点击收起瞬间岛先跳到 56px 再等轨道的「双重宽度打架」。
+   flex:1 让岛沿轨道纵向（flex column 主轴）拉伸占满轨道全高——否则岛只有内容高、
+   悬在窗口中部不落地，底部设置按钮也与主内容底不齐平（用户反馈） */
+.sidebar-rail .sidebar {
+  width: 100%;
+  flex: 1 1 auto;
+}
+.sidebar-rail .sidebar.collapsed {
+  width: 100%;
+  flex: 1 1 auto;
+}
+/* .layout 有 isolation:isolate（独立堆叠上下文），轨道与主内容同为 z-index:2 时按
+   DOM 顺序主内容后绘制、会盖住浮出岛；悬停期间提升轨道层级（模态/Toast 等
+   body 级浮层 z-index ≥1200 且挂在 .layout 之外，不受影响） */
+.sidebar-rail:has(.sidebar.collapsed):hover {
+  z-index: 40;
+}
+/* 收起 + 悬停：岛脱离文档流浮出加宽，轨道保持 56px，主内容纹丝不动 */
+.sidebar-rail:has(.sidebar.collapsed):hover .sidebar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 232px;
+  box-shadow: var(--shadow-island-flyout);
+}
+/* 浮出时恢复被 .sidebar.collapsed 隐藏的文字（选择器对应上方折叠隐藏规则）；
+   .nav-parent-toggle 是热区 span，原 display:flex，需排除后单独恢复，不能按 block 恢复 */
+.sidebar-rail:has(.sidebar.collapsed):hover .sidebar .nav-item span:not(.nav-parent-toggle),
+.sidebar-rail:has(.sidebar.collapsed):hover .sidebar .nav-section-title,
+.sidebar-rail:has(.sidebar.collapsed):hover .sidebar .sidebar-footer .sidebar-settings-btn span {
+  display: block;
+}
+.sidebar-rail:has(.sidebar.collapsed):hover .sidebar .nav-item .nav-parent-toggle {
+  display: flex;
+}
+.sidebar-rail:has(.sidebar.collapsed):hover .sidebar .nav-item,
+.sidebar-rail:has(.sidebar.collapsed):hover .sidebar .sidebar-footer .sidebar-settings-btn {
+  justify-content: flex-start;
+  padding: 8px 12px;
+}
+/* 最大化贴边态：轨道贴边，浮出岛左缘保持直角（右缘保留岛圆角） */
+body.win-maximized .sidebar-rail:has(.sidebar.collapsed):hover .sidebar {
+  border-radius: 0 var(--radius-btn) var(--radius-btn) 0;
 }
 
 /* 侧边栏折叠/展开切换按钮 */
@@ -731,7 +844,8 @@ body {
   width: auto;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 24px 32px 32px;
+  /* 批次：悬浮岛侧边栏 —— 顶部与岛顶齐平（原 24px 32px 32px） */
+  padding: 12px 20px 20px;
   position: relative;
 }
 
@@ -869,8 +983,8 @@ body {
   border-color: var(--danger);
 }
 .btn-danger:hover:not(:disabled) {
-  background: #B91C1C;
-  border-color: #B91C1C;
+  background: color-mix(in srgb, var(--danger) 82%, #000);
+  border-color: color-mix(in srgb, var(--danger) 82%, #000);
 }
 
 /* ================================================================
@@ -1242,9 +1356,9 @@ body {
   flex: 0 0 auto;
   min-height: 18px;
 }
-.category-risk.low { background: rgba(22, 163, 74, 0.15); color: var(--success); }
+.category-risk.low { background: rgba(var(--success-rgb), 0.15); color: var(--success); }
 .category-risk.medium { background: rgba(245, 158, 11, 0.15); color: var(--warning); }
-.category-risk.high { background: rgba(220, 38, 38, 0.15); color: var(--danger); }
+.category-risk.high { background: rgba(var(--danger-rgb), 0.15); color: var(--danger); }
 
 .category-path {
   font-size: calc(11px * var(--font-size-scale, 1));
@@ -1438,7 +1552,7 @@ body.lg-mode-frost .maint-tab.active .maint-tab-count {
   background: var(--bg-card-hover);
 }
 .context-item.protected {
-  background: rgba(220, 38, 38, 0.04);
+  background: rgba(var(--danger-rgb), 0.04);
 }
 
 .context-info {
@@ -1517,7 +1631,7 @@ body.lg-mode-frost .maint-tab.active .maint-tab-count {
   align-items: center;
   justify-content: center;
   padding: 2px 8px;
-  border-radius: 10px;
+  border-radius: 8px;
   font-size: calc(10px * var(--font-size-scale, 1));
   font-weight: calc(600 * var(--font-weight-scale, 1));
   text-transform: uppercase;
@@ -1526,8 +1640,8 @@ body.lg-mode-frost .maint-tab.active .maint-tab-count {
   flex: 0 0 auto;
 }
 .badge.third-party { background: rgba(245, 158, 11, 0.15); color: var(--warning); }
-.badge.system { background: rgba(22, 163, 74, 0.15); color: var(--success); }
-.badge.protected { background: rgba(220, 38, 38, 0.15); color: var(--danger); }
+.badge.system { background: rgba(var(--success-rgb), 0.15); color: var(--success); }
+.badge.protected { background: rgba(var(--danger-rgb), 0.15); color: var(--danger); }
 .badge.off { background: rgba(120, 120, 130, 0.18); color: var(--fg-tertiary); }
 
 /* ==================== 右键菜单分类分组 ==================== */
@@ -1759,7 +1873,7 @@ body.lg-mode-frost .maint-tab.active .maint-tab-count {
   color: var(--fg-tertiary);
   padding: 2px 8px;
   background: var(--bg-elevated);
-  border-radius: 10px;
+  border-radius: 8px;
 }
 .chart-status.running {
   color: var(--accent);
@@ -1820,7 +1934,7 @@ body.lg-mode-frost .maint-tab.active .maint-tab-count {
   padding: 1px 0;
 }
 .log-level.INFO { color: #60A5FA; }
-.log-level.WARN { color: #FBBF24; }
+.log-level.WARN { color: var(--warning); }
 .log-level.ERROR { color: #F87171; }
 .log-level.DEBUG { color: #94A3B8; }
 .log-message {
@@ -1888,7 +2002,7 @@ body.lg-mode-frost .maint-tab.active .maint-tab-count {
   display: inline-block;
   width: 40px;
   height: 20px;
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--border-default);
   position: relative;
   transition: background var(--duration-fast) var(--ease-standard);
@@ -2282,7 +2396,7 @@ select.field-input { cursor: pointer; appearance: auto; }
   min-height: 40px;
   background: var(--bg-card);
   border: 1px solid var(--border-default);
-  border-radius: 12px;
+  border-radius: 8px;
   cursor: pointer;
   text-align: left;
   font: inherit;
@@ -2443,7 +2557,7 @@ select.field-input { cursor: pointer; appearance: auto; }
   position: relative;
   background: var(--bg-card);
   border: 1px solid var(--border-strong);
-  border-radius: 16px;
+  border-radius: 8px;
   box-shadow: 0 20px 60px -20px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.04);
   overflow: hidden;
   transform: translateY(12px) scale(0.98);
@@ -2493,7 +2607,7 @@ select.field-input { cursor: pointer; appearance: auto; }
   flex: 0 0 auto;
   width: 42px;
   height: 42px;
-  border-radius: 10px;
+  border-radius: 8px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2552,7 +2666,7 @@ select.field-input { cursor: pointer; appearance: auto; }
 }
 .opt-modal-col {
   padding: 12px 14px;
-  border-radius: 12px;
+  border-radius: 8px;
   background: var(--bg-app);
   border: 1px solid var(--border-default);
 }
@@ -2598,7 +2712,7 @@ select.field-input { cursor: pointer; appearance: auto; }
   background: var(--accent, var(--c));
 }
 .opt-modal-steps {
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--bg-app);
   border: 1px solid var(--border-default);
   padding: 4px 10px;
@@ -2853,9 +2967,23 @@ body.electron-mica .layout {
   background: color-mix(in srgb, var(--bg-base) 88%, transparent);
 }
 
-body.electron-mica .sidebar {
-  /* 侧边栏：极轻的着色层，保留分区感但不遮挡 Mica */
-  background: rgba(128, 128, 128, 0.04);
+/* 批次：悬浮岛侧边栏 —— 贴边时代的近全透明着色（rgba(128,128,128,.04)）会让岛在
+   材质上直接消失，非最大化时岛改「半实体亚克力」（78% 实体卡 + 20px 磨砂）。
+   注意不能用 --bg-card 调配：材质 2.0 段已把它重定义为半透明（rgba(255,255,255,.055)），
+   会再次近全透明；必须用未被动过的不透明表面 token --surface-solid。 */
+body.electron-mica:not(.win-maximized) .sidebar {
+  background: color-mix(in srgb, var(--surface-solid) 78%, transparent);
+  border-color: var(--border-default);
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+}
+body.electron-mica.theme-light:not(.win-maximized) .sidebar {
+  background: color-mix(in srgb, #ffffff 72%, transparent);
+  border-color: rgba(20, 24, 40, 0.10);
+}
+/* 最大化：不透明实体，遵守 win-maximized 不透明护栏（--bg-card 在材质下是半透明，同样不可用） */
+body.electron-mica.win-maximized .sidebar {
+  background: var(--surface-solid);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
@@ -2863,11 +2991,6 @@ body.electron-mica .sidebar {
 body.electron-mica .main-content {
   /* 内容区透明，让窗口材质透出 */
   background: transparent;
-}
-
-/* 浅色 Mica 下的侧边栏着色微调 */
-body.electron-mica.theme-light .sidebar {
-  background: rgba(0, 0, 0, 0.02);
 }
 
 /* ================================================================
@@ -2890,17 +3013,31 @@ body.electron-mica.win-maximized .layout {
   background: var(--bg-base);
 }
 
+/* 批次：悬浮岛侧边栏 —— 最大化时取消岛形，回归贴边导航（Win11 语义 + 不透明护栏）。
+   Win11 最大化客户区贴屏幕边，继续留缝会露出一圈不可拖动的死边；只靠本 CSS 回退，
+   禁止在最大化/还原路径做任何原生材质操作。选择器不限材质，无材质时同样生效。 */
+body.win-maximized .layout {
+  padding: 0;
+  gap: 0;
+}
+body.win-maximized .sidebar {
+  border-radius: 0;
+  border-width: 0 1px 0 0;
+  box-shadow: none;
+}
+
 /* ================================================================
    四种窗口材质差异化显示（body[data-material] 由 theme.js/pathbinding.js 同步）
    Mica=柔和云母（默认） / Mica Alt(tabbed)=层次云母（着色更清晰）
    亚克力=磨砂玻璃（中等着色+高光渗透） / 细亚克力=更透亮（最轻着色）
    ================================================================ */
-/* Mica Alt：层次感更强的分区着色 */
-body.electron-mica[data-material="mica-alt"] .sidebar { background: rgba(128, 128, 128, 0.09); }
-body.electron-mica.theme-light[data-material="mica-alt"] .sidebar { background: rgba(0, 0, 0, 0.045); }
+/* Mica Alt：层次感更强的分区着色。
+   批次：悬浮岛侧边栏 —— 四材质对岛的区分着色已并入下方「材质 2.0」段的岛规则
+   （mica-alt 82% / acrylic 68% / thin-acrylic 58% --surface-solid 调配），旧贴边着色删除 */
+body.electron-mica[data-material="mica-alt"] .sidebar { /* 见「材质 2.0」段岛规则 */ }
 
-/* 亚克力：磨砂玻璃，着色适中 + 左上高光渗透，强化「磨砂」质感 */
-body.electron-mica[data-material="acrylic"] .sidebar { background: rgba(128, 128, 128, 0.07); }
+/* 亚克力：磨砂玻璃，着色适中 + 左上高光渗透，强化「磨砂」质感
+   （批次：悬浮岛侧边栏 —— 旧 .sidebar 着色已并入「材质 2.0」段岛规则） */
 body.electron-mica[data-material="acrylic"] .main-content::before {
   content: '';
   position: fixed;
@@ -2917,8 +3054,8 @@ body.electron-mica.theme-dark[data-material="acrylic"] .main-content::before {
     radial-gradient(90% 70% at 100% 100%, rgba(255, 255, 255, 0.03) 0%, transparent 55%);
 }
 
-/* 细亚克力：更透亮，着色最轻，无附加层 */
-body.electron-mica[data-material="thin-acrylic"] .sidebar { background: rgba(128, 128, 128, 0.03); }
+/* 细亚克力：更透亮，着色最轻，无附加层
+   （批次：悬浮岛侧边栏 —— 旧 .sidebar 着色已并入「材质 2.0」段岛规则） */
 
 /* ================================================================
    Fluent Design 精修（Win11 25H2/26H1）
@@ -3547,7 +3684,7 @@ input[type="radio"]:focus-visible {
   transition: all var(--duration-fast) var(--ease-standard);
 }
 .bench-history-delete:hover {
-  background: rgba(220, 38, 38, 0.12);
+  background: rgba(var(--danger-rgb), 0.12);
   color: var(--danger);
 }
 
@@ -3858,7 +3995,7 @@ input[type="radio"]:focus-visible {
 .preview-delete-btn:hover {
   color: var(--danger);
   border-color: var(--danger);
-  background: rgba(220, 38, 38, 0.08);
+  background: rgba(var(--danger-rgb), 0.08);
 }
 .preview-delete-btn:active {
   transform: scale(0.94);
@@ -4066,7 +4203,7 @@ body.mw-window #pmBody .pm-virtual .xtable-body {
   cursor: pointer;
   transition: background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
 }
-.ctx-row-del:hover { background: rgba(220, 38, 38, 0.12); color: var(--danger); }
+.ctx-row-del:hover { background: rgba(var(--danger-rgb), 0.12); color: var(--danger); }
 
 /* 单元格 */
 .xtable-td {
@@ -4107,7 +4244,7 @@ body.mw-window #pmBody .pm-virtual .xtable-body {
 .path-auto-tag {
   display: inline-block;
   padding: 0 4px;
-  background: rgba(59, 130, 246, 0.12);
+  background: rgba(var(--info-rgb), 0.12);
   color: var(--accent);
   font-size: calc(10px * var(--font-size-scale, 1));
   font-family: inherit;
@@ -4134,7 +4271,7 @@ body.mw-window #pmBody .pm-virtual .xtable-body {
 .ctx-detail-cat::selection,
 .badge::selection,
 .category-risk::selection {
-  background: rgba(59, 130, 246, 0.35);
+  background: rgba(var(--info-rgb), 0.35);
 }
 
 /* ================================================================
@@ -4203,7 +4340,7 @@ body.mw-window #pmBody .pm-virtual .xtable-body {
 }
 .ctx-reg-jump:hover {
   color: var(--accent);
-  background: rgba(59, 130, 246, 0.08);
+  background: rgba(var(--info-rgb), 0.08);
 }
 .ctx-reg-jump:active { opacity: 0.7; }
 .ctx-reg-jump.jumping { opacity: 0.55; }
@@ -4511,8 +4648,9 @@ body.mw-window #pmBody .pm-virtual .xtable-body {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #fff;
-  background: linear-gradient(135deg, #D97706, #B45309);
+  /* 审查 5-2：彩色渐变去化，与 startup-item-icon 同款「淡底 + 语义色图标」方案 */
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 16%, transparent);
 }
 
 .restore-item-info {
@@ -4560,11 +4698,11 @@ body.mw-window #pmBody .pm-virtual .xtable-body {
   font-weight: calc(500 * var(--font-weight-scale, 1));
 }
 .restore-vol.on {
-  background: rgba(22, 163, 74, 0.12);
+  background: rgba(var(--success-rgb), 0.12);
   color: var(--success);
 }
 .restore-vol.off {
-  background: rgba(220, 38, 38, 0.12);
+  background: rgba(var(--danger-rgb), 0.12);
   color: var(--danger);
 }
 
@@ -4593,7 +4731,7 @@ body.mw-window #pmBody .pm-virtual .xtable-body {
   flex-direction: column;
   background: var(--bg-card);
   border: 1px solid var(--border-strong);
-  border-radius: 16px;
+  border-radius: 8px;
   box-shadow: 0 20px 60px -20px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.04);
   overflow: hidden;
   animation: modalScaleIn var(--duration-base) var(--ease-emphasized);
@@ -4945,9 +5083,9 @@ body.mw-window #pmBody .pm-virtual .xtable-body {
   justify-content: center;
   color: #fff;
 }
-.startup-item-icon.reg { background: linear-gradient(135deg, #3B82F6, #1D4ED8); }
-.startup-item-icon.folder { background: linear-gradient(135deg, #16A34A, #15803D); }
-.startup-item-icon.task { background: linear-gradient(135deg, #D97706, #B45309); }
+.startup-item-icon.reg { background: color-mix(in srgb, var(--info) 16%, transparent); color: var(--info); }
+.startup-item-icon.folder { background: color-mix(in srgb, var(--success) 16%, transparent); color: var(--success); }
+.startup-item-icon.task { background: color-mix(in srgb, var(--warning) 16%, transparent); color: var(--warning); }
 .startup-item-info {
   flex: 1;
   min-width: 0;
@@ -4970,8 +5108,8 @@ body.mw-window #pmBody .pm-virtual .xtable-body {
   padding: 2px 8px;
   border-radius: 999px;
 }
-.startup-badge.on { background: color-mix(in srgb, #16A34A 14%, transparent); color: #16A34A; }
-.startup-badge.off { background: color-mix(in srgb, #D97706 14%, transparent); color: #D97706; }
+.startup-badge.on { background: color-mix(in srgb, var(--success) 14%, transparent); color: var(--success); }
+.startup-badge.off { background: color-mix(in srgb, var(--warning) 14%, transparent); color: var(--warning); }
 .startup-item-cmd {
   font-size: var(--fs-meta);
   color: var(--fg-tertiary);
@@ -4992,29 +5130,29 @@ body.mw-window #pmBody .pm-virtual .xtable-body {
   gap: 6px;
 }
 .btn-opt-toggle.on {
-  background: color-mix(in srgb, #16A34A 14%, transparent);
-  color: #16A34A;
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+  color: var(--success);
   border-color: transparent;
 }
 .btn-opt-toggle.off {
-  background: color-mix(in srgb, #D97706 14%, transparent);
-  color: #D97706;
+  background: color-mix(in srgb, var(--warning) 14%, transparent);
+  color: var(--warning);
   border-color: transparent;
 }
 .btn-opt-toggle:hover:not(:disabled) {
   filter: brightness(1.1);
 }
 .btn-opt-del {
-  background: color-mix(in srgb, #DC2626 12%, transparent);
-  color: #DC2626;
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
   border-color: transparent;
 }
 .btn-opt-del:hover:not(:disabled) {
   filter: brightness(1.1);
 }
 .btn-opt-loc {
-  background: color-mix(in srgb, var(--accent, #3B82F6) 12%, transparent);
-  color: var(--accent, #3B82F6);
+  background: color-mix(in srgb, var(--accent, var(--info)) 12%, transparent);
+  color: var(--accent, var(--info));
   border-color: transparent;
 }
 .btn-opt-loc:hover:not(:disabled) {
@@ -5022,8 +5160,8 @@ body.mw-window #pmBody .pm-virtual .xtable-body {
 }
 /* 启动项「简介」按钮（联网 AI 简介入口） */
 .btn-opt-intro {
-  background: color-mix(in srgb, #8B5CF6 12%, transparent);
-  color: #8B5CF6;
+  background: color-mix(in srgb, var(--protected) 12%, transparent);
+  color: var(--protected);
   border-color: transparent;
 }
 .btn-opt-intro:hover:not(:disabled) {
@@ -5072,7 +5210,7 @@ body.mw-window #pmBody .pm-virtual .xtable-body {
 .ctx-detail-modal,
 .ctx-detail-modal.ai-config-modal {
   border: 1px solid var(--border-strong);
-  border-radius: 16px;
+  border-radius: 8px;
   box-shadow: 0 20px 60px -20px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.04);
   animation: modalScaleIn var(--duration-base) var(--ease-emphasized);
 }
@@ -5127,7 +5265,7 @@ body.mw-window #pmBody .pm-virtual .xtable-body {
   flex: 0 0 auto;
   width: 34px;
   height: 34px;
-  border-radius: 9px;
+  border-radius: 8px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -5677,7 +5815,7 @@ body.pv-window {
   position: absolute; top: 50%; transform: translateY(-50%);
   width: 44px; height: 64px;
   display: flex; align-items: center; justify-content: center;
-  border: none; border-radius: 10px;
+  border: none; border-radius: 8px;
   background: rgba(30, 30, 30, 0.6); color: rgba(255, 255, 255, 0.85);
   cursor: pointer; z-index: 2;
   transition: background var(--duration-fast) var(--ease-standard);
@@ -5721,7 +5859,7 @@ body.pv-window {
 }
 .ctx-detail-modal {
   border: 1px solid var(--border-strong);
-  border-radius: 16px;
+  border-radius: 8px;
   box-shadow: 0 20px 60px -20px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.04);
 }
 .ctx-detail-header { padding: 16px 20px 12px; }
@@ -5781,9 +5919,9 @@ body.pv-window {
 .rt-report-row-title { font-size: var(--fs-secondary); font-weight: calc(600 * var(--font-weight-scale, 1)); color: var(--fg-primary); }
 .rt-report-row-meta { margin-top: 2px; font-size: calc(11px * var(--font-size-scale, 1)); color: var(--fg-tertiary); }
 #btnRealtimeRecord.recording {
-  background: color-mix(in srgb, var(--danger, #DC2626) 12%, transparent);
-  border-color: var(--danger, #DC2626);
-  color: var(--danger, #DC2626);
+  background: color-mix(in srgb, var(--danger, var(--danger)) 12%, transparent);
+  border-color: var(--danger, var(--danger));
+  color: var(--danger, var(--danger));
 }
 @media (max-width: 640px) {
   .rt-stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -5845,8 +5983,8 @@ body.pv-window {
   color: #fff;
   transition: transform 150ms var(--ease-standard), box-shadow 150ms var(--ease-standard);
 }
-#ovMemJump { background: linear-gradient(135deg, #6B46C1, #553C9A); }
-#ovDiskJump { background: linear-gradient(135deg, #0E9F6E, #057A55); }
+#ovMemJump { background: var(--protected); }
+#ovDiskJump { background: var(--success); }
 .overview-jump-icon:hover {
   transform: scale(1.08);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
@@ -6094,7 +6232,7 @@ body.pv-window {
   background: var(--bg-card-hover);
   border: 1px solid var(--border-subtle);
   padding: 2px 9px;
-  border-radius: 10px;
+  border-radius: 8px;
   white-space: nowrap;
 }
 /* 「更多调优项」入口（外设调优列头 → 外设优化窗口） */
@@ -6107,7 +6245,7 @@ body.pv-window {
   background: transparent;
   border: 1px solid var(--accent-light);
   padding: 2px 9px;
-  border-radius: 10px;
+  border-radius: 8px;
   cursor: pointer;
   white-space: nowrap;
   transition: background var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard);
@@ -6219,7 +6357,7 @@ body.pv-window {
   background: var(--bg-card-hover);
   border: 1px solid var(--border-subtle);
   padding: 1px 8px;
-  border-radius: 10px;
+  border-radius: 8px;
   white-space: nowrap;
 }
 
@@ -6263,7 +6401,7 @@ body.pv-window {
   font-size: 12px;
   line-height: 1.6;
   padding: 3px 12px;
-  border-radius: 12px;
+  border-radius: 8px;
   border: 1px solid var(--border-strong);
   background: transparent;
   color: var(--fg-secondary);
@@ -6462,7 +6600,11 @@ body.pv-window {
   font-size: 12px;
   color: var(--fg-secondary);
 }
-.bg-opacity-row input[type="range"] { flex: 1; accent-color: var(--accent); }
+/* 批次：雾化度/模糊度滑块行修正 —— 滑块条改短（用户要求），标签与百分比值
+   flex:none 不压缩不换行，避免窄卡下「雾化度」被挤成竖排、百分比掉到下一行 */
+.bg-opacity-row .bg-opacity-label { flex: none; white-space: nowrap; }
+.bg-opacity-row input[type="range"] { flex: 1 1 auto; min-width: 56px; max-width: 110px; accent-color: var(--accent); }
+.bg-opacity-row span:last-child { flex: none; white-space: nowrap; }
 .bg-list {
   margin-top: 8px;
   border: 1px solid var(--border-default);
@@ -6553,12 +6695,12 @@ body.bg-image-on .layout::after {
   padding: 1px 6px;
   font-size: 10.5px;
   border-radius: 4px;
-  background: rgba(217, 119, 6, 0.16);
+  background: rgba(var(--warning-rgb), 0.16);
   color: #d97706;
   vertical-align: middle;
   white-space: nowrap;
 }
-body.theme-light .path-blocked-tag { background: rgba(217, 119, 6, 0.12); color: #b45309; }
+body.theme-light .path-blocked-tag { background: rgba(var(--warning-rgb), 0.12); color: #b45309; }
 
 /* P3 明细弹窗：文件清单（路径 + 大小，等宽行，超出滚动） */
 .detail-file-list {
@@ -6722,7 +6864,7 @@ body.theme-light .path-blocked-tag { background: rgba(217, 119, 6, 0.12); color:
   color: var(--fg-secondary);
   background: var(--bg-card);
   border: 1px solid var(--border-default);
-  border-radius: 16px;
+  border-radius: 8px;
   cursor: pointer;
   transition: color 180ms var(--ease-standard), border-color 180ms var(--ease-standard), background-color 180ms var(--ease-standard);
 }
@@ -6736,7 +6878,7 @@ body.theme-light .path-blocked-tag { background: rgba(217, 119, 6, 0.12); color:
   font-size: 11px;
   line-height: 1.5;
   padding: 0 7px;
-  border-radius: 9px;
+  border-radius: 8px;
   background: var(--border-default);
   color: var(--fg-tertiary);
 }
@@ -6776,7 +6918,7 @@ body.theme-light .path-blocked-tag { background: rgba(217, 119, 6, 0.12); color:
   justify-content: center;
   width: 40px;
   height: 40px;
-  border-radius: 10px;
+  border-radius: 8px;
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
@@ -6801,23 +6943,23 @@ body.theme-light .path-blocked-tag { background: rgba(217, 119, 6, 0.12); color:
   font-size: 11px;
   line-height: 1.5;
   padding: 0 7px;
-  border-radius: 9px;
-  color: #B45309;
-  background: rgba(217, 119, 6, 0.14);
+  border-radius: 8px;
+  color: color-mix(in srgb, var(--warning) 80%, #000);
+  background: rgba(var(--warning-rgb), 0.14);
 }
-.theme-dark .maint-admin-tag { color: #FBBF24; }
+.theme-dark .maint-admin-tag { color: var(--warning); }
 .maint-status {
   font-size: 11px;
   line-height: 1.5;
   padding: 0 7px;
-  border-radius: 9px;
+  border-radius: 8px;
 }
 .maint-status-running { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
-.maint-status-ok { color: #16A34A; background: rgba(22, 163, 74, 0.14); }
-.maint-status-warn { color: #B45309; background: rgba(217, 119, 6, 0.14); }
+.maint-status-ok { color: var(--success); background: rgba(var(--success-rgb), 0.14); }
+.maint-status-warn { color: color-mix(in srgb, var(--warning) 80%, #000); background: rgba(var(--warning-rgb), 0.14); }
 .maint-status-error { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
 .theme-dark .maint-status-ok { color: #4ADE80; }
-.theme-dark .maint-status-warn { color: #FBBF24; }
+.theme-dark .maint-status-warn { color: var(--warning); }
 
 /* 系统维护：批量操作栏（全选 / 已选计数 / 执行选中 / 全部执行 / 取消 / 进度） */
 .maint-batchbar {
@@ -6960,7 +7102,7 @@ body.theme-light .path-blocked-tag { background: rgba(217, 119, 6, 0.12); color:
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 10px;
+  border-radius: 8px;
   color: #fff;
 }
 .qc-body {
@@ -7080,9 +7222,11 @@ body.theme-light .titlebar {
 }
 body.theme-light .titlebar-title { color: #1c1e24; }
 
+/* 批次：悬浮岛侧边栏 —— 主题段原写死贴边底色与右缘边色，岛化后改整圈边色；
+   深色原 #11141b 与 bg-base #0F1115 明度差太弱，岛会糊在底色上，改用 --bg-card #171A21 */
 body.theme-dark .sidebar {
-  background: #11141b;
-  border-right-color: rgba(255, 255, 255, 0.08);
+  background: var(--bg-card);
+  border-color: rgba(255, 255, 255, 0.08);
 }
 body.theme-dark .main-content { background: #0b0d12; }
 body.theme-dark .nav-item { min-height: 36px; transition: background 180ms ease, color 180ms ease; }
@@ -7093,7 +7237,7 @@ body.theme-dark .nav-subitem:hover { background: #1c212c; }
 
 /* Light mode readability: never inherit carbon surfaces or pale foregrounds. */
 body.theme-light { background-color: #f5f6f8; color: #1c1e24; background-image: none !important; }
-body.theme-light .sidebar { background: #ffffff; border-right-color: rgba(20, 24, 40, 0.12); }
+body.theme-light .sidebar { background: #ffffff; border-color: rgba(20, 24, 40, 0.12); }
 body.theme-light .main-content { background: #f5f6f8; }
 body.theme-light .nav-item { color: #1c1e24; }
 body.theme-light .nav-item:hover { background: #eef0f4; }
@@ -7170,7 +7314,8 @@ body.theme-light .nav-section-title { color: #626a79; }
 
 @media (prefers-reduced-motion: reduce) {
   .btn > .btn-ripple { display: none; }
-  .btn, .summary-card, .nav-item { transition: none !important; }
+  /* 批次：悬浮岛侧边栏 —— 岛与轨道的宽度/阴影过渡一并关断 */
+  .btn, .summary-card, .nav-item, .sidebar, .sidebar-rail { transition: none !important; }
 }
 
 /* Light mode controls and content keep WCAG-friendly contrast. */
@@ -7402,8 +7547,8 @@ body.bg-image-on .main-content {
   font-weight: 400;
   color: var(--fg-tertiary, #8a9aa8);
 }
-.xtable-td .finder-role-kept { color: var(--success, #16A34A); }
-.xtable-td .finder-role-candidate { color: var(--warn, #D97706); }
+.xtable-td .finder-role-kept { color: var(--success, var(--success)); }
+.xtable-td .finder-role-candidate { color: var(--warn, var(--warning)); }
 .xtable-row[data-kind="folder"] .xtable-cell-icon, 
 .xtable-cell-path .folder-ico { opacity: 0.75; }
 .finder-size-end { text-align: right; font-variant-numeric: tabular-nums; }
@@ -7447,8 +7592,8 @@ body.bg-image-on .main-content {
 .finder-name-text { color: var(--fg-primary, #1a2530); }
 .finder-childcount { color: var(--fg-tertiary, #8a9aa8); font-size: 12px; }
 .finder-role { font-size: 11px; padding: 1px 7px; border-radius: 999px; white-space: nowrap; }
-.finder-role-kept { background: color-mix(in srgb, #16A34A 14%, transparent); color: #16A34A; }
-.finder-role-candidate { background: color-mix(in srgb, #D97706 14%, transparent); color: #D97706; }
+.finder-role-kept { background: color-mix(in srgb, var(--success) 14%, transparent); color: var(--success); }
+.finder-role-candidate { background: color-mix(in srgb, var(--warning) 14%, transparent); color: var(--warning); }
 
 /* ================================================================
    窗口材质 2.0 + 液态玻璃 2.0（文件末位覆盖层 · 窗口界面升级2）
@@ -7522,15 +7667,25 @@ body.electron-mica:not(.win-maximized) {
 }
 body.electron-mica:not(.win-maximized) .layout { background: transparent; }
 body.electron-mica:not(.win-maximized) .main-content { background: transparent !important; }
-body.electron-mica:not(.win-maximized) .sidebar {
-  background: rgba(255, 255, 255, 0.035);
-  border-right-color: rgba(255, 255, 255, 0.07);
-  backdrop-filter: blur(10px) saturate(1.3);
-  -webkit-backdrop-filter: blur(10px) saturate(1.3);
+/* 批次：悬浮岛侧边栏 —— 贴边时代本段把侧栏洗成 rgba(255,255,255,.035) 近全透明，
+   岛化后会直接消失；岛化的「半实体亚克力」基座（78% --surface-solid + blur(20px)，
+   浅色 72% 白）统一定义在上方「原生 Mica」段，此处按四种材质微调岛底浓度制造区分
+   （仅深色调整；浅色统一 72% 白保证可读），百分比对齐文档建议：mica 78 / mica-alt 82 /
+   acrylic 68 / thin-acrylic 58，不要恢复纯透明。 */
+body.electron-mica.theme-dark[data-material="mica-alt"]:not(.win-maximized) .sidebar {
+  background: color-mix(in srgb, var(--surface-solid) 82%, transparent);
 }
-body.electron-mica.theme-light:not(.win-maximized) .sidebar {
-  background: rgba(255, 255, 255, 0.30);
-  border-right-color: rgba(20, 24, 40, 0.08);
+body.electron-mica.theme-dark[data-material="acrylic"]:not(.win-maximized) .sidebar {
+  background: color-mix(in srgb, var(--surface-solid) 68%, transparent);
+}
+body.electron-mica.theme-dark[data-material="thin-acrylic"]:not(.win-maximized) .sidebar {
+  background: color-mix(in srgb, var(--surface-solid) 58%, transparent);
+}
+/* 最大化：不透明实体（护栏），压过上方全部半透明岛色 */
+body.electron-mica.win-maximized .sidebar {
+  background: var(--surface-solid);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 /* 卡片级磨砂：内容滚动时卡片底下模糊，材质与背景保持通透 */
@@ -7855,4 +8010,48 @@ body[data-preset-bg][data-skin="glass"] .empty-state {
 body.electron-mica[data-skin="glass"]:not(.win-maximized) .sidebar {
   -webkit-backdrop-filter: blur(var(--glass-blur, 26px)) saturate(1.65) brightness(1.04);
   backdrop-filter: blur(var(--glass-blur, 26px)) saturate(1.65) brightness(1.04);
+}
+
+/* ==================== 审查 3-1/6-1：系统「透明度效果」降级 ==================== */
+/* Windows 11 辅助功能关闭「透明度效果」（prefers-reduced-transparency: reduce）时：
+   停用全部 backdrop-filter 与玻璃模糊档位，玻璃/材质半透明面板回退 --surface-solid 实色，
+   兼顾低配机合成性能与视觉可读性。仅在系统声明该偏好时生效，常态视觉不受影响。 */
+@media (prefers-reduced-transparency: reduce) {
+  body[data-skin="glass"] { --glass-blur: 0px; }
+  *, *::before, *::after {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+  body[data-skin="glass"] .card,
+  body[data-skin="glass"] .usage-modal,
+  body[data-skin="glass"] .filter-tabs,
+  body[data-skin="glass"] .maint-tabs,
+  /* 批次：悬浮岛侧边栏 —— 系统关透明度时岛同步回实色，磨砂缺失也不影响可读 */
+  body[data-skin="glass"] .sidebar,
+  body.electron-mica .card,
+  body.electron-mica .usage-modal,
+  body.electron-mica .sidebar {
+    background: var(--surface-solid);
+  }
+}
+
+/* 审查v4-L8：浏览器预览模式全局横幅（preload 缺失的降级路径）。
+   无动效、不拦截点击（pointer-events:none），常驻顶部直到页面关闭。 */
+.preview-mode-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 12000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 14px;
+  font-size: var(--fs-secondary);
+  font-weight: calc(500 * var(--font-weight-scale, 1));
+  color: var(--warning);
+  background: rgba(var(--warning-rgb), 0.14);
+  border-bottom: 1px solid rgba(var(--warning-rgb), 0.4);
+  pointer-events: none;
 }

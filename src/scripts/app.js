@@ -219,6 +219,18 @@
     return confirm(title, message, confirmText, cancelText, { danger: true, dangerHint });
   }
 
+  // 审查v4-L8：浏览器预览模式（preload 未注入 window.api）的全局提示横幅。
+  // 一次性告知「当前为模拟展示」，替代逐条 [模拟] toast 前缀，避免用户把模拟结果当真。
+  function showPreviewModeBanner() {
+    if (document.getElementById('previewModeBanner')) return;
+    const bar = document.createElement('div');
+    bar.id = 'previewModeBanner';
+    bar.className = 'preview-mode-banner';
+    bar.setAttribute('role', 'alert');
+    bar.textContent = '浏览器预览模式：未接入应用主进程，页面数据与操作结果均为模拟展示，不会产生实际变更';
+    document.body.appendChild(bar);
+  }
+
   // 应用状态（管理员权限等）
   const appState = { isAdmin: null };
 
@@ -272,7 +284,7 @@
         ${options.title ? `<div class="toast-title">${escapeHtml(options.title)}</div>` : ''}
         <div>${messageHtml}</div>
       </div>
-      ${options.closable ? '<button class="toast-close" type="button" aria-label="关闭通知" title="关闭">&times;</button>' : ''}
+      ${options.closable ? '<button class="toast-close" type="button" aria-label="关闭通知" data-tip="关闭">&times;</button>' : ''}
     `;
     container.appendChild(el);
 
@@ -454,6 +466,18 @@
   // ==================== 优雅关闭流程 ====================
   // 主进程拦截关闭后触发：展示"感谢使用"Toast，逐步关闭各服务，完成后真正退出
   function startGracefulShutdown() {
+    // 审查 4-2：清理任务执行中（cleanup:execute 上限 10 分钟）暂缓优雅关闭，轮询等待完成
+    // 后再进入——已删除文件无法回滚，提前强退会丢失结果统计
+    if (window.cleanup?.isCleaning?.()) {
+      try { toast('warning', '清理任务正在执行，将在完成后自动退出…', 6000); } catch (_) {}
+      const waitCleanup = setInterval(() => {
+        if (!window.cleanup?.isCleaning?.()) {
+          clearInterval(waitCleanup);
+          startGracefulShutdown();
+        }
+      }, 1000);
+      return;
+    }
     const container = document.getElementById('toastContainer');
     if (!container) {
       // 找不到容器直接完成关闭
@@ -728,14 +752,14 @@
     window.fontmanager?.restore?.();
 
     // 暴露给其它模块（须在页面模块启动逻辑之前，保证其可调用 app 能力）
-    window.app = { toast, confirm, confirmDanger, log, switchPage, loadAppInfo, requestElevation, getState: () => appState };
+    window.app = { toast, confirm, confirmDanger, showPreviewModeBanner, log, switchPage, loadAppInfo, requestElevation, getState: () => appState };
 
     // 初始加载：恢复上次活跃页（窗口状态记忆），无记录则默认系统概览
     const lastPage = (() => { try { return localStorage.getItem(ACTIVE_PAGE_KEY); } catch (e) { return null; } })();
     // 磁盘清理五合一：旧子页地址（cleanup-dups 等）对应 page 已不存在，先归一化到主页
     const targetPage = lastPage && CLEANUP_VIEWS.indexOf(lastPage) > -1 ? 'cleanup' : lastPage;
     if (targetPage && targetPage !== 'overview' && document.getElementById('page-' + targetPage)) {
-      switchPage(lastPage);
+      switchPage(targetPage); // 审查 7-4：统一用归一化后的变量；switchPage 内部自会处理五合一旧地址
     } else if (document.getElementById('page-overview')?.classList.contains('active')) {
       overview.start();
     }

@@ -3,11 +3,15 @@
 // 材质卡(.material-card) / 单选行(.radio-row)。光斑是一层绝对定位的 .spot-layer，
 // radial 渐变按宿主圆角裁剪；坐标由 document 级事件委托写入 --spot-x/--spot-y，
 // 不给元素逐个挂监听，动态渲染的列表按钮（复制/打开/清理该项等）同样生效。
-// prefers-reduced-motion 时不启动、CSS 层隐藏（design-system 硬性约束 3）。
+// prefers-reduced-motion 实时求值：reduce 时不生成光斑、残留光斑立即熄灭（design-system 硬性约束 3）。
 (function () {
   'use strict';
 
-  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  // 审查v4-M1：reduced-motion 实时求值——原实现模块加载时固化并提前 return，
+  // 运行中切换系统「减少动态效果」偏好永不生效
+  function isReducedMotion() {
+    return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  }
 
   var HOST_SELECTOR = '.btn, .filter-tab, .maint-tab, .material-card, .radio-row';
   var LAYER_CLASS = 'spot-layer';
@@ -40,6 +44,7 @@
   }
 
   document.addEventListener('pointermove', function (e) {
+    if (isReducedMotion()) { setCurrent(null); return; }
     var host = hostFromEvent(e);
     setCurrent(host);
     if (!host) return;

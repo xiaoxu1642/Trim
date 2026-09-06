@@ -43,14 +43,19 @@
 
   function reset(el) {
     if (!el) return;
-    setTransform(el, '', RESET_TRANSITION);
+    // reduced-motion 下复位直接清除姿态，不做 0.5s 过渡动画
+    setTransform(el, '', isReducedMotion() ? 'none' : RESET_TRANSITION);
     el.style.willChange = '';
   }
 
-  var reducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  if (reducedMotion) return;
+  // 审查v4-M1：reduced-motion 改为事件回调内实时求值——原实现模块加载时求值一次，
+  // reduce 时监听器根本不挂载（关闭偏好后永不生效），运行中开启偏好同样不生效
+  function isReducedMotion() {
+    return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  }
 
   document.addEventListener('mousemove', function (e) {
+    if (isReducedMotion()) { reset(current); current = null; return; }
     var el = e.target && e.target.closest ? e.target.closest(SELECTOR) : null;
     // 命中「启动项列表」所在面板时取消倾斜
     if (el && el.querySelector && el.querySelector(EXCLUDE_CONTAINS)) el = null;

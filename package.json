@@ -37,6 +37,7 @@
       "!src/assets/ico/source.png",
       "!src/assets/ico/source_squared.png",
       "!src/assets/ico/icon_*.png",
+      "!src/assets/ico/.workbuddy/**",
       "src/assets/ico/*.ico",
       "readme.md",
       "package.json"
