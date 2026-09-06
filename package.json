@@ -25,7 +25,6 @@
     "appId": "com.xiaoxu.trim",
     "productName": "Trim",
     "copyright": "Copyright © 2026 xiaoxu",
-    "description": "审查 8-1：安装器由兄弟目录 TuneForge goujian/trim-installer 的 Tauri 工程承担（npm run sync:resources 同步 win-unpacked）；本配置仅产出 portable 便携包，build:dir 为开发用免打包目录输出。",
     "directories": {
       "output": "build-release",
       "buildResources": "build"
