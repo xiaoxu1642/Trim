@@ -893,9 +893,13 @@
     setCleaningBtn(true);
     updateUI();
 
-    const highRisk = Array.from(selectedIds)
+    // D10：risk 分级二次确认——高风险走红色 confirmDanger，中风险走黄色 confirmWarning。
+    // 信任源统一为 $rule.risk（PS 侧门禁同源，见 cleanup-scripts.js），渲染层不做二次映射。
+    const risky = Array.from(selectedIds)
       .map(id => scanResults.get(id))
-      .filter(r => r && r.risk === 'high');
+      .filter(r => r && (r.risk === 'high' || r.risk === 'medium'));
+    const highRisk = risky.filter(r => r.risk === 'high');
+    const mediumRisk = risky.filter(r => r.risk === 'medium');
 
     // 高风险二次确认（红色，删除类操作规范要求）
     if (highRisk.length > 0) {
@@ -905,6 +909,22 @@
         '确认清理',
         '取消',
         '删除后可能无法恢复，请确认已了解风险。'
+      );
+      if (!ok) {
+        isCleaning = false;
+        updateUI();
+        return;
+      }
+    }
+
+    // D10：中风险二次确认（黄色），与高风险红色确认分级
+    if (mediumRisk.length > 0) {
+      const ok = await window.app?.confirmWarning(
+        '中风险操作确认',
+        `您选择了 ${mediumRisk.length} 个中风险项（建议清理前核对用途）：\n${mediumRisk.map(r => '• ' + r.name).join('\n')}`,
+        '确认清理',
+        '取消',
+        '部分中风险项可能被应用在使用，清理后若个别程序异常，可通过系统自带方式恢复。'
       );
       if (!ok) {
         isCleaning = false;

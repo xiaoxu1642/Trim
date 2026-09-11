@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="styles/main.css" />
   <link rel="stylesheet" href="styles/ds.css" />
 </head>
-<body class="theme-dark">
+<body class="theme-light">
   <!-- 首帧前同步主题（外部文件：内联写法被 CSP script-src 'self' 拦截，引导从未生效） -->
   <script src="scripts/theme-boot.js"></script>
   <!-- 标题栏（原生 titleBarOverlay 提供右上角窗口控制按钮） -->
@@ -45,7 +45,7 @@
       </button>
 
       <div class="nav-scroll">
-      <!-- v2.0 信息架构分组：清理 / 优化 / 工具 / 记录（底部为设置 + 主题） -->
+      <!-- v2.0 信息架构分组：清理 / 优化 / 工具 / 记录（底部为设置） -->
       <div class="nav-section">
         <div class="nav-section-title">清理</div>
         <button class="nav-item active" data-page="overview" data-tip="系统概览">
@@ -136,16 +136,6 @@
           </svg>
           <span>设置</span>
         </button>
-        <div class="theme-toggle">
-          <button class="theme-btn" id="themeToggle" data-tip="切换深浅主题" aria-label="切换深浅主题">
-            <svg class="sun-icon" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-              <path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5s5-2.24 5-5s-2.24-5-5-5zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1zM5.99 4.58a.996.996 0 0 0-1.41 0c-.39.39-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41L5.99 4.58zm12.37 12.37a.996.996 0 0 0-1.41 0c-.39.39-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0a.996.996 0 0 0 0-1.41l-1.06-1.06zm1.06-10.96c.39-.39.39-1.03 0-1.41a.996.996 0 0 0-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06zM7.05 18.36c.39-.39.39-1.03 0-1.41a.996.996 0 0 0-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06z"/>
-            </svg>
-            <svg class="moon-icon" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-              <path d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.389 5.389 0 0 1-4.4 2.26a5.403 5.403 0 0 1-3.14-9.8c-.44-.06-.9-.1-1.36-.1z"/>
-            </svg>
-          </button>
-        </div>
       </div>
     </nav>
     </div><!-- /.sidebar-rail（批次：悬浮岛侧边栏 B 档） -->
@@ -1031,22 +1021,6 @@
             <h3>显示</h3>
             <div class="appearance-grid">
               <div class="appearance-card">
-                <div class="appearance-card-head">
-                  <h4>主题选择</h4>
-                  <p>跟随系统 / 浅色 / 深色</p>
-                </div>
-                <label class="radio-row">
-                  <input type="radio" name="theme" value="auto" id="themeAuto" checked />
-                  <span>跟随系统</span>
-                </label>
-                <label class="radio-row">
-                  <input type="radio" name="theme" value="light" id="themeLight" />
-                  <span>浅色</span>
-                </label>
-                <label class="radio-row">
-                  <input type="radio" name="theme" value="dark" id="themeDark" />
-                  <span>深色</span>
-                </label>
                 <!-- 预设主题选择（设置页整合4）：原「皮肤与背景」卡的预设背景收编至此 -->
                 <div class="appearance-sub">
                   <div class="appearance-sub-head">预设主题选择</div>
@@ -1136,7 +1110,7 @@
                 </div>
                 <p class="appearance-hint">0% 关闭液态玻璃面板，100% 为完整磨砂；配合预设背景或导入图片层次感更强</p>
               </div>
-              <!-- 颜色选择卡已并入上方「主题选择 → 主题颜色选择」分区（设置页整合4） -->
+              <!-- 颜色选择卡已并入上方「预设主题选择」同卡（设置页整合4） -->
               <!-- 动效设置（设置页整合4）：合并原「鼠标拖尾」与「切换动效」两张卡 -->
               <div class="appearance-card">
                 <div class="appearance-card-head">

@@ -1,0 +1,5 @@
+ROOT = C:\Program Files
+os.scandir + stat : 0.049s  files=5186 dirs=945 bytes=2451245376  (105064 files/s)
+FindFirstFileW    : 136.596s  files=300000 dirs=7800000 bytes=224197292851200000  (2196 files/s)
+ratio scandir/findfirst = 0.00x
+USN(MFT) probe    : (False, 'DeviceIoControl err=6', 0)

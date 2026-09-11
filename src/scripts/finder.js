@@ -92,12 +92,20 @@
     if (section) section.style.display = 'none';
   }
 
-  // 主进程流式进度（@@PROGRESS:n@@ 管线终点）
+  // 主进程流式进度（@@PROGRESS:n@@ 管线终点）+ P0 心跳（@@SCANNED:n@@）
   function onProgress(p) {
     if (!p || !p.scanType) return;
     for (const key of Object.keys(CFG)) {
       if (CFG[key].scanType === p.scanType && st[key].scanning) {
-        setProgress(CFG[key], p.progress, `扫描中... ${Math.round(p.progress)}%`);
+        if (typeof p.scanned === 'number') {
+          // 心跳：只更新文案为「已枚举文件数」，进度条保持不动（百分比未到 100 不算完成）
+          const lab = document.getElementById(CFG[key].progress.label);
+          const sec = document.getElementById(CFG[key].progress.section);
+          if (sec) sec.style.display = 'block';
+          if (lab) lab.textContent = `扫描中... 已枚举 ${p.scanned.toLocaleString()} 个文件`;
+        } else if (typeof p.progress === 'number') {
+          setProgress(CFG[key], p.progress, `扫描中... ${Math.round(p.progress)}%`);
+        }
       }
     }
   }
@@ -225,9 +233,16 @@
     }
     if (dirs.length) {
       html += '<div class="finder-group-header"><span>空目录 · ' + dirs.length + ' 个</span><span class="finder-group-sum">删除空目录可释放少量空间，并可避免应用误判</span></div>';
-      html += '<table class="finder-table"><thead><tr><th style="width:34px"></th><th>路径</th></tr></thead><tbody>';
+      html += '<table class="finder-table"><thead><tr><th style="width:34px"></th><th>路径</th><th style="width:110px">连带空目录</th></tr></thead><tbody>';
       for (const r of dirs) {
-        html += `<tr><td>${checkboxHtml('ed_' + esc(r.path), false)}</td><td><div class="finder-cell"><span class="finder-path-text" data-tip="${esc(r.path)}">${esc(r.path)}</span></div></td></tr>`;
+        const nested = Number(r.nested) || 0;
+        // 删父即连带删 n 个子空目录：nested>0 默认勾选父目录
+        const checked = nested > 0;
+        if (checked) s.selected.add(r.path);
+        const nestedCell = nested > 0
+          ? `<span class="finder-name-text" data-tip="删除该目录会一并移除其下 ${nested} 个空子目录">${nested} 个</span>`
+          : '<span class="finder-name-text" style="opacity:.55">—</span>';
+        html += `<tr class="${s.selected.has(r.path) ? 'finder-row-selected' : ''}"><td>${checkboxHtml('ed_' + esc(r.path), checked)}</td><td><div class="finder-cell"><span class="finder-name-text">${esc(nameOf(r.path))}</span><span class="finder-name-text" style="opacity:.55">·</span><span class="finder-path-text" data-tip="${esc(r.path)}">${esc(middleEllipsis(r.path, 74))}</span></div></td><td class="finder-col-size">${nestedCell}</td></tr>`;
       }
       html += '</tbody></table>';
     }

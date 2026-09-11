@@ -1,8 +1,8 @@
 # AGENTS.md — Trim 智能体协作约束
 
 > 面向在本仓库工作的 AI 智能体。**只写规则与红线，不写架构教材**：
-> 架构/规范/陷阱全量事实见 **`docs/architecture.md`**；用户使用说明（也是应用内弹窗数据源）见 **`readme.md`**。
-> Trim = Windows 11 清理优化工具（Electron + 原生 HTML/CSS/JS，零前端框架，中文 UI，Fluent Design），仓库 `C:\kaifa\TuneForge`。
+> 架构/规范/陷阱全量事实见 **`docs规范/architecture.md`**；用户使用说明（也是应用内弹窗数据源）见 **`readme.md`**。
+> Trim = Windows 11 清理优化工具（Electron + 原生 HTML/CSS/JS，零前端框架，中文 UI，Fluent Design），仓库 `D:\KaiFa\Trim`。
 
 ## 1. 工作流程
 

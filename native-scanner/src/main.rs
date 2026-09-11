@@ -1,12 +1,51 @@
 // Trim 内建原生扫描器。
-// 以行为单位输出：@@ITEM@@{json} 与 @@PROGRESS:n@@，供 Electron 主进程流式解析。
+// 以行为单位输出：@@ITEM@@{json}、@@PROGRESS:n@@ 与 @@SCANNED:n@@，供 Electron 主进程流式解析。
 // 重复文件三级检测：内容指纹（体积+Blake3）> 文档内容相似（shingle/Jaccard）> 同名文件，
 // 每个文件最多归入一组；扫描与删除均在 Rust 中完成。
+//
+// 扫描性能升级（批次：大文件扫描升级 2026-09-11，对标 HiBit/SpaceSniffer 逆向）：
+//   · ent.metadata() 收口所有「取大小」syscall（DirEntry 自带 WIN32_FIND_DATAW 缓存）
+//   · walk 目录级分治并行（rayon，前 PAR_DEPTH 层展开）
+//   · bigfiles 改「任务分片 + 每片局部 Top-K 堆 + reduce 归并」，内存 O(线程数 × N)
+//   · 新增 @@SCANNED:n@@ 心跳行，大盘扫描时前端能实时看到已枚举文件数
 use rayon::prelude::*;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
+
+// ---- 扫描并行参数（P0 批次）----
+/// 目录级分治展开层数。再深单目录已很小，调度开销大于收益。
+const PAR_DEPTH: usize = 3;
+/// I/O 密集场景线程上限：核数再多也不盲目拉满，避免随机寻道互相拖累。
+const MAX_IO_THREADS: usize = 8;
+/// bigfiles 心跳输出间隔：每累积多少文件输出一行 @@SCANNED:n@@。
+const HEARTBEAT_EVERY: u64 = 8192;
+
+/// 只初始化一次全局 rayon 线程池（重复调用返回 Err 忽略即可）。
+/// dir_size / walk / bigfiles 任务分片的并行都经它走同一池。
+fn init_scan_threads() {
+    let n = std::thread::available_parallelism()
+        .map(|v| v.get())
+        .unwrap_or(4)
+        .min(MAX_IO_THREADS);
+    let _ = rayon::ThreadPoolBuilder::new().num_threads(n).build_global();
+}
+
+/// 更新已枚举计数；跨越 8192 整数倍时输出一行心跳，供前端实时反馈。
+fn bump_scanned(counter: &AtomicU64, n: u64) {
+    if n == 0 {
+        return;
+    }
+    let prev = counter.fetch_add(n, Ordering::Relaxed);
+    let next = prev + n;
+    // 只在「越过了 8192 的整数倍」时输出，避免每个目录都刷屏
+    if prev / HEARTBEAT_EVERY != next / HEARTBEAT_EVERY {
+        println!("@@SCANNED:{}@@", next);
+    }
+}
 
 fn eprint_err(e: &std::io::Error, what: &str) {
     eprintln!("[finder-warn] {}: {}", what, e);
@@ -76,38 +115,70 @@ fn is_reparse(_ent: &fs::DirEntry) -> bool {
 }
 
 /// 递归收集文件（跳过符号链接、重解析点与不可读目录）。
+/// 性能升级（P0）：目录级分治并行 + `ent.metadata()` 复用 DirEntry 自带大小，
+/// 每文件省掉一次 `fs::metadata(&fp)` 的额外 syscall（GetFileAttributesExW）。
 /// 审查v4-L5：移除从未使用的 dirs 参数（原收集目录后 let _ = dirs 丢弃，白耗内存）。
 fn walk(path: &Path, files: &mut Vec<(PathBuf, u64)>, min_size: u64) {
-    let mut stack: Vec<PathBuf> = vec![path.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        let rd = match fs::read_dir(&dir) {
-            Ok(r) => r,
-            Err(e) => {
-                eprint_err(&e, &format!("read_dir {}", dir.display()));
-                continue;
-            }
+    init_scan_threads();
+    let counter = AtomicU64::new(0);
+    // 用 Mutex 承接并发结果；对只需 Top-N 的调用方应改用 bigfiles 的任务分片（免全量驻留）。
+    let out: Mutex<Vec<(PathBuf, u64)>> = Mutex::new(Vec::new());
+    walk_level(&path.to_path_buf(), &out, min_size, &counter, 0);
+    bump_scanned(&counter, 0); // 收尾再输出一次精确的最终计数
+    *files = out.into_inner().unwrap();
+}
+
+fn walk_level(
+    dir: &PathBuf,
+    files: &Mutex<Vec<(PathBuf, u64)>>,
+    min_size: u64,
+    counter: &AtomicU64,
+    depth: usize,
+) {
+    let rd = match fs::read_dir(dir) {
+        Ok(r) => r,
+        Err(e) => {
+            eprint_err(&e, &format!("read_dir {}", dir.display()));
+            return;
+        }
+    };
+    let mut subdirs: Vec<PathBuf> = Vec::new();
+    let mut batch: Vec<(PathBuf, u64)> = Vec::new();
+    for ent in rd.flatten() {
+        let ft = match ent.file_type() {
+            Ok(t) => t,
+            Err(_) => continue,
         };
-        for ent in rd.flatten() {
-            let fp = ent.path();
-            let ft = match ent.file_type() {
-                Ok(t) => t,
-                Err(_) => continue,
-            };
-            if ft.is_symlink() {
+        if ft.is_symlink() {
+            continue;
+        }
+        if ft.is_dir() {
+            // 审查v4-M6：联接点/挂载点不深入
+            if is_reparse(&ent) {
                 continue;
             }
-            if ft.is_dir() {
-                // 审查v4-M6：联接点/挂载点不深入
-                if is_reparse(&ent) {
-                    continue;
-                }
-                stack.push(fp);
-            } else if ft.is_file() {
-                let sz = fs::metadata(&fp).map(|m| m.len()).unwrap_or(0);
+            subdirs.push(ent.path());
+        } else if ft.is_file() {
+            // P0：DirEntry 自带大小，不额外 syscall
+            if let Ok(md) = ent.metadata() {
+                let sz = md.len();
                 if sz >= min_size {
-                    files.push((fp, sz));
+                    batch.push((ent.path(), sz));
                 }
             }
+        }
+    }
+    if !batch.is_empty() {
+        bump_scanned(counter, batch.len() as u64);
+        files.lock().unwrap().extend(batch);
+    }
+    if depth < PAR_DEPTH {
+        subdirs.par_iter().for_each(|d| {
+            walk_level(d, files, min_size, counter, depth + 1);
+        });
+    } else {
+        for d in subdirs {
+            walk_level(&d, files, min_size, counter, depth + 1);
         }
     }
 }
@@ -645,92 +716,235 @@ fn xml_to_text(xml: &[u8]) -> String {
     out
 }
 
-fn cmd_bigfiles(roots: &[String], count: usize) {
-    let mut files: Vec<(PathBuf, u64)> = Vec::new();
-    for r in roots {
-        if let Some(p) = canonical(r) {
-            walk(&p, &mut files, 0);
+/// bigfiles 的分片 Top-K 堆类型（Reverse 使 BinaryHeap 变成「最小堆」）。
+type TopHeap = BinaryHeap<std::cmp::Reverse<(u64, PathBuf)>>;
+
+/// 把根目录展开成互不重叠的并行任务列表：(目录, 是否递归)。
+/// - 根与中间层（深度 < task_depth）各为一个「只收本目录直属文件」的任务（非递归）；
+///   其子目录单独成任务继续向下，保证每个文件恰好归属一个任务，绝不重复计数。
+/// - 最深层（深度 == task_depth）的任务整体递归其子树，兜住更深处的大文件。
+/// 任务粒度太浅→无并行，太深→任务爆炸。
+fn expand_tasks(root: &Path, task_depth: usize) -> Vec<(PathBuf, bool)> {
+    let mut out: Vec<(PathBuf, bool)> = vec![(root.to_path_buf(), false)];
+    let mut level: Vec<PathBuf> = vec![root.to_path_buf()];
+    for gen in 1..=task_depth {
+        let last = gen == task_depth;
+        let mut next: Vec<PathBuf> = Vec::new();
+        for d in &level {
+            let rd = match fs::read_dir(d) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+            for ent in rd.flatten() {
+                if let Ok(ft) = ent.file_type() {
+                    if ft.is_dir() && !is_reparse(&ent) {
+                        let p = ent.path();
+                        // 最深层：整体递归并兜底子树；中间层：只收直属文件，子目录继续展开
+                        out.push((p.clone(), last));
+                        if !last {
+                            next.push(p);
+                        }
+                    }
+                }
+            }
+        }
+        level = next;
+        if level.is_empty() {
+            break;
         }
     }
-    // 用堆取 Top-N
-    let mut heap: BinaryHeap<(std::cmp::Reverse<u64>, PathBuf)> = BinaryHeap::new();
-    for (p, sz) in files {
-        if heap.len() < count {
-            heap.push((std::cmp::Reverse(sz), p));
-        } else if let Some(&(std::cmp::Reverse(smallest), _)) = heap.peek() {
-            if sz > smallest {
-                heap.pop();
-                heap.push((std::cmp::Reverse(sz), p));
+    out
+}
+
+#[inline]
+fn push_topk(heap: &mut TopHeap, sz: u64, path: PathBuf, cap: usize) {
+    use std::cmp::Reverse;
+    if heap.len() < cap {
+        heap.push(Reverse((sz, path)));
+        return;
+    }
+    if let Some(&Reverse((smallest, _))) = heap.peek() {
+        if sz > smallest {
+            heap.pop();
+            heap.push(Reverse((sz, path)));
+        }
+    }
+}
+
+fn merge_topk_into(a: &mut TopHeap, b: TopHeap, cap: usize) {
+    use std::cmp::Reverse;
+    for Reverse((sz, p)) in b {
+        push_topk(a, sz, p, cap);
+    }
+}
+
+/// 单个任务内串行递归，只用容量 cap 的堆保留最大项；顺带累计计数并输出心跳。
+fn topk_in(dir: &Path, recursive: bool, cap: usize, counter: &AtomicU64) -> TopHeap {
+    let mut heap: TopHeap = BinaryHeap::new();
+    let mut stack: Vec<(PathBuf, bool)> = vec![(dir.to_path_buf(), recursive)];
+    let mut local: u64 = 0;
+    while let Some((d, rec)) = stack.pop() {
+        let rd = match fs::read_dir(&d) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        for ent in rd.flatten() {
+            let ft = match ent.file_type() {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            if ft.is_symlink() {
+                continue;
+            }
+            if ft.is_dir() {
+                if rec && !is_reparse(&ent) {
+                    stack.push((ent.path(), true));
+                }
+            } else if ft.is_file() {
+                // P0：DirEntry 自带大小，不额外 syscall
+                if let Ok(md) = ent.metadata() {
+                    let sz = md.len();
+                    push_topk(&mut heap, sz, ent.path(), cap);
+                    local += 1;
+                }
             }
         }
     }
-    let mut all: Vec<(u64, PathBuf)> = heap.into_iter().map(|(r, p)| (r.0, p)).collect();
+    // 每个任务收尾统一累计一次，心跳按累计阈值输出，避免逐文件加锁开销
+    bump_scanned(counter, local);
+    heap
+}
+
+/// 大文件扫描（性能升级 P0-3/P1-1）：任务分片 + 每片局部 Top-K 堆 + reduce 归并。
+/// 内存从 O(文件总数) 降到 O(线程数 × N)；天然无锁；心跳线 @@SCANNED:n@@ 实时反馈。
+fn cmd_bigfiles(roots: &[String], count: usize) {
+    init_scan_threads();
+    let cap = count.max(1);
+    let counter = AtomicU64::new(0);
+    let mut tasks: Vec<(PathBuf, bool)> = Vec::new();
+    for r in roots {
+        if let Some(p) = canonical(r) {
+            tasks.extend(expand_tasks(&p, 2));
+        }
+    }
+    if tasks.is_empty() {
+        return;
+    }
+    let heap: TopHeap = tasks
+        .par_iter()
+        .map(|(d, rec)| topk_in(d, *rec, cap, &counter))
+        .reduce(|| BinaryHeap::new(), |mut a, b| {
+            merge_topk_into(&mut a, b, cap);
+            a
+        });
+    let mut all: Vec<(u64, PathBuf)> = heap
+        .into_iter()
+        .map(|std::cmp::Reverse((sz, p))| (sz, p))
+        .collect();
     all.sort_by(|a, b| b.0.cmp(&a.0));
     for (i, (sz, p)) in all.iter().enumerate() {
         item("bigfile", p, *sz, &[("rank", (i + 1).to_string())]);
     }
+    bump_scanned(&counter, 0); // 收尾精确计数
     progress(100);
 }
 
+/// 空目录用户级忽略名单：%APPDATA%\Trim\empty-ignore.txt，每行一个绝对路径，大小写不敏感。
+/// 对标 HiBit Empty Folder Cleaner 的「Ignore this Folder」持久化忽略（P1-4）。
+fn empty_ignore_file() -> Option<PathBuf> {
+    std::env::var("APPDATA")
+        .ok()
+        .map(|a| PathBuf::from(a).join("Trim").join("empty-ignore.txt"))
+}
+
+fn load_empty_ignore() -> HashSet<String> {
+    let mut s = HashSet::new();
+    if let Some(f) = empty_ignore_file() {
+        if let Ok(txt) = fs::read_to_string(&f) {
+            for line in txt.lines() {
+                let l = line.trim();
+                if !l.is_empty() {
+                    s.insert(l.to_lowercase());
+                }
+            }
+        }
+    }
+    s
+}
+
+fn empty_ignored(set: &HashSet<String>, p: &Path) -> bool {
+    set.contains(&p.to_string_lossy().to_lowercase())
+}
+
+/// 并行空目录/空文件扫描（性能升级 P1-4）：
+///   · 根下的一级子目录交给 rayon 各自串行递归（根只作容器，避免误删根）
+///   · `ent.metadata()` 取大小，不额外 syscall
+///   · 用户忽略名单 empty-ignore.txt 生效，视为非空且不下钻
+///   · 输出 emptyfolder 附带 nested=「删它可连带删掉的子空目录数」，供前端提示
 fn cmd_empty(roots: &[String]) {
-    let mut empty_files: Vec<PathBuf> = Vec::new();
-    let mut empty_dirs: Vec<PathBuf> = Vec::new();
+    init_scan_threads();
+    let ignore = load_empty_ignore();
+    let empty_files: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+    let empty_dirs: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
     for r in roots {
-        if let Some(p) = canonical(r) {
-            // 扫描根目录只作为容器，不作为删除候选，避免“扫描一个空目录”时误删根目录。
-            let _ = collect_empty_children(&p, &mut empty_files, &mut empty_dirs);
-        }
+        let Some(p) = canonical(r) else { continue };
+        // 根自身只作容器：一级子目录交并行，过滤忽略名单
+        let tops: Vec<PathBuf> = match fs::read_dir(&p) {
+            Ok(rd) => rd
+                .flatten()
+                .filter(|ent| matches!(ent.file_type(), Ok(t) if t.is_dir()) && !is_reparse(ent))
+                .map(|ent| ent.path())
+                .filter(|pp| !empty_ignored(&ignore, pp))
+                .collect(),
+            Err(_) => Vec::new(),
+        };
+        tops.par_iter().for_each(|d| {
+            let mut f: Vec<PathBuf> = Vec::new();
+            let mut dd: Vec<PathBuf> = Vec::new();
+            let _ = collect_empty_fast(d, &ignore, &mut f, &mut dd);
+            if !f.is_empty() {
+                empty_files.lock().unwrap().extend(f);
+            }
+            if !dd.is_empty() {
+                empty_dirs.lock().unwrap().extend(dd);
+            }
+        });
     }
-    // 借鉴 Czkawka optimize_folders：若某空目录的父目录同样为空目录，只保留父（删父连带删内层）
-    use std::collections::HashSet;
-    let set: HashSet<PathBuf> = empty_dirs.iter().cloned().collect();
-    let mut top: Vec<PathBuf> = Vec::new();
-    for d in &empty_dirs {
-        let nested = d.parent().map(|pp| set.contains(pp)).unwrap_or(false);
-        if !nested {
-            top.push(d.clone());
+
+    let files = empty_files.into_inner().unwrap();
+    let dirs = empty_dirs.into_inner().unwrap();
+
+    // 父目录折叠：若某空目录的父目录同为待删空目录，只保留父（删父连带删内层，Czkawka 思路）
+    let set: HashSet<PathBuf> = dirs.iter().cloned().collect();
+    let mut out: Vec<(PathBuf, usize)> = Vec::new();
+    for d in &dirs {
+        if d.parent().map(|pp| set.contains(pp)).unwrap_or(false) {
+            continue; // 存在空父目录，跳过自己
         }
+        let nested = dirs.iter().filter(|x| *x != d && x.starts_with(d)).count();
+        out.push((d.clone(), nested));
     }
-    for f in &empty_files {
+    for f in &files {
         item("emptyfile", f, 0, &[]);
     }
-    for d in &top {
-        item("emptyfolder", d, 0, &[]);
+    for (d, n) in &out {
+        item("emptyfolder", d, 0, &[("nested", n.to_string())]);
     }
     progress(100);
 }
 
-fn collect_empty_children(dir: &Path, files: &mut Vec<PathBuf>, dirs: &mut Vec<PathBuf>) -> bool {
-    let rd = match fs::read_dir(dir) {
-        Ok(r) => r,
-        Err(_) => return false,
-    };
-    let mut empty = true;
-    for ent in rd.flatten() {
-        let fp = ent.path();
-        match ent.file_type() {
-            Ok(t) if t.is_symlink() => empty = false,
-            Ok(t) if t.is_dir() => {
-                if !collect_empty(&fp, files, dirs) {
-                    empty = false;
-                }
-            }
-            Ok(t) if t.is_file() => {
-                let sz = fs::metadata(&fp).map(|m| m.len()).unwrap_or(1);
-                if sz == 0 {
-                    files.push(fp);
-                }
-                empty = false;
-            }
-            _ => empty = false,
-        }
+/// 返回该目录是否整体为空（可删除）。与旧 collect_empty 同语义，区别：
+/// 用 `ent.metadata()` 取大小；命中忽略名单的目录视为非空且不再下钻。
+fn collect_empty_fast(
+    dir: &Path,
+    ignore: &HashSet<String>,
+    files: &mut Vec<PathBuf>,
+    dirs: &mut Vec<PathBuf>,
+) -> bool {
+    if empty_ignored(ignore, dir) {
+        return false;
     }
-    empty
-}
-
-/// 递归收集空文件与空目录；返回该目录是否整体为空（可删除）。
-/// 空：不含任何文件（含 0 字节文件），且所有子目录均为空目录（借鉴 Czkawka empty_folder）。
-fn collect_empty(dir: &Path, files: &mut Vec<PathBuf>, dirs: &mut Vec<PathBuf>) -> bool {
     let rd = match fs::read_dir(dir) {
         Ok(r) => r,
         Err(_) => return false, // 不可读目录保守视为非空
@@ -743,12 +957,15 @@ fn collect_empty(dir: &Path, files: &mut Vec<PathBuf>, dirs: &mut Vec<PathBuf>) 
                 empty = false;
             }
             Ok(t) if t.is_dir() => {
-                if !collect_empty(&fp, files, dirs) {
+                if is_reparse(&ent) {
+                    empty = false;
+                } else if !collect_empty_fast(&fp, ignore, files, dirs) {
                     empty = false;
                 }
             }
             Ok(t) if t.is_file() => {
-                let sz = fs::metadata(&fp).map(|m| m.len()).unwrap_or(1);
+                // P0：DirEntry 自带大小，不额外 syscall
+                let sz = ent.metadata().map(|m| m.len()).unwrap_or(1);
                 if sz == 0 {
                     files.push(fp); // 空文件单独作为删除候选
                 }

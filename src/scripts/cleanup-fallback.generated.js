@@ -54,7 +54,8 @@
               "risk": "low",
               "pathPs": "$env:PROGRAMDATA + '\\Microsoft\\Windows\\WER\\ReportArchive'",
               "evidence": "Windows 错误报告存档",
-              "recommended": true
+              "recommended": true,
+              "deleteMode": "contents"
             },
             {
               "id": "windowsUpdateLog",
@@ -62,7 +63,8 @@
               "risk": "low",
               "pathPs": "$env:WINDIR + '\\Logs\\WindowsUpdate'",
               "evidence": "Windows Update 安装日志",
-              "recommended": true
+              "recommended": true,
+              "deleteMode": "contents"
             },
             {
               "id": "diagnosisData",
@@ -70,7 +72,8 @@
               "risk": "low",
               "pathPs": "$env:PROGRAMDATA + '\\Microsoft\\Diagnosis'",
               "evidence": "系统诊断预取数据",
-              "recommended": true
+              "recommended": true,
+              "deleteMode": "contents"
             },
             {
               "id": "explorerRecentDocs",
@@ -108,6 +111,33 @@
               ],
               "evidence": "MuiCache 显示名缓存，仅清键值不删键，系统自动重建",
               "recommended": false
+            },
+            {
+              "id": "systemLogFiles",
+              "name": "系统日志文件目录",
+              "risk": "low",
+              "pathPs": "$env:WINDIR + '\\System32\\LogFiles'",
+              "evidence": "系统/HTTPERR 等日志文件（HiBit 逆向新增，主要清理 HTTPERR 与 W3SVC 站点日志）",
+              "recommended": false,
+              "deleteMode": "contents"
+            },
+            {
+              "id": "windowsDebug",
+              "name": "Windows 调试文件",
+              "risk": "low",
+              "pathPs": "$env:WINDIR + '\\debug'",
+              "evidence": "Windows 调试输出目录（HiBit 逆向新增）",
+              "recommended": false,
+              "deleteMode": "contents"
+            },
+            {
+              "id": "pantherLogs",
+              "name": "Windows 安装日志",
+              "risk": "low",
+              "pathPs": "$env:WINDIR + '\\Panther'",
+              "evidence": "setupact/setuperr 安装日志与镜像部署残留（HiBit 逆向新增）",
+              "recommended": false,
+              "deleteMode": "contents"
             }
           ]
         },
@@ -126,7 +156,8 @@
                 "UsoSvc"
               ],
               "evidence": "Windows Update 下载缓存",
-              "recommended": false
+              "recommended": false,
+              "deleteMode": "contents"
             },
             {
               "id": "deliveryOptimization",
@@ -134,7 +165,8 @@
               "risk": "low",
               "pathPs": "$env:WINDIR + '\\SoftwareDistribution\\DeliveryOptimization'",
               "evidence": "更新分发缓存",
-              "recommended": true
+              "recommended": true,
+              "deleteMode": "contents"
             },
             {
               "id": "terminalServerCache",
@@ -142,7 +174,8 @@
               "risk": "low",
               "pathPs": "$env:LOCALAPPDATA + '\\Microsoft\\Terminal Server Client\\Cache'",
               "evidence": "远程桌面位图缓存",
-              "recommended": true
+              "recommended": true,
+              "deleteMode": "contents"
             },
             {
               "id": "dotNetCache",
@@ -150,7 +183,8 @@
               "risk": "low",
               "pathPs": "$env:LOCALAPPDATA + '\\Microsoft\\CLR_v4.0\\UsageLogs'",
               "evidence": "CLR 使用日志",
-              "recommended": true
+              "recommended": true,
+              "deleteMode": "contents"
             },
             {
               "id": "prefetchFiles",
@@ -158,7 +192,8 @@
               "risk": "low",
               "pathPs": "$env:WINDIR + '\\Prefetch'",
               "evidence": "Prefetch 预读",
-              "recommended": false
+              "recommended": false,
+              "deleteMode": "contents"
             },
             {
               "id": "thumbnailCacheFiles",
@@ -175,7 +210,8 @@
                 "explorer"
               ],
               "evidence": "资源管理器缩略图缓存数据库",
-              "recommended": false
+              "recommended": false,
+              "deleteMode": "contents"
             },
             {
               "id": "iconCacheFiles",
@@ -199,7 +235,8 @@
               "risk": "low",
               "pathPs": "$env:LOCALAPPDATA + '\\Microsoft\\Windows\\INetCache'",
               "evidence": "系统级网页缓存",
-              "recommended": true
+              "recommended": true,
+              "deleteMode": "contents"
             },
             {
               "id": "winINetCookies",
@@ -207,7 +244,8 @@
               "risk": "low",
               "pathPs": "$env:LOCALAPPDATA + '\\Microsoft\\Windows\\INetCookies'",
               "evidence": "系统级 Cookie",
-              "recommended": false
+              "recommended": false,
+              "deleteMode": "contents"
             },
             {
               "id": "userCrashDumps",
@@ -215,7 +253,44 @@
               "risk": "low",
               "pathPs": "$env:LOCALAPPDATA + '\\CrashDumps'",
               "evidence": "应用崩溃 .dmp",
-              "recommended": true
+              "recommended": true,
+              "deleteMode": "contents"
+            },
+            {
+              "id": "liveKernelReports",
+              "name": "内核实时报告",
+              "risk": "low",
+              "pathPs": "$env:WINDIR + '\\LiveKernelReports'",
+              "evidence": "内核实时崩溃报告（HiBit 逆向新增）",
+              "recommended": false,
+              "deleteMode": "contents"
+            },
+            {
+              "id": "werReportQueue",
+              "name": "错误报告队列",
+              "risk": "low",
+              "pathPs": "$env:PROGRAMDATA + '\\Microsoft\\Windows\\WER\\ReportQueue'",
+              "evidence": "待上报的 WER 错误报告队列（与 ReportArchive 配套，HiBit 逆向新增）",
+              "recommended": false,
+              "deleteMode": "contents"
+            },
+            {
+              "id": "winsatCache",
+              "name": "Windows 系统评估数据",
+              "risk": "low",
+              "pathPs": "$env:WINDIR + '\\Performance\\WinSAT'",
+              "evidence": "WinSAT 磁盘/图形评估缓存（HiBit 逆向新增）",
+              "recommended": false,
+              "deleteMode": "contents"
+            },
+            {
+              "id": "usoLogs",
+              "name": "更新会话日志",
+              "risk": "low",
+              "pathPs": "$env:PROGRAMDATA + '\\USOShared\\Logs'",
+              "evidence": "Windows Update 会话日志（HiBit 逆向新增）",
+              "recommended": true,
+              "deleteMode": "contents"
             }
           ]
         },
@@ -230,7 +305,8 @@
               "risk": "high",
               "pathPs": "$env:WINDIR + '\\Installer\\$PatchCache$'",
               "evidence": "MSI 补丁卸载缓存，删除后已装更新将无法卸载",
-              "recommended": false
+              "recommended": false,
+              "deleteMode": "contents"
             },
             {
               "id": "defenderHistoryRecords",
@@ -238,7 +314,8 @@
               "risk": "low",
               "pathPs": "$env:PROGRAMDATA + '\\Microsoft\\Windows Defender\\Scans\\History\\Results'",
               "evidence": "Defender 扫描历史",
-              "recommended": true
+              "recommended": true,
+              "deleteMode": "contents"
             }
           ]
         },
@@ -253,7 +330,8 @@
               "risk": "medium",
               "pathPs": "$env:WINDIR + '\\WinSxS\\Temp'",
               "evidence": "组件服务临时",
-              "recommended": false
+              "recommended": false,
+              "deleteMode": "contents"
             },
             {
               "id": "winSxsTempFile2",
@@ -261,7 +339,8 @@
               "risk": "medium",
               "pathPs": "$env:WINDIR + '\\WinSxS\\Temp\\PendingRename'",
               "evidence": "挂起重命名临时",
-              "recommended": false
+              "recommended": false,
+              "deleteMode": "contents"
             },
             {
               "id": "windowsLogs",
@@ -269,7 +348,8 @@
               "risk": "low",
               "pathPs": "$env:WINDIR + '\\System32\\winevt\\Logs'",
               "evidence": "事件日志目录",
-              "recommended": false
+              "recommended": false,
+              "deleteMode": "contents"
             },
             {
               "id": "tempFiles",
@@ -277,7 +357,8 @@
               "risk": "low",
               "pathPs": "$env:TEMP",
               "evidence": "用户 TEMP",
-              "recommended": true
+              "recommended": true,
+              "deleteMode": "contents"
             },
             {
               "id": "driverTempExtract",
@@ -285,7 +366,8 @@
               "risk": "medium",
               "pathPs": "$env:WINDIR + '\\System32\\DriverStore\\Temp'",
               "evidence": "驱动安装解压残留",
-              "recommended": false
+              "recommended": false,
+              "deleteMode": "contents"
             },
             {
               "id": "qqTemp",
@@ -293,7 +375,8 @@
               "risk": "low",
               "pathPs": "$env:APPDATA + '\\Tencent\\QQ\\Temp'",
               "evidence": "QQ 临时",
-              "recommended": true
+              "recommended": true,
+              "deleteMode": "contents"
             },
             {
               "id": "baiduNetdiskLog",
@@ -301,7 +384,8 @@
               "risk": "low",
               "pathPs": "$env:LOCALAPPDATA + '\\Baidu\\BaiduNetdisk\\log'",
               "evidence": "百度网盘日志",
-              "recommended": true
+              "recommended": true,
+              "deleteMode": "contents"
             },
             {
               "id": "recycleBin",
@@ -309,7 +393,8 @@
               "risk": "medium",
               "pathPs": "'C:\\$Recycle.Bin'",
               "evidence": "回收站内容",
-              "recommended": false
+              "recommended": false,
+              "deleteMode": "contents"
             },
             {
               "id": "memoryDumpFiles",
@@ -317,7 +402,8 @@
               "risk": "low",
               "pathPs": "$env:WINDIR + '\\Minidump'",
               "evidence": "蓝屏 minidump",
-              "recommended": true
+              "recommended": true,
+              "deleteMode": "contents"
             },
             {
               "id": "recentFiles",
@@ -325,7 +411,8 @@
               "risk": "low",
               "pathPs": "$env:APPDATA + '\\Microsoft\\Windows\\Recent'",
               "evidence": "最近使用文件的 .lnk 快捷方式（隐私清理，执行后自动重建目录）",
-              "recommended": false
+              "recommended": false,
+              "deleteMode": "contents"
             },
             {
               "id": "dismComponentCleanup",
@@ -341,7 +428,17 @@
               "risk": "low",
               "pathPs": "$env:LOCALAPPDATA + '\\D3DSCache'",
               "evidence": "DX 着色器缓存",
-              "recommended": true
+              "recommended": true,
+              "deleteMode": "contents"
+            },
+            {
+              "id": "systemTemp",
+              "name": "系统临时目录",
+              "risk": "low",
+              "pathPs": "$env:WINDIR + '\\Temp'",
+              "evidence": "系统级 TEMP（区别于用户 TEMP，HiBit 逆向新增）",
+              "recommended": true,
+              "deleteMode": "contents"
             }
           ]
         }
@@ -358,7 +455,8 @@
           "risk": "low",
           "pathPs": "$env:LOCALAPPDATA + '\\NVIDIA'",
           "evidence": "NVIDIA 编译着色器缓存",
-          "recommended": true
+          "recommended": true,
+          "deleteMode": "contents"
         },
         {
           "id": "nvidiaNvCache",
@@ -366,7 +464,8 @@
           "risk": "low",
           "pathPs": "$env:PROGRAMDATA + '\\NVIDIA Corporation\\NV_Cache'",
           "evidence": "NVIDIA 全局安装缓存",
-          "recommended": true
+          "recommended": true,
+          "deleteMode": "contents"
         },
         {
           "id": "amdCache",
@@ -374,7 +473,8 @@
           "risk": "low",
           "pathPs": "$env:LOCALAPPDATA + '\\AMD'",
           "evidence": "AMD 着色器缓存",
-          "recommended": true
+          "recommended": true,
+          "deleteMode": "contents"
         },
         {
           "id": "intelShaderCache",
@@ -382,7 +482,8 @@
           "risk": "low",
           "pathPs": "$env:LOCALAPPDATA + '\\Intel\\ShaderCache'",
           "evidence": "Intel 核显着色器缓存",
-          "recommended": true
+          "recommended": true,
+          "deleteMode": "contents"
         }
       ]
     },
@@ -578,7 +679,8 @@
             "steam"
           ],
           "evidence": "Steam 下载缓存",
-          "recommended": true
+          "recommended": true,
+          "deleteMode": "contents"
         },
         {
           "id": "steamHtmlCache",
@@ -660,7 +762,8 @@
             "cloudmusic"
           ],
           "evidence": "网易云音乐缓存",
-          "recommended": true
+          "recommended": true,
+          "deleteMode": "contents"
         },
         {
           "id": "wechatCache",
@@ -675,7 +778,8 @@
             "wechat"
           ],
           "evidence": "微信文件缓存",
-          "recommended": true
+          "recommended": true,
+          "deleteMode": "contents"
         },
         {
           "id": "qqCache",
@@ -693,7 +797,8 @@
             "qqnt"
           ],
           "evidence": "QQ 缓存",
-          "recommended": true
+          "recommended": true,
+          "deleteMode": "contents"
         },
         {
           "id": "douyinCache",
@@ -709,7 +814,8 @@
             "douyin"
           ],
           "evidence": "抖音缓存",
-          "recommended": true
+          "recommended": true,
+          "deleteMode": "contents"
         },
         {
           "id": "vscodeCache",
@@ -844,7 +950,7 @@
   ],
   "_sig": {
     "alg": "ed25519",
-    "sig": "5ZwVrDXyedunnFad5O7OLU6iVKxubdVFLIKviY5EQYEJgysoDYJEIx6tMP5DiUSup89w04Le82ikEsntKkMjAg=="
+    "sig": "BijniDifk9CKv4qPu4BfnZPnDGxmB08NOni8rTqdMtmP6Y7gpvFoMaO8DaClbhfQ/3rr6+6VbOKmdHiAxx4wBA=="
   }
 };
 })(typeof window !== 'undefined' ? window : globalThis);

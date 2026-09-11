@@ -1,6 +1,6 @@
 {
   "name": "trim",
-  "version": "2.0.0",
+  "version": "2.5.0",
   "description": "Trim",
   "main": "main.js",
   "author": "xiaoxu",
@@ -25,6 +25,7 @@
     "appId": "com.xiaoxu.trim",
     "productName": "Trim",
     "copyright": "Copyright © 2026 xiaoxu",
+    "electronDist": "node_modules/electron/dist",
     "directories": {
       "output": "build-release",
       "buildResources": "build"
@@ -48,6 +49,10 @@
       {
         "from": "native-scanner/target/release/finder.exe",
         "to": "finder/finder.exe"
+      },
+      {
+        "from": "scripts/TrimFastSize.dll",
+        "to": "fastsize/TrimFastSize.dll"
       }
     ],
     "win": {

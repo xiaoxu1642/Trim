@@ -195,8 +195,9 @@
   }
 
   // 模态确认：统一代理到 modal.confirm（单一实现），支持 danger 红色二次确认。
-  // options: { danger: boolean, dangerHint: string } —— dangerHint 为纯文本红色
-  // 警示，由弹窗模板统一转义渲染；调用方禁止自行拼接 HTML（会被转义成字面文本）。
+  // options: { danger: boolean, dangerHint: string, warning: boolean, warningHint: string }
+  // dangerHint 为纯文本红色警示、warningHint 为纯文本黄色警示，
+  // 均由弹窗模板统一转义渲染；调用方禁止自行拼接 HTML（会被转义成字面文本）。
   function confirm(title, message, confirmText = '确认', cancelText = '取消', options = {}) {
     const opts = options || {};
     if (!window.modal?.confirm) {
@@ -209,7 +210,9 @@
       confirmText,
       cancelText,
       danger: !!opts.danger,
-      dangerHint: String(opts.dangerHint || '')
+      dangerHint: String(opts.dangerHint || ''),
+      warning: !!opts.warning,
+      warningHint: String(opts.warningHint || '')
     });
   }
 
@@ -217,6 +220,12 @@
   // 删除类操作必须红色二次确认）。新增高危确认一律走这里，避免遗漏 danger 标记。
   function confirmDanger(title, message, confirmText = '确认', cancelText = '取消', dangerHint = '') {
     return confirm(title, message, confirmText, cancelText, { danger: true, dangerHint });
+  }
+
+  // D10：中风险操作语义化入口（黄色确认）。中风险清理项勾选清理前的二次确认，
+  // 与高风险红色确认分级，视觉与文案均低一档。
+  function confirmWarning(title, message, confirmText = '确认', cancelText = '取消', warningHint = '') {
+    return confirm(title, message, confirmText, cancelText, { danger: false, warning: true, warningHint });
   }
 
   // 审查v4-L8：浏览器预览模式（preload 未注入 window.api）的全局提示横幅。
@@ -706,15 +715,6 @@
       }
     });
 
-    // 设置 - 主题切换
-    document.querySelectorAll('input[name="theme"]').forEach(el => {
-      el.addEventListener('change', () => {
-        const v = el.value;
-        theme.setStored(v);
-        theme.apply(v);
-      });
-    });
-
     // 加载应用信息
     loadAppInfo();
 
@@ -752,7 +752,7 @@
     window.fontmanager?.restore?.();
 
     // 暴露给其它模块（须在页面模块启动逻辑之前，保证其可调用 app 能力）
-    window.app = { toast, confirm, confirmDanger, showPreviewModeBanner, log, switchPage, loadAppInfo, requestElevation, getState: () => appState };
+    window.app = { toast, confirm, confirmDanger, confirmWarning, showPreviewModeBanner, log, switchPage, loadAppInfo, requestElevation, getState: () => appState };
 
     // 初始加载：恢复上次活跃页（窗口状态记忆），无记录则默认系统概览
     const lastPage = (() => { try { return localStorage.getItem(ACTIVE_PAGE_KEY); } catch (e) { return null; } })();

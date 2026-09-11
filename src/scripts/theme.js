@@ -1,54 +1,26 @@
-// theme.js - 主题管理（深色/浅色模式）
-// 支持：系统跟随 + 手动切换 + Electron 原生 Mica 检测 + 主进程主题同步
+// theme.js - 主题管理（恒浅色）
+// v2.1（2026-09-10 需求变更）：应用固定为浅色模式，删除深浅切换与系统跟随；
+// 保留 Mica 材质检测与外观设置（背景模糊度/预设背景/强调色渐变）。
 (function () {
   'use strict';
 
-  const STORAGE_KEY = 'winclean-theme';
   const IS_ELECTRON = !!window.api?.app;
-
-  function getStoredTheme() {
-    try {
-      return localStorage.getItem(STORAGE_KEY) || 'auto';
-    } catch (e) {
-      return 'auto';
-    }
-  }
-
-  function setStoredTheme(theme) {
-    try {
-      localStorage.setItem(STORAGE_KEY, theme);
-    } catch (e) {}
-  }
-
-  function getSystemTheme() {
-    // Electron 模式：主进程的 nativeTheme 更准确（反映 AppsUseLightTheme），但同步调用
-    // 不可用——这里用 matchMedia 作渲染进程近似，主进程经 app:theme-changed 主动推送准确值
-    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-      return 'dark';
-    }
-    return 'light';
-  }
 
   // 应用 Mica 模式（Electron + Windows 11 时背景透明，让原生 Mica 透出）
   function applyMicaMode(enabled) {
     document.body.classList.toggle('electron-mica', enabled);
   }
 
-  function applyTheme(theme) {
-    const resolved = theme === 'auto' ? getSystemTheme() : theme;
-    document.body.classList.remove('theme-dark', 'theme-light');
-    document.body.classList.add('theme-' + resolved);
+  function applyTheme() {
+    // 恒浅色：只挂 theme-light，main.css 的 theme-dark 规则不再生效
+    document.body.classList.remove('theme-dark');
+    document.body.classList.add('theme-light');
 
-    // 标题栏是独立系统表面，不跟随应用主题。
+    // 标题栏是独立系统表面，固定浅色
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute('content', '#f3f3f3');
 
     ensureRingGradientDef();
-
-    // 同步设置页的单选按钮状态
-    document.querySelectorAll('input[name="theme"]').forEach(radio => {
-      radio.checked = radio.value === theme;
-    });
   }
 
   // 审查 7-2：名实一致——本函数只在首次调用时创建 defs（之后幂等返回），非每次更新
@@ -69,37 +41,8 @@
     }
   }
 
-  function toggle() {
-    const current = document.body.classList.contains('theme-light') ? 'light' : 'dark';
-    const next = current === 'light' ? 'dark' : 'light';
-    setStoredTheme(next);
-    applyTheme(next);
-    if (window.app?.toast) {
-      window.app.toast('info', `已切换到${next === 'dark' ? '深色' : '浅色'}主题`);
-    }
-  }
-
-  // 监听系统主题变化（浏览器模式）
-  if (window.matchMedia) {
-    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-      const stored = getStoredTheme();
-      if (stored === 'auto') applyTheme('auto');
-    });
-  }
-
-  // Electron 模式：监听主进程推送的主题变化（nativeTheme，最准确）
-  if (window.api?.app?.onThemeChanged) {
-    window.api.app.onThemeChanged((theme) => {
-      const stored = getStoredTheme();
-      if (stored === 'auto') applyTheme(theme);
-    });
-  }
-
   window.theme = {
     apply: applyTheme,
-    toggle,
-    getStored: getStoredTheme,
-    setStored: setStoredTheme,
     applyMicaMode
   };
 
@@ -132,8 +75,7 @@
 
   // 初始化
   document.addEventListener('DOMContentLoaded', async () => {
-    const stored = getStoredTheme();
-    applyTheme(stored);
+    applyTheme();
     applySkinAndPreset();
 
     // Electron 模式：检测 Mica 支持，启用透明背景
@@ -154,8 +96,5 @@
         // 忽略
       }
     }
-
-    const themeBtn = document.getElementById('themeToggle');
-    if (themeBtn) themeBtn.addEventListener('click', toggle);
   });
 })();

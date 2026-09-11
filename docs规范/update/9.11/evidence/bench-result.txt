@@ -1,0 +1,6 @@
+鐩爣鐩綍 = C:\Windows  涓婇檺鏂囦欢鏁?= 200000
+A. os.scandir + stat :   7.419s  files=135751 dirs=32865  28.0 GB  (18299 files/s)
+B. FindFirstFileW(1绾跨▼):   2.740s  files=135751 dirs=32865  28.0 GB  (49550 files/s)
+C. FindFirstFileW(4绾跨▼):   1.631s  files=135751 dirs=32865  28.0 GB  (83229 files/s)
+   A/B = 2.71x   B/C = 1.68x
+D. CreateFileW 澶辫触 err=5锛堝鍗婃槸娌＄鐞嗗憳鏉冮檺锛?

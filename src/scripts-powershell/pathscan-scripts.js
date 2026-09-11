@@ -13,6 +13,11 @@
 
 const fs = require('fs');
 const path = require('path');
+// v2.2 第 2 批（D1）：规则候选表达式（candidatesPs/globCandidatesPs）改用受限求值器，
+// 与 cleanup-scripts 共用同一定义。这里的求值分支是**活代码**（键名与 JSON 一致），
+// 且读的规则 JSON 由 main.js 注入「当前生效版本」——含不验签的自定义规则目录，
+// 原先等于把不可信文件内容直接喂给 Invoke-Expression，是本批最高优先级的收口点。
+const { RULE_PATH_EVAL_PS } = require('../main/ps-rule-path-eval');
 
 const BUILTIN_RULES_FILE = path.join(__dirname, '..', 'data', 'cleanup-rules.json');
 const DATA_RULES_FILE = path.join(process.env.APPDATA || path.join(require('os').homedir(), 'AppData', 'Roaming'), 'Trim', 'cleanup', 'rules.json');
@@ -42,6 +47,7 @@ $ProgressPreference = 'SilentlyContinue'
 
 $rulesJson = '\${RULES_JSON_PLACEHOLDER}'
 
+${RULE_PATH_EVAL_PS}
 $results = @{}
 $script:inventory = @()
 
@@ -220,7 +226,8 @@ try {
       if ($r -and $r.candidatesPs) {
         foreach ($expr in @($r.candidatesPs)) {
           if (-not $expr) { continue }
-          try { $v = [string](Invoke-Expression ([string]$expr)); if ($v) { $ruleCacheCandidates[$id] += $v } } catch {}
+          $rc = Resolve-RulePath -Expr ([string]$expr)
+          if ($rc.ok -and $rc.path) { $ruleCacheCandidates[$id] += [string]$rc.path }
         }
       }
     }
@@ -228,7 +235,8 @@ try {
     if ($w -and $w.globCandidatesPs) {
       foreach ($expr in @($w.globCandidatesPs)) {
         if (-not $expr) { continue }
-        try { $v = [string](Invoke-Expression ([string]$expr)); if ($v) { $ruleWechatGlobs += $v } } catch {}
+        $rg = Resolve-RulePath -Expr ([string]$expr)
+        if ($rg.ok -and $rg.path) { $ruleWechatGlobs += [string]$rg.path }
       }
     }
   }

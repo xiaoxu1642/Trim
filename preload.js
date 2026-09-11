@@ -8,11 +8,6 @@ contextBridge.exposeInMainWorld('api', {
     getInfo: () => ipcRenderer.invoke('app:get-info'),
     getTheme: () => ipcRenderer.invoke('app:get-theme'),
     readUsage: () => ipcRenderer.invoke('app:read-usage'),
-    onThemeChanged: (callback) => {
-      const handler = (_, theme) => callback(theme);
-      ipcRenderer.on('app:theme-changed', handler);
-      return () => ipcRenderer.removeListener('app:theme-changed', handler);
-    },
     onMemoryTrim: (callback) => {
       const handler = () => callback();
       ipcRenderer.on('memory:trim', handler);

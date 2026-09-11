@@ -1,6 +1,6 @@
 // main.js - Electron 主进程
 // 负责窗口创建、管理员权限提升、IPC 通信、PowerShell 调用
-const { app, BrowserWindow, ipcMain, shell, dialog, nativeTheme, screen, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, screen, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -20,6 +20,10 @@ app.commandLine.appendSwitch('js-flags', '--expose-gc');
 const DIAG = require('./src/main/diag');
 const SECURITY = require('./src/main/security');
 const RULES_SIG = require('./src/main/rules-signature');
+// v2.2 第 2 批（D18）：受保护路径判定的唯一来源。cleanup-scripts.js 以
+// require('../main/ps-protect-path') 加载同一文件（同绝对路径→同 require 缓存），
+// 因此这里 configureProtectedRoots 补全的清单会被 PS 侧注入逻辑直接读到。
+const PROTECT_PATH = require('./src/main/ps-protect-path');
 
 // ==================== 防止多开 ====================
 // 必须在任何重初始化逻辑（数据迁移、窗口创建、IPC 注册）之前请求单实例锁：
@@ -58,6 +62,10 @@ let mainWindow = null;
 // 审查 2-3：清理快照按发送方（webContents.id）分桶，消除全局单例的竞态窗口——
 // 并发扫描不再互相抹除快照；扫描期间的 execute 校验到空快照会 fail-safe 拒绝
 const cleanupSnapshots = new Map(); // webContentsId -> Map(item.id -> item)
+// v2.2 第3批（D13）：扫描流式回传的可删文件清单（@@PLANFILE@@）进快照的防呆上限——
+// 单条目 10 万行、全扫描 100 万行，超限即停止收集（正常内置/自定义规则远达不到）。
+const PLAN_CAP_PER_ITEM = 100000;
+const PLAN_CAP_TOTAL = 1000000;
 let lastContextmenuSnapshot = new Map();
 let lastStartupSnapshot = new Map();
 let lastProcessSnapshot = new Map();
@@ -772,15 +780,15 @@ function createWindow() {
     const saved = getSavedMaterial();
     if (saved !== 'none') {
       windowOptions.backgroundMaterial = nativeMaterialFor(saved);
-      // 首帧使用与系统主题一致的不透明底色，避免透明客户区在 DWM 提交前出现黑闪。
+      // 首帧使用不透明浅色底色，避免透明客户区在 DWM 提交前出现黑闪。
       // Mica 仍作为可损失的视觉增强，页面本身始终提供不透明 CSS 兜底。
-      windowOptions.backgroundColor = nativeTheme.shouldUseDarkColors ? '#0F1115' : '#F5F6F8';
+      windowOptions.backgroundColor = '#F5F6F8';
     } else {
-      windowOptions.backgroundColor = nativeTheme.shouldUseDarkColors ? '#202020' : '#f3f3f3';
+      windowOptions.backgroundColor = '#f3f3f3';
     }
   } else {
     // Windows 10 回退：普通不透明背景
-    windowOptions.backgroundColor = nativeTheme.shouldUseDarkColors ? '#202020' : '#f3f3f3';
+    windowOptions.backgroundColor = '#f3f3f3';
   }
 
   mainWindow = new BrowserWindow(windowOptions);
@@ -825,19 +833,9 @@ function createWindow() {
   setTimeout(() => showMainWindowWhenReady('创建后 8s 兜底'), 8000);
   mainWindowOnFirstPaint = () => showMainWindowWhenReady('渲染层首帧握手');
 
-  // ==================== 主题跟随 ====================
-  // 系统主题变化推送给全部窗口（子窗口的 window-material.js 依赖此广播同步
-  // theme-dark/theme-light）。标题栏保持独立的固定系统浅色表面，不跟随应用主题
-  // 或强调色，避免原生窗口按钮区域出现色块冲突。
-  nativeTheme.on('updated', () => {
-    const isDark = nativeTheme.shouldUseDarkColors;
-    // 通知所有存活窗口（主窗 + 子窗）
-    BrowserWindow.getAllWindows().forEach((w) => {
-      if (w.isDestroyed()) return;
-      try { w.webContents.send('app:theme-changed', isDark ? 'dark' : 'light'); } catch (e) {}
-    });
-    writeLog('info', `系统主题变化: ${isDark ? '深色' : '浅色'}`);
-  });
+  // ==================== 主题 ====================
+  // v2.1（2026-09-10 需求变更）：应用固定浅色，删除系统主题跟随广播。
+  // 标题栏保持独立的固定浅色表面，不跟随系统主题或强调色，避免原生窗口按钮区域出现色块冲突。
 
   // 最大化状态同步（用于标题栏按钮图标切换）
   // Win11 27H2 实测结论（2026-09-03 多轮验证）：
@@ -912,7 +910,8 @@ handleSafe('app:get-info', async () => {
 
 // 系统主题
 handleSafe('app:get-theme', () => {
-  return nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
+  // v2.1：应用固定浅色
+  return 'light';
 });
 
 // 读取使用说明（数据源统一为根目录 readme.md：用户文档与应用内弹窗同源，2026-09 目录梳理）
@@ -928,11 +927,6 @@ handleSafe('app:read-usage', () => {
   }
 });
 
-onSafe('app:theme-changed', (event, theme) => {
-  writeLog('info', `主题切换: ${theme}`);
-});
-
-// 窗口控制
 onSafe('window:minimize', () => mainWindow?.minimize());
 onSafe('window:maximize', () => {
   if (mainWindow?.isMaximized()) {
@@ -1016,6 +1010,20 @@ handleSafe('log:export', async () => {
 // ==================== 清理模块 IPC ====================
 const CLEANUP_SCRIPT = require('./src/scripts-powershell/cleanup-scripts');
 
+// v2.1 扫描加速：解析 TrimFastSize.dll 绝对路径注入清理脚本（仿 resolveFinderExe 先例）。
+// 打包后位于 resources/fastsize/，开发期位于 scripts/；缺失返回 null → 脚本自动降级回原实现。
+function resolveFastSizeDll() {
+  const candidates = [
+    process.resourcesPath ? path.join(process.resourcesPath, 'fastsize', 'TrimFastSize.dll') : null,
+    path.join(__dirname, 'scripts', 'TrimFastSize.dll')
+  ].filter(Boolean);
+  for (const c of candidates) {
+    try { if (fs.existsSync(c)) return c; } catch (e) {}
+  }
+  return null;
+}
+CLEANUP_SCRIPT.setFastSizeDll(resolveFastSizeDll());
+
 // P1-9：向渲染层暴露清理规则唯一数据源（src/data/cleanup-rules.json）
 handleSafe('cleanup:rules', () => {
   try {
@@ -1043,6 +1051,11 @@ handleSafe('cleanup:scan', async (event, { categories }) => {
   const total = Array.isArray(categories) ? categories.length : 0;
   const data = [];
   let scanBuf = '';
+  // v2.2 第3批（D13）：@@PLANFILE@@ 流式行按 id 聚合——fileKeys 条目扫描即产「可删文件
+  // 清单」，明细与执行只消费这份清单（不再第二、三次重枚举）。
+  const planBuf = new Map();
+  const planTruncated = new Set();
+  let planTotalRows = 0;
   try {
     writeLog('info', `开始扫描: ${categories.join(', ')}`);
     const { stderr, code } = await runPowerShellFile(scriptPath, {
@@ -1055,6 +1068,20 @@ handleSafe('cleanup:scan', async (event, { categories }) => {
         while ((nl = scanBuf.indexOf('\n')) >= 0) {
           const line = scanBuf.slice(0, nl).replace(/\r$/, '');
           scanBuf = scanBuf.slice(nl + 1);
+          if (line.startsWith('@@PLANFILE@@')) {
+            // 计划文件行只进主进程快照（渲染层不消费），受总量防呆上限约束
+            if (planTotalRows >= PLAN_CAP_TOTAL) continue;
+            try {
+              const pf = JSON.parse(line.slice(12));
+              if (pf && typeof pf.id === 'string' && pf.id.length <= 160 && typeof pf.path === 'string' && pf.path.length <= 2000) {
+                let arr = planBuf.get(pf.id);
+                if (!arr) { arr = []; planBuf.set(pf.id, arr); }
+                if (arr.length < PLAN_CAP_PER_ITEM) { arr.push({ path: pf.path, size: Number(pf.size) || 0 }); planTotalRows++; }
+                else if (!planTruncated.has(pf.id)) { planTruncated.add(pf.id); writeLog('warn', `可删文件清单超过 ${PLAN_CAP_PER_ITEM} 条上限: ${pf.id}`); }
+              }
+            } catch (e) {}
+            continue;
+          }
           if (!line.startsWith('@@ITEM@@')) continue;
           try {
             const item = JSON.parse(line.slice(8));
@@ -1071,7 +1098,13 @@ handleSafe('cleanup:scan', async (event, { categories }) => {
       writeLog('error', `扫描失败: ${stderr}`);
       return { success: false, message: stderr || '扫描失败', data: [] };
     }
-    writeLog('info', `扫描完成: ${data.length} 项`);
+    // 把可删文件清单并进条目（无清单的条目补空数组，执行/明细侧统一按数组消费）
+    for (const item of data) {
+      const pf = planBuf.get(item.id);
+      item.files = pf || [];
+      if (planTruncated.has(item.id)) item.filesTruncated = true;
+    }
+    writeLog('info', `扫描完成: ${data.length} 项, 计划文件 ${planTotalRows} 条`);
     cleanupSnapshots.set(event.sender.id, snapshotById(data)); // 审查 2-3：写入本窗口快照
     return { success: true, data };
   } catch (e) {
@@ -1086,7 +1119,10 @@ handleSafe('cleanup:scan', async (event, { categories }) => {
 handleSafe('cleanup:execute', async (event, { items, force, toRecycle, autoRebuild }) => {
   const safeItems = validateSnapshotItems(items, cleanupSnapshots.get(event.sender.id) || new Map()); // 审查 2-3：取本窗口快照
   if (!safeItems) return { success: false, message: '清理项不是最近一次扫描结果，已拒绝执行' };
-  const script = CLEANUP_SCRIPT.execute(safeItems, !!force, !!toRecycle);
+  // v2.2 第2批（D18）：在生成脚本前把保护清单补全（含 Electron known folder），
+  // execute() 会把同一份清单注入 PS，两侧判定才会完全一致。
+  ensureProtectedConfigured();
+  const script = CLEANUP_SCRIPT.execute(safeItems, !!force, !!toRecycle, !!autoRebuild);
   const scriptPath = writeTempScript(script);
   const sender = event.sender;
   // P3 回收站模式：PS 输出 @@RECYCLE@@ 目标行，实际移入回收站由主进程 shell.trashItem 完成
@@ -1174,7 +1210,13 @@ handleSafe('cleanup:execute', async (event, { items, force, toRecycle, autoRebui
     }
     data.trashFailures = trashFailures || []; // 审查 4-4：渲染层据此弹「改为永久删除」引导
     try {
-      writeLog('info', `清理完成: 释放 ${data.totalFreed} 字节`);
+      // v2.2 第1批（D6）：日志口径与明细对齐。旧实现只写「释放 N 字节」，
+      // 而 N 在修复前是按删除前全量 size 冒领的虚数值，事后无法与 UI 明细核对；
+      // 现在 freed 来自实测差值，同时补记 成功/失败/跳过/部分成功/残留，便于复盘。
+      const dts = data.details || [];
+      const nPartial = dts.filter(d => d.status === 'partial').length;
+      const nResidual = dts.reduce((s, d) => s + (Number(d.residual) > 0 ? 1 : 0), 0);
+      writeLog('info', `清理完成: 实测释放 ${Number(data.totalFreed) || 0} 字节, 成功 ${data.success || 0}, 失败 ${data.failed || 0}, 跳过 ${data.skipped || 0}, 部分成功 ${nPartial}, 有残留 ${nResidual} 项`);
       return { success: Number(data.failed || 0) === 0, data };
     } catch (e) {
       return { success: false, message: '解析结果失败', raw: stdout };
@@ -1217,9 +1259,39 @@ handleSafe('cleanup:retry-failed-delete', async (event) => {
   return { success: failed === 0, data: { totalFreed: freed, ok, failed, details } };
 });
 
+// 在规则库中按 id 定位条目（groups→subGroups→items 与 groups→items 并存，需通用遍历）
+function findCleanupRuleById(id) {
+  const rules = CLEANUP_SCRIPT.rules();
+  for (const g of (rules.groups || [])) {
+    if (g.subGroups) {
+      for (const sg of g.subGroups) {
+        for (const it of (sg.items || [])) if (it && it.id === id) return it;
+      }
+    }
+    for (const it of (g.items || [])) if (it && it.id === id) return it;
+  }
+  return null;
+}
+
 // P3 条目明细：枚举单个条目将删除的文件清单（只读，供「明细」弹窗展示）
 handleSafe('cleanup:item-detail', async (event, { id, path: itemPath }) => {
   if (typeof id !== 'string' || id.length < 1 || id.length > 160) return { success: false, message: '参数无效' };
+  // v2.2 第3批（D13）：fileKeys 条目明细直接读扫描快照里的可删文件清单——明细与执行
+  // 同源（计划即明细），不再为展示做第二次 PS 枚举。无快照/清单时回退原 DETAIL_SCRIPT。
+  const known = (cleanupSnapshots.get(event.sender.id) || new Map()).get(id);
+  const rule = findCleanupRuleById(id);
+  if (rule && rule.fileKeys && Array.isArray(rule.fileKeys) && rule.fileKeys.length > 0 && known && Array.isArray(known.files)) {
+    const cap = 600; // 与 DETAIL_SCRIPT 的明细上限一致
+    return {
+      success: true,
+      data: {
+        kind: 'files',
+        total: known.files.length,
+        truncated: known.files.length > cap,
+        files: known.files.slice(0, cap).map(f => ({ path: f.path, size: f.size }))
+      }
+    };
+  }
   let safePath = '';
   if (typeof itemPath === 'string' && itemPath.length > 0 && itemPath.length <= 600) safePath = itemPath;
   const script = CLEANUP_SCRIPT.detail(id, safePath);
@@ -1483,6 +1555,12 @@ function runRustScanner(scanType, args, opts = {}) {
           if (m && typeof opts.onProgress === 'function') {
             try { opts.onProgress(parseInt(m[1], 10)); } catch (e) {}
           }
+        } else if (line.startsWith('@@SCANNED:')) {
+          // 心跳行（P0 批次）：已枚举文件数，供前端实时反馈，未知前缀不破坏解析
+          const m = /@@SCANNED:(\d+)@@/.exec(line);
+          if (m && typeof opts.onScanned === 'function') {
+            try { opts.onScanned(parseInt(m[1], 10)); } catch (e) {}
+          }
         } else if (line.startsWith('@@ITEM@@')) {
           try { items.push(JSON.parse(line.slice(8))); } catch (e) {}
         }
@@ -1552,6 +1630,9 @@ handleSafe('finder:scan', async (event, { scanType, paths, minSize, count, minSi
     const items = await runRustScanner(scanType, args, {
       onProgress: n => {
         if (sender && !sender.isDestroyed()) sender.send('finder:progress', { scanType, progress: n });
+      },
+      onScanned: n => {
+        if (sender && !sender.isDestroyed()) sender.send('finder:progress', { scanType, scanned: n });
       }
     });
     lastFinderSnapshot = new Map();
@@ -1571,29 +1652,39 @@ handleSafe('finder:scan', async (event, { scanType, paths, minSize, count, minSi
   }
 });
 
-// 保护路径：拒绝删除系统关键目录与磁盘根
-// 审查v4-L1：根路径盘符跟随 SystemDrive 动态生成（原硬编码 C:，系统目录装于其他盘时不设防）
-const PROTECTED_DELETE_ROOTS = (() => {
-  const drive = (process.env.SystemDrive || 'C:').toLowerCase().replace(/[\\]+$/, '');
-  return [
-    `${drive}\\windows`,
-    `${drive}\\program files`,
-    `${drive}\\program files (x86)`,
-    `${drive}\\programdata`,
-    `${drive}\\$recycle.bin`,
-    `${drive}\\system volume information`
-  ];
-})();
+// 保护路径：拒绝删除系统关键目录与磁盘根。
+// v2.2 第 2 批（D18）：判定逻辑整体迁至共享模块 src/main/ps-protect-path.js（JS/PS 同源，
+// PS 侧由 EXECUTE 脚本注入同一份清单），此处只保留「主进程才知道的补全项」与旧调用点。
+// 旧实现在此硬编码 6 个 SystemDrive 子树根，有两处硬伤（详见模块头注释）：
+//   1) 目录名写死 windows / program files，系统装在其他盘或多语言安装即静默不设防；
+//   2) 一律按子树拒（目标在根之下即拒），导致 Documents\WeChat\x\tmp 这类
+//      「用户内容根内部的清理目标」被误拒——实测内置 48 条规则里 16 条在回收站模式下删不掉。
+// 现清单语义：subtree（整棵拒）/ exact（仅根本身与其祖先拒）/ anyDrive（任意盘同名目录拒）。
+let _protectConfigured = false;
+function ensureProtectedConfigured() {
+  if (_protectConfigured) return;
+  _protectConfigured = true;
+  const extra = { extraSubtree: [APP_DATA_DIR], extraExact: [] };
+  // Electron known folder 只有主进程拿得到（known folder 可能被组策略/OneDrive 重定向，
+  // 不能由共享模块的纯环境变量推导替代）；取不到就退回模块内置的 USERPROFILE 推导值。
+  for (const k of ['desktop', 'documents', 'downloads']) {
+    try {
+      const v = app.getPath(k);
+      if (v) extra.extraExact.push(v);
+    } catch (e) {
+      writeLog('warn', `known folder ${k} 取用失败，保护清单回退环境变量推导: ${e.message}`);
+    }
+  }
+  try {
+    PROTECT_PATH.configureProtectedRoots(extra);
+  } catch (e) {
+    writeLog('warn', `保护清单补全失败，使用默认清单: ${e.message}`);
+  }
+}
 
 function isProtectedDeletePath(p) {
-  const norm = path.normalize(String(p || '')).replace(/[\\/]+$/, '');
-  if (!norm) return true;
-  if (/^[A-Za-z]:$/.test(norm)) return true;
-  const lower = norm.toLowerCase();
-  for (const r of PROTECTED_DELETE_ROOTS) {
-    if (lower === r || lower.startsWith(r + '\\')) return true;
-  }
-  return false;
+  ensureProtectedConfigured();
+  return PROTECT_PATH.isPathProtected(p);
 }
 
 // 文件清理删除清单：记录每次删除批次（路径/大小/类型/时间/是否进回收站），
@@ -1603,7 +1694,14 @@ const FILECLEAN_MANIFEST_KEEP = 50; // 只保留最近 50 个批次清单，避�
 
 // 统一删除出口（审查 1-2）：删除类操作一律先尝试移入回收站（可逆），仅当明确允许永久删除
 // 且回收站失败（被禁用/已满/目标被锁）时才降级 unlinkSync。调用方按返回的 recycled 回写清单标记。
+// v2.2 第 2 批（D18）：受保护路径判定下沉到这里。此前只在 finder:delete / retry-failed-delete
+// 两个调用点各判一次，而「统一出口」的意义就是没有旁路——新增调用点忘判就是漏口。
+// 复用调用方已有的 protected 标记字段（ok=false）即可，无需改动上层统计逻辑。
 async function trashOrUnlink(target, { allowPermanent = true } = {}) {
+  if (isProtectedDeletePath(target)) {
+    writeLog('warn', `受保护路径，拒绝删除: ${target}`);
+    return { ok: false, recycled: false, protected: true, message: '受保护路径，已拒绝' };
+  }
   try {
     await shell.trashItem(target);
     return { ok: true, recycled: true };
@@ -4560,7 +4658,7 @@ handleSafe('processManager:open-window', async () => {
     title: '应用进程管理',
     autoHideMenuBar: true,
     icon: path.join(__dirname, 'src', 'assets', 'ico', 'Trim.ico'),
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#202020' : '#f3f3f3',
+    backgroundColor: '#f3f3f3',
     // 原生材质与主窗同源（appearance.json.material）；渲染层半透明化见 window-material.js
     ...childWindowMaterialOption(),
     // 先隐藏待首帧渲染完成再显示，避免打开瞬间黑/白闪一帧
@@ -4615,7 +4713,7 @@ handleSafe('models:open-window', async () => {
     title: '大模型管理',
     autoHideMenuBar: true,
     icon: path.join(__dirname, 'src', 'assets', 'ico', 'Trim.ico'),
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#202020' : '#f3f3f3',
+    backgroundColor: '#f3f3f3',
     // 原生材质与主窗同源（appearance.json.material）；渲染层半透明化见 window-material.js
     ...childWindowMaterialOption(),
     // 先隐藏待首帧渲染完成再显示，避免打开瞬间黑/白闪一帧
@@ -4744,7 +4842,7 @@ handleSafe('peripheral:open-window', async () => {
     title: '外设优化',
     autoHideMenuBar: true,
     icon: path.join(__dirname, 'src', 'assets', 'ico', 'Trim.ico'),
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#202020' : '#f3f3f3',
+    backgroundColor: '#f3f3f3',
     // 原生材质与主窗同源（appearance.json.material）；渲染层半透明化见 window-material.js
     ...childWindowMaterialOption(),
     // 先隐藏待首帧渲染完成再显示，避免打开瞬间黑/白闪一帧

@@ -7,7 +7,7 @@ const crypto = require('crypto');
 
 // 内置公钥（由 scripts/sign-rules.js gen 生成并自动回填；更换密钥对必须同步发新版应用）
 const RULES_PUBKEY_PEM = `-----BEGIN PUBLIC KEY-----
-MCowBQYDK2VwAyEAN+o1akxFaTn1BC1XQfHzryn7RNv4dOYroHSH8cqhHF4=
+MCowBQYDK2VwAyEAPZs9yu+NYxlrFdIlxuzKv+UioSF6bNsEThQbOPJ4Pvw=
 -----END PUBLIC KEY-----`;
 
 // 签名对象 = 规则 JSON 根对象去掉 _sig 字段后的紧凑序列化文本（UTF-8 字节）。

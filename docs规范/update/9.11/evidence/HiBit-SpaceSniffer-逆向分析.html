@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HiBit Uninstaller / SpaceSniffer 逆向分析 + trim 大文件扫描优化方案</title>
+<style>
+  :root{
+    --bg:#f7f8fa; --card:#ffffff; --bd:#e3e6ea; --tx:#1f2328; --tx2:#5b6470;
+    --ac:#2563eb; --ac2:#0ea5e9; --warn:#b45309; --ok:#15803d; --mono:'Cascadia Mono',Consolas,'SF Mono',Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.75 -apple-system,'Segoe UI','Microsoft YaHei',sans-serif;}
+  .wrap{max-width:1080px;margin:0 auto;padding:32px 24px 80px}
+  h1{font-size:28px;margin:0 0 6px}
+  h2{font-size:21px;margin:38px 0 12px;padding-bottom:8px;border-bottom:2px solid var(--bd)}
+  h3{font-size:17px;margin:26px 0 8px;color:var(--ac)}
+  h4{font-size:15px;margin:18px 0 6px;color:var(--tx2)}
+  .sub{color:var(--tx2);font-size:14px;margin-bottom:24px}
+  .card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:18px 20px;margin:14px 0}
+  table{border-collapse:collapse;width:100%;font-size:13.5px;margin:10px 0}
+  th,td{border:1px solid var(--bd);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:#eef1f5;font-weight:600}
+  td code,li code,p code{background:#eef1f5;padding:1px 5px;border-radius:4px;font-family:var(--mono);font-size:12.5px}
+  pre{background:#1f2430;color:#e6e9ef;padding:14px 16px;border-radius:8px;overflow:auto;font-family:var(--mono);font-size:12.5px;line-height:1.6}
+  pre.bright{background:#f2f4f7;color:#1f2328;border:1px solid var(--bd)}
+  .tag{display:inline-block;padding:1px 8px;border-radius:20px;font-size:12px;margin-right:6px}
+  .t-ev{background:#dcfce7;color:#15803d;border:1px solid #86efac}
+  .t-in{background:#fef3c7;color:#92400e;border:1px solid #fcd34d}
+  .t-key{background:#dbeafe;color:#1d4ed8;border:1px solid #93c5fd}
+  .kv{font-family:var(--mono);font-size:12.5px;color:var(--tx2)}
+  ul,ol{padding-left:22px}
+  li{margin:4px 0}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:820px){.grid{grid-template-columns:1fr}}
+  .note{border-left:4px solid var(--ac);background:#f0f6ff;padding:10px 14px;margin:12px 0;border-radius:0 8px 8px 0}
+  .warn{border-left:4px solid var(--warn);background:#fffbeb;padding:10px 14px;margin:12px 0;border-radius:0 8px 8px 0}
+  .ok{border-left:4px solid var(--ok);background:#f0fdf4;padding:10px 14px;margin:12px 0;border-radius:0 8px 8px 0}
+  .num{font-family:var(--mono);font-weight:600;color:var(--ac)}
+  footer{margin-top:50px;color:var(--tx2);font-size:13px;border-top:1px solid var(--bd);padding-top:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>HiBit Uninstaller × SpaceSniffer 逆向分析</h1>
+<div class="sub">目标：拆出 HiBit 的「空文件夹清理」与「垃圾文件清理」逻辑，拆出 SpaceSniffer 的磁盘扫描架构，用于优化 <b>trim 的大文件扫描</b>。<br>
+分析日期：2026-09-11 · 全部结论附二进制偏移，可自行复核。</div>
+
+<div class="card">
+<h3 style="margin-top:0">一句话结论</h3>
+<ol>
+<li><b>HiBit 的清理是「静态规则表 + 类别级年龄阈值 + 忽略名单」，不是全盘扫描。</b>它只扫 20 多个已知路径，这是它快且安全的根本原因。</li>
+<li><b>HiBit 的空文件夹清理 = 递归枚举 + 无子项判定 + 可恢复删除（删除前备份）+ 用户忽略名单。</b></li>
+<li><b>SpaceSniffer 1.3.0.2 完全没用 MFT/USN</b>，就是 <code>FindFirstFileW/ExW</code> 递归 + 每文件 <code>GetFileSizeEx</code>+<code>GetCompressedFileSizeW</code>，靠「扫描/过滤双线程 + 增量渲染 + 按需细化 + 渲染层裁剪」换体验。</li>
+<li>因此 <b>trim 的最大提速空间不在「怎么递归」，而在「别递归」</b>：换 MFT/USN 直读是数量级差异；退一步也要把「每文件 3 次 syscall」降到 1 次。</li>
+</ol>
+</div>
+
+<h2>0. 解包路线与工具说明</h2>
+<p>两个目标都是 <b>32 位原生 PE / Delphi（VCL）编译</b>，不是 .NET，所以不需要 dnSpy/ILSpy 那一套：</p>
+<table>
+<tr><th>文件</th><th>PE 特征</th><th>判定</th></tr>
+<tr><td>HiBitUninstaller.exe<br><span class="kv">15,410,176 B</span></td><td>machine=0x14c, 11 节，含 <code>.itext/.didata/.edata/.tls</code>，RT_RCDATA 116 项 6.2 MB，VCLSTYLE 7 套</td><td>Delphi XE2+ / VCL（含 WinXControls、VirtualTreeView、superobject）</td></tr>
+<tr><td>SpaceSniffer 1.3.0.2 汉化版<br><span class="kv">2,311,168 B</span></td><td>10 节，DFM 资源 TFRMMAIN/TFRMCONFIG/…，GR32(Graphics32) 字符串</td><td>Delphi + Graphics32 + VirtualTreeView</td></tr>
+</table>
+
+<p><b>关于你给的 unpacktools 仓库</b>：我看了目录，里面是 AndroidKiller / GARbro / unrpa / unrpyc / KrkrExtract / XP3Viewer / OllyDBG / TrIDNet / dex2jar——<b>全都是 galgame 与安卓向</b>，对 Delphi PE 的窗体与逻辑还原没有可用工具，所以没下载。真正对得上的是 <b>IDR（Interactive Delphi Reconstructor）</b>，已下载到：</p>
+<pre class="bright">D:\KaiFa\文件分析\tools\Idr.exe   (3,414,016 B, 来源 github.com/crypto2011/IDR release 27_01_2019)</pre>
+<p>本次结论主要由自写脚本完成（PE 解析 / 资源树 / DFM 抽取 / UTF-16 与 ASCII 字符串聚类），脚本都在 <code>D:\KaiFa\文件分析\_work\</code>，可重跑。</p>
+
+<h2>1. HiBit —— 空文件夹清理（Empty Folder Cleaner）</h2>
+
+<h3>1.1 定位到的模块</h3>
+<table>
+<tr><th>证据</th><th>位置</th><th>内容</th></tr>
+<tr><td>窗体 DFM 资源</td><td><span class="kv">RCDATA/TEMPTYFOLDERFORM @14171772 (28,266 B)</span><br><span class="kv">RCDATA/TEMPTYFOLSETTFORM @14200040 (2,435 B)</span></td><td>主窗体 + 恢复/忽略名单窗体</td></tr>
+<tr><td>RTTI 类与方法表</td><td><span class="kv">文件偏移 6111715 起</span></td><td><code>TEmptyFolderForm</code> 及 published 方法：<code>Button1Click</code>(Scan)、<code>Button2Click</code>(Delete)、<code>Button3Click</code>(Close)、<code>Timer1/2/3Timer</code>、<code>CanClose</code>、<code>FormCloseQuery</code>、<code>Browse1Click</code>(Open Folder)、<code>Addig1Click</code>(Ignore this Folder)、<code>IgnorehighlightFolder1Click</code>、<code>Add1Click</code>/<code>Remove1Click</code>、<code>ListView1/2MouseDown</code>、<code>WMGetMinMaxInfo</code></td></tr>
+<tr><td>界面文案（英文语言包）</td><td><span class="kv">RCDATA/ENGLISHLANG @9841248（UTF-16）</span></td><td><code>[TEmptyFolderForm]</code> · <code>Label1.Caption=Find and remove empty folders from your Windows.</code> · <code>Button1=&amp;Scan</code> · <code>Button2=&amp;Delete</code> · <code>Browse1=Open Folder</code> · <code>rkGlassButton1=Restore</code> · <code>rkGlassButton2=Ignore List</code> · <code>Addig1=Ignore this Folder</code></td></tr>
+<tr><td>删除线程类</td><td>类名字典</td><td><code>TDeleteFolderThread</code>、<code>TDeleteBackupThread</code>（删除在独立线程执行）</td></tr>
+<tr><td>相关 API</td><td>导入表</td><td><code>FindFirstFileW/FindNextFileW/FindClose</code>、<code>GetFileAttributesExW</code>、<code>SHFileOperationW</code>、<code>RemoveDirectory</code> 系</td></tr>
+</table>
+
+<h3>1.2 还原出的执行流程</h3>
+<span class="tag t-ev">已确证</span><span class="tag t-in">部分为基于 API/方法名的合理推断（已标注）</span>
+<pre class="bright">
+[Scan]  Button1Click
+   │
+   ├─ 取扫描根（驱动器 / 自定义目录）
+   ├─ 递归枚举：FindFirstFileW(dir\*) → FindNextFileW
+   │      • 用 WIN32_FIND_DATA.dwFileAttributes 直接判目录/重解析点，不额外 stat
+   │      • 命中忽略名单的目录直接剪枝（不进入）
+   ├─ 空目录判定：该目录枚举结果中没有任何子项（不含 . / ..）
+   │      <span class="kv">[推断]</span> 递归删除型空目录（父目录只含空子目录）需要在子目录删除后回判，
+   │             由 Timer1/2/3 分帧推进 + 列表增量刷新 ⇒ 支持"边扫边出结果"
+   ├─ 结果写入 ListView1（VirtualStringTree/ListView 双列表：结果 + 忽略名单 ListView2）
+   └─ Timer 定时刷新计数与列表，UI 不阻塞
+
+[Delete] Button2Click → TDeleteFolderThread
+   ├─ 只删除用户勾选项
+   ├─ <span class="kv">[已确证]</span> 删除前写入备份项（rkGlassButton1=Restore / TEmptyFolSettForm: Remove / Remove all）
+   └─ 删除走 SHFileOperationW，可撤销、可恢复
+
+[Ignore] Addig1Click / Add1Click → 文件夹级白名单，持久化，下次扫描跳过
+</pre>
+
+<div class="ok">
+<b>值得抄到 trim 的 4 个点：</b>
+<ol style="margin:6px 0 0">
+<li><b>扫描与删除分离到线程</b>，UI 用 Timer 增量刷新（不是扫完才出结果）。</li>
+<li><b>破坏性操作前先建可恢复备份</b>（空目录删除成本极低，但"能撤销"是信任基础）。</li>
+<li><b>用户级忽略名单 + 结果内右键直接加忽略</b>，比"每次重新勾"体验好得多。</li>
+<li><b>用 FindFirstFileW 的 WIN32_FIND_DATA 直接判属性</b>，不要每目录再调一次 GetFileAttributes。</li>
+</ol>
+</div>
+
+<h2>2. HiBit —— 垃圾文件清理（Junk Files Cleaner）</h2>
+
+<h3>2.1 模块定位</h3>
+<table>
+<tr><th>证据</th><th>位置 / 内容</th></tr>
+<tr><td>实现单元</td><td>RTTI 中 <code>TList&lt;JunkFilesCleaner.TCleanFile.CleanS.TFileInfo&gt;</code>（<span class="kv">偏移 6084485</span>）⇒ 单元 <b>JunkFilesCleaner.pas</b>、类 <b>TCleanFile</b>、方法 <b>CleanS</b>、记录 <b>TFileInfo</b></td></tr>
+<tr><td>窗体</td><td><code>TJFCleanerForm</code>(@14393444, 42 KB) · <code>TJFSettingForm</code>(@14435452) · <code>TCustomCleanForm</code>(@14033940) · <code>TAddCustomCleanForm</code>(@13740220) · <code>TFJIgnoreForm</code>(@14299832)</td></tr>
+<tr><td><b>规则表（核心）</b></td><td>UTF-16 字符串数组，<span class="kv">文件偏移 6018848 – 6042600+</span>，结构见下</td></tr>
+<tr><td>类别名/文案</td><td>ENGLISHLANG <span class="kv">行 1293–1313</span> 与规则表尾部类别标识名</td></tr>
+</table>
+
+<h3>2.2 规则表的存储结构</h3>
+<p>规则在二进制里就是<b>一串连续 UTF-16 字符串</b>，按「路径 → 掩码 → 路径 → 掩码 … → 类别标识名」排列，类别标识名既是分组终止符也是结果分组键。掩码支持 <code>;</code> 与 <code>,</code> 分隔多模式。开头 4 个是全局设置键：</p>
+<pre class="bright">
+6019020  Temporary24        &lt;- 临时文件：只删 24 小时以上（开关）
+6019056  Prefetch7Day       &lt;- Prefetch：只删 7 天以上
+6019096  MemoryDump2Day     &lt;- 内存转储：只删 2 天以上
+6019140  RecycleBin24       &lt;- 回收站：只删 24 小时以上
+
+6019180  %systemroot%\temp
+6019248  Fine.SSR12;DMSetup.xml     &lt;- 排除名单（不删）
+6019308  %temp%
+6019336  %LocalAppData%
+6019380  *.tmp
+6019404  %AppData%
+6019436  TemporaryFiles             &lt;- 类别结束/分组键
+</pre>
+<p>也就是说：<b>「扫哪些目录」是写死的表，「删多旧」是可配的阈值，「哪些不删」是排除串 + 用户忽略名单。</b>这正是它能几秒出结果的原因——它从不遍历整个盘。</p>
+
+<h3>2.3 完整类别清单（19 类 + 10+ 浏览器）</h3>
+<table>
+<tr><th>类别键</th><th>典型路径（节选）</th><th>掩码</th></tr>
+<tr><td>TemporaryFiles</td><td>%systemroot%\temp、%temp%、%LocalAppData%、%AppData%</td><td>*.tmp（排除 Fine.SSR12;DMSetup.xml）</td></tr>
+<tr><td>WindowsLog</td><td>%systemroot%、SysWOW64、security\logs、%system%\wbem、SoftwareDistribution、debug、CatRoot2、inf、Panther、ModemLogs、Performance\WinSAT、Search\Data、CLR_*\UsageLogs、%systemroot%\Logs、DeliveryOptimization\Logs、System32\sru、SystemTemp、%LocalAppData%\Diagnostics、System32\WDI、USOShared\Logs、Network\Downloader</td><td>*.log、*log.txt、*.old、*.etl、*.lo_、V01*.log、PFRO.LOG、*.bak、*.txt、*.jrs、setupapi.*.log、setupact/err.log、SchedLgU.txt、winsat.log、*.chk、*.edb、Windows.edb、snapshot.etl</td></tr>
+<tr><td>ThumbnailCache</td><td>%LocalAppData%\Microsoft\Windows\Explorer、…\ThumbCacheToDelete、…\IconCacheToDelete</td><td>thumbcache_*.db、thm*.tmp、iconcache*、iconcache*.db</td></tr>
+<tr><td>OldPrefetch</td><td>%systemroot%\prefetch</td><td>*.pf</td></tr>
+<tr><td>FontCache</td><td>%systemroot%\system32、ServiceProfiles\LocalService\…\FontCache</td><td>FNTCACHE.DAT、GDIPFONTCACHEV1.DAT、*.dat</td></tr>
+<tr><td>SystemCache</td><td>winsxs\ManifestCache、CryptnetUrlCache\Content|MetaData（4 处）、D3DSCache、DeliveryOptimization\Cache、Terminal Server Client\Cache</td><td>（整目录）</td></tr>
+<tr><td>InstallerCache</td><td>%systemroot%\Installer\$PatchCache$</td><td>—</td></tr>
+<tr><td>MemoryDumps</td><td>%systemroot%\minidump、LiveKernelReports、%LocalAppData%\CrashDumps、config\systemprofile\…\CrashDumps</td><td>*.dmp</td></tr>
+<tr><td>ErrorReporting</td><td>WER\ReportArchive / ReportQueue / Temp（ProgramData、ALLUSERSPROFILE、LocalAppData 多份）</td><td>—</td></tr>
+<tr><td>ChkdskFragments</td><td>%SystemDrive%</td><td>File*.chk</td></tr>
+<tr><td>ObsoleteInstaller</td><td>%systemroot%\Installer\</td><td>—</td></tr>
+<tr><td>WindowsUpdate</td><td>%systemroot%\SoftwareDistribution\Download</td><td>—</td></tr>
+<tr><td>WindowsAppsCache</td><td>Cortana_*\AC\INetCache、WebExperience_*\EBWebView\Default\Code Cache</td><td>—</td></tr>
+<tr><td>RecycleBin</td><td>各盘 <code>:\$RECYCLE.BIN</code></td><td>—</td></tr>
+<tr><td>RecentDocument</td><td>%APPDATA%\Microsoft\Windows\Recent、GatherLogs\SystemIndex</td><td>*.lnk、*.Crwl</td></tr>
+<tr><td>IECache</td><td>INetCache、windows_ie_ac_001\AC\INetCache、Temporary Internet Files、Feeds Cache</td><td>—</td></tr>
+<tr><td>EdgeCache</td><td>Microsoft.MicrosoftEdge_8wekyb3d8bbwe\AC\…（#!001/#!002/#!121/#!003/#!006 多容器）、Microsoft\Edge、Microsoft\Edge Dev</td><td>—</td></tr>
+<tr><td>ChromeCache</td><td>相对路径 <code>Google\Chrome</code>（拼在 %LocalAppData% 下）</td><td>—</td></tr>
+<tr><td>FireFoxCache</td><td>Mozilla\Firefox\Profiles、Crash Reports、Pending Pings、Mozilla.Firefox_*\LocalCache</td><td>*sqlite-shm、*sqlite-wal</td></tr>
+<tr><td>Opera 系列</td><td>Opera\Opera\Cache、Opera Software\Opera Stable|Next|GX Stable（含 GPUCache/ShaderCache/Jump List Icons/File System/Service Worker/Local Storage/databases）</td><td>*-journal、*.localstorage-journal、Databases.db、*.db-journal</td></tr>
+<tr><td>其它浏览器</td><td>UC、Cent、Yandex、Vivaldi、Brave、Comodo Dragon、360、Waterfox、Floorp</td><td>—</td></tr>
+</table>
+
+<h3>2.4 三层可控性</h3>
+<div class="grid">
+<div class="card">
+<h4 style="margin-top:0">① 年龄阈值（TCustomCleanForm）</h4>
+<ul>
+<li><code>TemporaryCheckBox</code>：只删 24 小时以上的 Windows 临时文件</li>
+<li><code>PrefetchCheckBox</code>：只删 7 天以上的 Prefetch</li>
+<li><code>MemoryDumpCheckBox</code>：只删 2 天以上的内存转储</li>
+<li><code>RecycleBinCheckBox</code>：只删 24 小时以上的回收站内容</li>
+<li><code>AutoScanCheckBox</code>：启动后自动扫描</li>
+</ul>
+</div>
+<div class="card">
+<h4 style="margin-top:0">② 自定义 + ③ 忽略名单</h4>
+<ul>
+<li><code>TAddCustomCleanForm</code>：Folder/File 单选 + <b>Include SubFolders</b>（自定义路径是否递归）</li>
+<li><code>TFJIgnoreForm</code>：Add Folder / Add File / Delete / Refresh（文件级与文件夹级忽略）</li>
+<li>结果列表右键：<code>Addignor1</code>=Ignore this File、<code>IgnorethisFolder1</code>=Ignore this Folder、<code>IgnoreSelectedFiles1</code></li>
+<li><code>Recommended1</code>：推荐勾选（保守子集）——默认只勾安全项</li>
+</ul>
+</div>
+</div>
+
+<div class="ok">
+<b>值得抄到 trim 的 5 个点：</b>
+<ol style="margin:6px 0 0">
+<li><b>规则表驱动 &gt; 全盘扫描</b>：大文件/垃圾清理 90% 的命中来自 20 来个固定目录，先扫这些，秒级出结果。</li>
+<li><b>类别级年龄阈值</b>：把「删多旧的」变成每个类别的一个参数，而不是全局逻辑。</li>
+<li><b>排除名单内建在规则表</b>（如 <code>Fine.SSR12;DMSetup.xml</code>），避免误删系统正在用的文件。</li>
+<li><b>「Recommended」默认保守集</b>，全选交给用户自己承担。</li>
+<li><b>自定义项带 "Include SubFolders"</b>——这个开关决定递归成本，必须显式暴露。</li>
+</ol>
+</div>
+
+<h2>3. SpaceSniffer —— 磁盘空间分析逻辑</h2>
+
+<h3>3.1 线程与类模型（来自符号名）</h3>
+<table>
+<tr><th>符号</th><th>单元文件线索</th><th>职责</th></tr>
+<tr><td><code>TSnifThread</code></td><td>snifThread_source</td><td><b>扫描线程</b>：递归枚举文件系统，构建节点树</td></tr>
+<tr><td><code>TFilterThread</code> + <code>TFilterEngine</code></td><td>filterThread_source / filter_source</td><td><b>过滤线程</b>：独立于扫描，可中断（"Please wait the end of filtering process"）</td></tr>
+<tr><td><code>TWatchThread</code></td><td>watchThread_source</td><td>监视/刷新</td></tr>
+<tr><td><code>TBaseThread</code></td><td>baseThread_source</td><td>线程基类</td></tr>
+<tr><td><code>TNTFS_ADS</code></td><td>ntfs_source</td><td>NTFS 备用数据流扫描（配置项 <code>scanADS</code>，<b>默认关闭</b>，很慢）</td></tr>
+<tr><td><code>TDUSnapshotSnifAgent</code></td><td>—</td><td>快照代理（可保存/载入扫描结果）</td></tr>
+<tr><td><code>TDrive/Folder/File/FreeSpace/UnknownSpace/MissingData TreeMapNode</code></td><td>—</td><td>Treemap 节点类型：盘 / 目录 / 文件 / <b>空闲</b> / <b>未扫描</b> / <b>过滤中不可访问</b></td></tr>
+</table>
+
+<h3>3.2 关键结论：它不用 MFT</h3>
+<div class="note">
+<b>导入表证据</b>：kernel32 里有 <code>FindFirstFileW</code>、<code>FindFirstFileExW</code>、<code>FindNextFileW</code>、<code>GetFileSizeEx</code>、<code>GetCompressedFileSizeW</code>、<code>GetFileAttributesA/W</code>、<code>GetFileTime</code>、<code>CreateThread</code>、<code>CreateSemaphoreW</code>、<code>Interlocked*</code>、<code>QueryPerformanceCounter</code>；<b>没有 <code>DeviceIoControl</code>，没有 <code>NtQueryDirectoryFile</code>，没有 <code>CreateFileW</code> 打开卷的配套调用</b>。
+⇒ <b>SpaceSniffer 1.3.0.2 = 纯 Win32 递归枚举，不读 MFT、不读 USN 日志。</b>（WizTree 才是 MFT 路线，这是两者速度差一个数量级的根本原因。）
+</div>
+
+<h3>3.3 它靠什么"显得快"</h3>
+<table>
+<tr><th>机制</th><th>证据</th><th>含义</th></tr>
+<tr><td>扫描 / 过滤分离双线程</td><td>TSnifThread + TFilterThread + 「Please wait the end of filtering process」</td><td>扫描不停，过滤可中断重来</td></tr>
+<tr><td>增量渲染</td><td>节点类型 <code>TUnknownSpaceTreeMapNode</code>；文案「Not yet scanned space」「Unaccessible space (filtering)」</td><td>没扫到的区域也画出来，用户立刻有反馈</td></tr>
+<tr><td>按需细化（懒 drill-down）</td><td>菜单「Stop current zoomed view scan」「Perform a new scan of the zoomed view」；<code>actLessDetail/actMoreDetail</code></td><td>只在用户放大/要求更多细节时才深入某一层</td></tr>
+<tr><td>渲染层裁剪</td><td>配置 <code>minElementSizePx</code>、<code>fontSize</code>、<code>(ADS scan active)</code></td><td>小于 N 像素的元素不单独绘制 ⇒ 大目录下绘图不卡</td></tr>
+<tr><td>大小口径分离</td><td>「By size [&lt;|&gt;] N [b|kb|mb|gb|tb]」「可以加 disksize|clustersize|filesize|logicalsize|size 前缀；disksize 与 cluster size 同义，filesize/logicalsize/size 同义」</td><td>磁盘占用（<code>GetCompressedFileSizeW</code>）与逻辑大小（<code>GetFileSizeEx</code>）严格区分</td></tr>
+<tr><td>扩展名分组</td><td>TFRMCONFIG：<code>lstGroups</code>、<code>edtGroupName</code>、<code>edtGroupExtensions</code>、<code>actNewGroup/actDelGroup</code>、分类颜色 <code>clrFile/clrFolder/clrFree/clrUnknown/clrDrive/clrGroup</code></td><td>按扩展名聚合成组，Treemap 直接上色</td></tr>
+</table>
+
+<h3>3.4 过滤语法（可直接借鉴给 trim）</h3>
+<pre class="bright">
+普通通配符           ? *           例：*.log
+大小条件             size &lt;|&gt; N [b|kb|mb|gb|tb]      例：size &gt; 500mb
+口径前缀             disksize | clustersize | filesize | logicalsize | size
+                     （disksize ≡ clustersize 占盘；filesize ≡ logicalsize ≡ size 逻辑大小）
+组合                 用 | 分隔
+</pre>
+
+<h2>4. 给 trim 的大文件扫描优化方案</h2>
+<p>按「改动成本 / 收益」分三层。<b>L0 是必做，L2 才是数量级。</b></p>
+
+<h3>L0 — 立刻能做（预期 2–5×）</h3>
+<ol>
+<li><b>一次 <code>FindFirstFileW</code> 拿全信息</b><span class="tag t-key">实测 2.71×</span>：<code>WIN32_FIND_DATA</code> 里已经含 <code>dwFileAttributes</code>、<code>nFileSizeHigh/Low</code>、创建/访问/写入三个 FILETIME。<b>不要</b>再对每个文件调 <code>GetFileSizeEx</code> + <code>GetFileAttributesEx</code> + <code>GetFileTime</code>（SpaceSniffer 就是这么干的，每文件 2–3 次额外 syscall，这是它慢的主因之一）。确需补充时用 <code>GetFileAttributesExW</code>（HiBit 用的就是这个）。</li>
+<li><b>跳过重解析点</b>：<code>FILE_ATTRIBUTE_REPARSE_POINT (0x400)</code> 直接剪枝，防止 junction/符号链接死循环；默认跳过 <code>$RECYCLE.BIN</code>、<code>System Volume Information</code>、<code>\Windows\WinSxS</code>（后者按需求）。</li>
+<li><b>规则表优先</b>（学 HiBit）：先扫 Downloads / Desktop / 浏览器缓存 / %TEMP% / 媒体目录这几十个"大文件高发地"，秒级出首批结果，再后台全量。</li>
+<li><b>Top-K 最小堆代替全量排序</b>：找"最大的 N 个文件"不需要排序全部，<code>heapq</code> 维护 K=1000，O(n) 时间、O(K) 内存。</li>
+<li><b>结果流式产出</b>：扫描线程把结果推给消费者（队列），UI 边扫边显示——SpaceSniffer 的"Not yet scanned space"就是这个思路。</li>
+</ol>
+
+<h3>L1 — 架构层（预期 5–20×）</h3>
+<ol>
+<li><b>生产者-消费者双线程</b>：扫描线程只负责枚举入队，聚合/过滤线程负责统计与排序（SpaceSniffer 的 Snif/Filter 模型）。过滤可随时取消重跑。</li>
+<li><b>目录级并发</b><span class="tag t-key">实测再 1.68×</span>：一个目录队列 + N 个 worker。SSD 取 4–8，HDD 取 1–2（随机 IO 会打回原形）。HiBit 用了 <code>CreateIoCompletionPort</code>+<code>GetQueuedCompletionStatus</code>（IOCP 线程池），这是 Windows 上最正确的做法。</li>
+<li><b>上卷聚合</b>：子节点大小汇总到父节点（Treemap 模型），一次遍历同时得到"目录大小排行"和"文件排行"，不要二次遍历。</li>
+<li><b>快照 + 增量</b>：保存上次扫描的 (路径, 大小, USN/修改时间)，下次只重扫变更项（SpaceSniffer 的 <code>TDUSnapshotSnifAgent</code> 已经是这个方向）。</li>
+<li><b>年龄/扩展名维度内建</b>：学 HiBit 的类别级阈值与扩展名分组，让"大于 X 且超过 N 天"成为参数而不是代码分支。</li>
+</ol>
+
+<h3>L2 — 终局方案（预期 50–100×）</h3>
+<div class="warn">
+<b>换 MFT/USN 直读</b>：SpaceSniffer 没做，WizTree 做了。通过 <code>CreateFileW(\\.\C:)</code> + <code>DeviceIoControl(FSCTL_QUERY_USN_JOURNAL / FSCTL_ENUM_USN_DATA)</code> 或直接解析 $MFT，可以<b>顺序</b>拿到全盘文件的父目录引用号、文件名、大小、时间戳，然后在内存里重建树。<br>
+代价：<b>需要管理员权限</b>；USN 需要卷启用日志；FAT32/exFAT/网络盘不支持 ⇒ 必须保留 Win32 递归作为 fallback。
+</div>
+<p>建议做成<b>三级自适应</b>：USN/MFT 可用 → 用它（秒级全盘）；否则 SSD → 目录并发递归；再否则（HDD/网络盘）→ 单线程递归 + 规则表优先。</p>
+
+<h3>参考骨架（Windows / Python 风格，可直接翻译成 C++/C#/Go）</h3>
+<pre>
+// 大文件扫描 v2：一次 FindFirstFileW 拿全 + 目录队列并发 + Top-K 堆 + 增量渲染
+const REPARSE = 0x400, DIR = 0x10;
+
+struct Item { wstring path; uint64 size; uint64 mtime; uint32 attr; };
+
+void Scan(root, int workers, size_t K, Consumer out) {
+    ConcurrentQueue&lt;wstring&gt; dirq; dirq.push(root);
+    MinHeap&lt;Item&gt; topK(K);                 // 只留最大的 K 个
+    atomic&lt;uint64&gt; scanned = 0;
+
+    parallel_for(workers, [&amp;] {
+        wstring d;
+        while (dirq.try_pop(d)) {
+            WIN32_FIND_DATAW fd;
+            HANDLE h = FindFirstFileW(d + L"\\*", &amp;fd);
+            if (h == INVALID_HANDLE_VALUE) { out.markUnaccessible(d); continue; }
+            do {
+                if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
+                uint32 a = fd.dwFileAttributes;
+                if (a &amp; REPARSE) continue;                       // 剪枝：链接/挂载点
+                wstring p = d + L"\\" + fd.cFileName;
+                if (a &amp; DIR) { if (!IsIgnored(p)) dirq.push(p); }  // 忽略名单剪枝
+                else {
+                    uint64 sz = (uint64(fd.nFileSizeHigh) &lt;&lt; 32) | fd.nFileSizeLow;
+                    if (sz &gt;= MinSize) topK.try_push({p, sz, ft2ull(fd.ftLastWriteTime), a});
+                    if (++scanned % 4096 == 0) out.flush(scanned, topK.snapshot()); // 增量推送
+                }
+            } while (FindNextFileW(h, &amp;fd));
+            FindClose(h);
+        }
+    });
+    out.done(topK.sorted_desc());
+}
+</pre>
+
+<h3>实测基准（本次机器 · C:\Windows · 135,751 文件 / 32,865 目录 / 28.0 GB）</h3>
+<table>
+<tr><th>方式</th><th>耗时</th><th>吞吐</th><th>相对</th><th>说明</th></tr>
+<tr><td>A. <code>os.scandir</code> + <code>entry.stat()</code></td><td class="num">7.419 s</td><td class="num">18,299 files/s</td><td>1.00×</td><td>Python 层对象开销 + 每文件 stat 调用</td></tr>
+<tr><td>B. <code>FindFirstFileW</code>（ctypes，单线程）</td><td class="num">2.740 s</td><td class="num">49,550 files/s</td><td class="num">2.71×</td><td>一次调用拿属性+大小+时间，无额外 syscall</td></tr>
+<tr><td>C. B + 目录队列 4 线程</td><td class="num">1.631 s</td><td class="num">83,229 files/s</td><td class="num">4.55×</td><td>NVMe 上并发收益明显（HDD 上会反过来）</td></tr>
+<tr><td>D. USN/MFT 直读</td><td colspan="3">未测成：<code>CreateFileW(\\.\C:)</code> 返回 <code>err=5 拒绝访问</code> —— <b>需管理员权限</b></td><td>这正是 WizTree 必须"以管理员运行"的原因</td></tr>
+</table>
+<div class="note">
+<b>怎么读这组数字：</b>同样是"走 Win32 递归"，<b>把每文件的 3 次 syscall 降到 1 次就已经是 2.7×</b>（这正是 SpaceSniffer 没做优化的地方）；
+再叠加目录级并发到 4.55×；而 USN/MFT 是另一个维度（WizTree 能在 1–3 秒内枚举百万级文件）。<br>
+脚本：<span class="kv">_work\bench2.py</span>，可改目录重跑：<code>python bench2.py &lt;目录&gt; &lt;文件上限&gt;</code>。
+</div>
+
+<div class="warn">
+<b>两个必须记住的坑</b>（我这次踩了，你写的时候直接避开）：
+<ul style="margin:6px 0 0">
+<li><code>WIN32_FIND_DATAW</code> 的 FILETIME <b>必须用两个 DWORD 或 <code>_pack_=4</code></b>；用 <code>c_ulonglong</code> 会因 8 字节对齐让后面所有字段错位（症状：文件大小出现 1e17 这种量级）。</li>
+<li>ctypes 调 <code>CreateFileW</code> 必须显式声明 argtypes，否则 <code>0x80000000</code> 按 32 位 int 溢出，得到无效句柄（err=6）而不是"权限不足"（err=5）。</li>
+</ul>
+</div>
+
+<h2>5. 复核路径</h2>
+<table>
+<tr><th>内容</th><th>文件 / 命令</th></tr>
+<tr><td>PE/导入/资源解析脚本</td><td><span class="kv">_work\pe2.py</span>（PE+导入+资源树）、<span class="kv">_work\peinfo.py</span></td></tr>
+<tr><td>字符串与聚类</td><td><span class="kv">_work\strings.py</span>、<span class="kv">_work\clusters.py</span>、<span class="kv">_work\slice.py</span></td></tr>
+<tr><td>HiBit 规则表原文</td><td><span class="kv">_work\junkrules.txt</span>（偏移 6018848–6042600 全量）</td></tr>
+<tr><td>DFM/资源导出</td><td><span class="kv">_work\res\</span>（HiBit）、<span class="kv">_work\ssres\</span>（SpaceSniffer）、<span class="kv">_work\dfm2.py</span></td></tr>
+<tr><td>英文语言包（UI 文案与类别名）</td><td><span class="kv">_work\res\ENGLISHLANG.txt</span></td></tr>
+<tr><td>类名 / 方法名 / 单元名清单</td><td><span class="kv">_work\hibit_classes.txt</span>、<span class="kv">_work\hibit_methods.txt</span>、<span class="kv">_work\hibit_units2.txt</span></td></tr>
+<tr><td>深入反编译（若要看具体指令）</td><td>用 <span class="kv">tools\Idr.exe</span> 打开 HiBitUninstaller.exe，定位 <code>JunkFilesCleaner.TCleanFile.CleanS</code> 与 <code>TEmptyFolderForm.Button1Click/Button2Click</code></td></tr>
+</table>
+
+<div class="warn">
+<b>尚未完全确证的部分</b>（需要反汇编指令级确认，本次用静态证据推导）：
+<ul style="margin:6px 0 0">
+<li>空文件夹是否把「只含空子目录的父目录」递归计入（从 Timer 分帧推进 + 删除后回判的设计看，<b>倾向于是</b>，但未落到指令）。</li>
+<li>Junk Cleaner 的扫描是否并发（HiBit 有 IOCP，但 <code>TCleanFile</code> 是否走线程池未确证）。</li>
+<li>SpaceSniffer 单个 <code>TSnifThread</code> 还是多线程（符号里有数组形态 <code>TSnifThread *[2]</code>，未确证实际实例数）。</li>
+</ul>
+</div>
+
+<footer>
+分析：小小旭 · 2026-09-11 · 全部结论基于本地二进制静态分析（PE 头 / 导入表 / 资源树 / DFM / RTTI / 字符串表），未运行目标程序、未联网上传任何文件。
+</footer>
+
+</div>
+</body>
+</html>

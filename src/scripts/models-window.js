@@ -330,11 +330,10 @@
     else window.close();
   }
 
-  // 跟随系统深浅色（独立窗口没有主窗口的 nativeTheme 事件，用 prefers-color-scheme 检测）
+  // 恒浅色（v2.1：应用固定浅色，不再跟随系统主题）
   function applyTheme() {
-    const dark = !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
-    document.body.classList.toggle('theme-dark', dark);
-    document.body.classList.toggle('theme-light', !dark);
+    document.body.classList.remove('theme-dark');
+    document.body.classList.add('theme-light');
   }
 
   function init() {
@@ -345,9 +344,6 @@
     els.close?.addEventListener('click', closeWindow);
     document.addEventListener('keydown', e => { if (e.key === 'Escape') closeWindow(); });
     applyTheme();
-    const mq = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)');
-    if (mq && typeof mq.addEventListener === 'function') mq.addEventListener('change', applyTheme);
-    else if (mq && typeof mq.addListener === 'function') mq.addListener(applyTheme);
     load();
   }
 

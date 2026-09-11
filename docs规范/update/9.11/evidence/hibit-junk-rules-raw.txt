@@ -1,0 +1,256 @@
+ 6018848  MsgInfo
+ 6018876  AraeScan
+ 6018908  Stop
+ 6018968  Junk Files Cleaner
+ 6019020  Temporary24
+ 6019056  Prefetch7Day
+ 6019096  MemoryDump2Day
+ 6019140  RecycleBin24
+ 6019180  %systemroot%\temp
+ 6019248  Fine.SSR12;DMSetup.xml
+ 6019308  %temp%
+ 6019336  %LocalAppData%
+ 6019380  *.tmp
+ 6019404  %AppData%
+ 6019436  TemporaryFiles
+ 6019500  #,###0
+ 6019544  files
+ 6019620  %systemroot%
+ 6019660  *.log
+ 6019684  *log.txt
+ 6019716  %systemroot%\SysWOW64
+ 6019772  %systemroot%\security\logs
+ 6019840  *.old
+ 6019864  *.etl
+ 6019888  %system%\wbem
+ 6019928  *.lo_
+ 6019952  V01*.log,PFRO.LOG
+ 6020000  %systemroot%\SoftwareDistribution
+ 6020080  %systemroot%\SoftwareDistribution\DataStore
+ 6020180  %systemroot%\debug
+ 6020232  *.bak
+ 6020256  %system%\CatRoot2
+ 6020304  *.txt
+ 6020328  *.jrs
+ 6020352  %systemroot%\inf
+ 6020400  setupapi.app.log
+ 6020448  setupapi.dev.log
+ 6020496  %systemroot%\Panther
+ 6020552  setupact.log
+ 6020592  setuperr.log
+ 6020632  %systemroot%\ModemLogs
+ 6020692  SchedLgU.txt
+ 6020732  %systemroot%\Performance\WinSAT
+ 6020808  winsat.log
+ 6020844  %systemroot%\Performance\WinSAT\DataStore
+ 6020940  %programdata%\Microsoft\Search\Data\Applications\Windows
+ 6021068  *.chk
+ 6021092  Windows.edb
+ 6021128  *.edb
+ 6021152  %LocalAppData%\Microsoft\CLR_v4.0\UsageLogs
+ 6021252  %LocalAppData%\Microsoft\CLR_v4.0_32\UsageLogs
+ 6021360  %systemroot%\system32\config\systemprofile\AppData\Local\Microsoft\CLR_v4.0\UsageLogs
+ 6021544  %systemroot%\SysWOW64\config\systemprofile\AppData\Local\Microsoft\CLR_v4.0_32
+ 6021716  %systemroot%\Logs
+ 6021764  %systemroot%\ServiceProfiles\NetworkService\AppData\Local\Microsoft\Windows\DeliveryOptimization\Logs
+ 6021980  %systemroot%\panther
+ 6022036  %systemroot%\ServiceProfiles\LocalService\AppData
+ 6022148  %systemroot%\ServiceProfiles\NetworkService\AppData
+ 6022264  %LocalAppData%\Microsoft\Windows
+ 6022344  %AppData%\Microsoft\Windows
+ 6022412  %systemroot%\Microsoft.NET
+ 6022480  %commonappdata%\Microsoft\Dr Watson
+ 6022564  *.dmp
+ 6022588  %LocalAppData%\MigWiz
+ 6022644  *.xml
+ 6022668  %systemroot%\System32\LogFiles
+ 6022744  %systemroot%\System32\SleepStudy\ScreenOn
+ 6022840  %AllusersProfile%\VMware\hostd
+ 6022916  hostd*.*
+ 6022948  %AllusersProfile%\VMware\logs
+ 6023020  %LocalAppData%\Adobe
+ 6023076  *.Log
+ 6023100  %AppData%\Adobe
+ 6023144  *Log.txt
+ 6023176  %systemroot%\System32\Macromed\Flash
+ 6023264  %systemroot%\SysWOW64\Macromed\Flash
+ 6023352  %LocalAppData%\Microsoft\CLR_v2.0
+ 6023432  %LocalAppData%\Microsoft\CLR_v2.0_32
+ 6023520  %SysDir%\config\systemprofile\AppData\Local\Microsoft\CLR_v2.0
+ 6023660  %SysDir%\config\systemprofile\AppData\Local\Microsoft\CLR_v2.0_32
+ 6023804  %LocalAppData%\Microsoft\Windows\WebCache
+ 6023900  %systemroot%\System32\sru
+ 6023964  %LocalAppData%\Microsoft\Windows\Explorer
+ 6024060  %systemroot%\SystemTemp
+ 6024120  %LocalAppData%\Diagnostics
+ 6024188  %systemroot%\System32\WDI
+ 6024252  snapshot.etl
+ 6024292  %ProgramData%\USOShared\Logs
+ 6024364  %ProgramData%\Microsoft\Network\Downloader
+ 6024464  WindowsLog
+ 6024500  thumbcache_*.db
+ 6024544  %LocalAppData%\Microsoft\Windows\Explorer\ThumbCacheToDelete
+ 6024680  thm*.tmp
+ 6024712  %localappdata%
+ 6024756  iconcache*
+ 6024792  %LocalAppData%\Microsoft\Windows\Explorer\IconCacheToDelete
+ 6024924  iconcache*.db
+ 6024964  ThumbnailCache
+ 6025008  %systemroot%\prefetch
+ 6025064  *.pf
+ 6025088  OldPrefetch
+ 6025124  %systemroot%\system32
+ 6025180  FNTCACHE.DAT
+ 6025220  GDIPFONTCACHEV1.DAT
+ 6025272  %systemroot%\ServiceProfiles\LocalService\AppData\Local\FontCache
+ 6025416  *.dat
+ 6025440  FontCache
+ 6025472  %systemroot%\winsxs\ManifestCache
+ 6025552  %systemroot%\System32\config\systemprofile\AppData\LocalLow\Microsoft\CryptnetUrlCache\Content
+ 6025756  %systemroot%\ServiceProfiles\LocalService\AppData\LocalLow\Microsoft\CryptnetUrlCache\MetaData
+ 6025960  %USERPROFILE%\AppData\LocalLow\Microsoft\CryptnetUrlCache\Content
+ 6026104  %USERPROFILE%\AppData\LocalLow\Microsoft\CryptnetUrlCache\MetaData
+ 6026252  %LocalAppData%\D3DSCache
+ 6026316  %systemroot%\ServiceProfiles\NetworkService\AppData\Local\Microsoft\Windows\DeliveryOptimization\Cache
+ 6026536  %LocalAppData%\Microsoft\Terminal Server Client\Cache
+ 6026656  SystemCache
+ 6026692  %systemroot%\Installer\$PatchCache$
+ 6026776  InstallerCache
+ 6026820   Files, 
+ 6026852  %systemroot%\minidump
+ 6026908  %systemroot%\LiveKernelReports
+ 6026984  %LocalAppData%\CrashDumps
+ 6027048  %systemroot%\SysWOW64\config\systemprofile\AppData\Local\CrashDumps
+ 6027196  %systemroot%\System32\config\systemprofile\AppData\Local\CrashDumps
+ 6027344  MemoryDumps
+ 6027380  %ALLUSERSPROFILE%\Microsoft\Windows\WER\ReportArchive
+ 6027500  %ALLUSERSPROFILE%\Microsoft\Windows\WER\ReportQueue
+ 6027616  %USERPROFILE%\AppData\Local\Microsoft\Windows\WER\ReportArchive
+ 6027756  %USERPROFILE%\AppData\Local\Microsoft\Windows\WER\ReportQueue
+ 6027892  %ProgramData%\Microsoft\Windows\WER\Temp
+ 6027988  %ALLUSERSPROFILE%\Microsoft\Windows\WER\Temp
+ 6028092  %LocalAppData%\Microsoft\Windows\WER\Temp
+ 6028188  ErrorReporting
+ 6028232  %SystemDrive%
+ 6028272  File*.chk
+ 6028304  ChkdskFragments
+ 6028348  %systemroot%\Installer\
+ 6028408  ObsoleteInstaller
+ 6028456  #,###
+ 6028480  %systemroot%\SoftwareDistribution\Download
+ 6028580  WindowsUpdate
+ 6028620  %LocalAppdata%\Packages\Microsoft.Windows.Cortana_cw5n1h2txyewy\AC\INetCache
+ 6028788  %LocalAppdata%\Packages\Microsoft.Windows.Cortana_cw5n1h2txyewy\AC\AppCache
+ 6028952  %LocalAppData%\Packages\MicrosoftWindows.Client.WebExperience_cw5n1h2txyewy\LocalState\EBWebView\Default\Code Cache
+ 6029196  WindowsAppsCache
+ 6029244  RecycleBin
+ 6029280  %APPDATA%\Microsoft\Windows\Recent
+ 6029364  *.lnk
+ 6029388  %ProgramData%\Microsoft\Search\Data\Applications\Windows\GatherLogs\SystemIndex
+ 6029560  *.Crwl
+ 6029588  RecentDocument
+ 6029632  Clipboard
+ 6029664  File
+ 6029688  Custom
+ 6029716  COUNTERS,SuggestedSites.dat,container.dat,desktop.ini,index.dat
+ 6029856  %localappdata%\Microsoft\Windows\INetCache
+ 6029956  %localappdata%\Packages\windows_ie_ac_001\AC\INetCache
+ 6030080  %LocalAppdata%\Microsoft\Windows\Temporary Internet Files
+ 6030208  %LocalAppdata%\Microsoft\Feeds Cache
+ 6030296  IECache
+ 6030324  %LocalAppData%\Packages\Microsoft.MicrosoftEdge_8wekyb3d8bbwe\AC\MicrosoftEdge\Cache
+ 6030508  %LocalAppData%\Packages\Microsoft.MicrosoftEdge_8wekyb3d8bbwe\AC\#!001\MicrosoftEdge\User\Default\TemporaryFiles
+ 6030748  %LocalAppData%\Packages\Microsoft.MicrosoftEdge_8wekyb3d8bbwe\AC\#!002\MicrosoftEdge\User\Default\TemporaryFiles
+ 6030988  %LocalAppData%\Packages\Microsoft.MicrosoftEdge_8wekyb3d8bbwe\AC\#!001\Temp
+ 6031152  %LocalAppData%\Packages\Microsoft.MicrosoftEdge_8wekyb3d8bbwe\AC\#!002\Temp
+ 6031316  %LocalAppData%\Packages\Microsoft.MicrosoftEdge_8wekyb3d8bbwe\AC\#!001\MicrosoftEdge\User\Default\AppCache
+ 6031544  %LocalAppData%\Packages\Microsoft.MicrosoftEdge_8wekyb3d8bbwe\AC\#!002\MicrosoftEdge\User\Default\AppCache
+ 6031772  %LocalAppData%\Packages\Microsoft.MicrosoftEdge_8wekyb3d8bbwe\AC\#!121\MicrosoftEdge\User\Default\AppCache
+ 6032000  %LocalAppData%\Packages\Microsoft.MicrosoftEdge_8wekyb3d8bbwe\AC\#!003\MicrosoftEdge\User\Default\AppCache
+ 6032228  %LocalAppData%\Packages\Microsoft.MicrosoftEdge_8wekyb3d8bbwe\AC\#!006\MicrosoftEdge\User\Default\AppCache
+ 6032456  %LocalAppData%\Packages\Microsoft.MicrosoftEdge_8wekyb3d8bbwe\AC\#!001\MicrosoftEdge\Cache
+ 6032652  %LocalAppData%\Packages\Microsoft.MicrosoftEdge_8wekyb3d8bbwe\AC\#!002\MicrosoftEdge\Cache
+ 6032848  %LocalAppData%\Packages\Microsoft.MicrosoftEdge_8wekyb3d8bbwe\AC\#!121\MicrosoftEdge\Cache
+ 6033044  %LocalAppData%\Packages\Microsoft.MicrosoftEdge_8wekyb3d8bbwe\AC\#!003\MicrosoftEdge\Cache
+ 6033240  %LocalAppData%\Packages\Microsoft.MicrosoftEdge_8wekyb3d8bbwe\AC\#!006\MicrosoftEdge\Cache
+ 6033436  Microsoft\Edge
+ 6033480  Microsoft\Edge Dev
+ 6033532  EdgeCache
+ 6033564  Google\Chrome
+ 6033604  ChromeCache
+ 6033640  %LocalAppData%\Mozilla\Firefox\Profiles
+ 6033732  %Appdata%\Mozilla\Firefox\Profiles
+ 6033816  *sqlite-shm,*sqlite-wal
+ 6033876  %Appdata%\Mozilla\Firefox\Crash Reports
+ 6033968  %Appdata%\Mozilla\Firefox\Pending Pings
+ 6034060  %LocalAppData%\Packages\Mozilla.Firefox_
+ 6034156  \LocalCache\Local\Mozilla\Firefox\Profiles
+ 6034256  \LocalCache\Roaming\Mozilla\Firefox\Profiles
+ 6034360  FireFoxCache
+ 6034400  %LocalAppData%\Opera\Opera\Cache
+ 6034480  %LocalAppData%\Opera\Opera\System Cache
+ 6034572  %LocalAppData%\Opera\Opera\temporary_downloads
+ 6034680  %LocalAppData%\Opera\Opera\opcache
+ 6034764  %LocalAppData%\Opera Software\Opera Stable\Cache
+ 6034876  %LocalAppData%\Opera Software\Opera Stable\Media Cache
+ 6035000  %APPDATA%\Opera Software\Opera Stable
+ 6035088  *-journal
+ 6035120  %APPDATA%\Opera Software\Opera Stable\Local Storage
+ 6035236  *.localstorage-journal
+ 6035296  Databases.db
+ 6035336  %APPDATA%\Opera Software\Opera Stable\databases
+ 6035444  *.db-journal
+ 6035484  %APPDATA%\Opera Software\Opera Stable\GPUCache
+ 6035592  %APPDATA%\Opera Software\Opera Stable\Jump List Icons
+ 6035712  %APPDATA%\Opera Software\Opera Stable\Jump List IconsOld
+ 6035840  %APPDATA%\Opera Software\Opera Stable\ShaderCache\GPUCache
+ 6035972  %APPDATA%\Opera Software\Opera Stable\File System
+ 6036084  %APPDATA%\Opera Software\Opera Stable\Service Worker
+ 6036204  %LocalAppData%\Opera Software\Opera Stable\Default\Cache
+ 6036332  %LocalAppData%\Opera Software\Opera Stable\Default\Media Cache
+ 6036472  %APPDATA%\Opera Software\Opera Stable\Default\Code Cache
+ 6036600  %APPDATA%\Opera Software\Opera Stable\Default
+ 6036704  %APPDATA%\Opera Software\Opera Stable\Default\Local Storage
+ 6036836  %APPDATA%\Opera Software\Opera Stable\Default\databases
+ 6036960  %APPDATA%\Opera Software\Opera Stable\Default\GPUCache
+ 6037084  %APPDATA%\Opera Software\Opera Stable\Default\Jump List Icons
+ 6037220  %APPDATA%\Opera Software\Opera Stable\Default\Jump List IconsOld
+ 6037364  %APPDATA%\Opera Software\Opera Stable\Default\ShaderCache\GPUCache
+ 6037512  %APPDATA%\Opera Software\Opera Stable\Default\File System
+ 6037640  %APPDATA%\Opera Software\Opera Stable\Default\Service Worker
+ 6037776  %APPDATA%\Opera Software\Opera Stable\GrShaderCache
+ 6037892  %APPDATA%\Opera Software\Opera Stable\GraphiteDawnCache
+ 6038016  %LocalAppData%\Opera Software\Opera Next\Cache
+ 6038124  %LocalAppData%\Opera Software\Opera Next\System Cache
+ 6038244  %LocalAppData%\Opera Software\Opera Next\Media Cache
+ 6038364  %APPDATA%\Opera Software\Opera Next
+ 6038448  %APPDATA%\Opera Software\Opera Next\Local Storage
+ 6038560  %APPDATA%\Opera Software\Opera Next\databases
+ 6038664  %APPDATA%\Opera Software\Opera Next\GPUCache
+ 6038768  %APPDATA%\Opera Software\Opera Next\Jump List Icons
+ 6038884  %APPDATA%\Opera Software\Opera Next\Jump List IconsOld
+ 6039008  %APPDATA%\Opera Software\Opera Next\ShaderCache\GPUCache
+ 6039136  %APPDATA%\Opera Software\Opera Next\File System
+ 6039244  %APPDATA%\Opera Software\Opera Next\Service Worker
+ 6039360  %LocalAppData%\Opera Software\Opera Next\Default\Cache
+ 6039484  %LocalAppData%\Opera Software\Opera Next\Default\Media Cache
+ 6039620  %APPDATA%\Opera Software\Opera Next\Default
+ 6039720  %APPDATA%\Opera Software\Opera Next\Default\Local Storage
+ 6039848  %APPDATA%\Opera Software\Opera Next\Default\databases
+ 6039968  %APPDATA%\Opera Software\Opera Next\Default\GPUCache
+ 6040088  %APPDATA%\Opera Software\Opera Next\Default\Jump List Icons
+ 6040220  %APPDATA%\Opera Software\Opera Next\Default\Jump List IconsOld
+ 6040360  %APPDATA%\Opera Software\Opera Next\Default\ShaderCache\GPUCache
+ 6040504  %APPDATA%\Opera Software\Opera Next\Default\File System
+ 6040628  %APPDATA%\Opera Software\Opera Next\Default\Service Worker
+ 6040760  %APPDATA%\Opera Software\Opera Next\Code Cache
+ 6040868  %LocalAppData%\Opera Software\Opera GX Stable\Cache
+ 6040984  %LocalAppData%\Opera Software\Opera GX Stable\System Cache
+ 6041116  %LocalAppData%\Opera Software\Opera GX Stable\Media Cache
+ 6041244  %APPDATA%\Opera Software\Opera GX Stable
+ 6041340  %APPDATA%\Opera Software\Opera GX Stable\Local Storage
+ 6041464  %APPDATA%\Opera Software\Opera GX Stable\databases
+ 6041580  %APPDATA%\Opera Software\Opera GX Stable\GPUCache
+ 6041692  %APPDATA%\Opera Software\Opera GX Stable\Jump List Icons
+ 6041820  %APPDATA%\Opera Software\Opera GX Stable\Jump List IconsOld
+ 6041952  %APPDATA%\Opera Software\Opera GX Stable\ShaderCache\GPUCache
