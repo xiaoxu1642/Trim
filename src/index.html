@@ -1161,9 +1161,17 @@
             </div>
             <div class="about-row">
               <div class="about-row-copy">
-                <strong>联系我</strong>
-                <p>邮箱: 1607642197@qq.com</p>
+                <strong>检查更新</strong>
+                <p id="updaterCheckHint">检查 Trim 是否有新版本</p>
               </div>
+              <button class="btn btn-secondary btn-small" id="btnCheckUpdate" type="button">检查更新</button>
+            </div>
+            <div class="about-row">
+              <div class="about-row-copy">
+                <strong>联系我</strong>
+                <p>欢迎在 GitHub 交流与提 Issue</p>
+              </div>
+              <button class="btn btn-secondary btn-small" id="btnGitHub" type="button" data-tip="打开 GitHub 主页">GitHub</button>
             </div>
           </div>
           <div class="settings-section settings-system-section collapsed" id="systemInfoSection">
@@ -1238,6 +1246,8 @@
   <script src="scripts/quickcmds.js"></script>
   <script src="scripts/startup.js"></script>
   <script src="scripts/maintenance.js"></script>
+  <!-- 批次：自动更新接入（依赖 modal.js/ds.js 统一弹窗与进度件，须在 app.js 之前） -->
+  <script src="scripts/updater-ui.js"></script>
   <script src="scripts/app.js"></script>
 </body>
 </html>

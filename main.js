@@ -24,6 +24,8 @@ const RULES_SIG = require('./src/main/rules-signature');
 // require('../main/ps-protect-path') 加载同一文件（同绝对路径→同 require 缓存），
 // 因此这里 configureProtectedRoots 补全的清单会被 PS 侧注入逻辑直接读到。
 const PROTECT_PATH = require('./src/main/ps-protect-path');
+// 批次：自动更新接入（electron-updater + GitHub Releases，仅打包后生效）
+const UPDATER = require('./src/main/updater');
 
 // ==================== 防止多开 ====================
 // 必须在任何重初始化逻辑（数据迁移、窗口创建、IPC 注册）之前请求单实例锁：
@@ -907,6 +909,24 @@ handleSafe('app:get-info', async () => {
     powerShell: 'PowerShell 7'
   };
 });
+
+// 批次：外部链接（HTTPS only）—— secureWindowNavigation 阻止了渲染层任何 href 导航，
+// 所以需要这个 IPC 作为受控出口：只允许 https 协议，防 file: / javascript: / data: 等注入。
+handleSafe('app:open-external', async (_, url) => {
+  if (typeof url !== 'string' || !url.trim()) return { ok: false, reason: 'empty' };
+  let parsed;
+  try { parsed = new URL(url.trim()); } catch (_) { return { ok: false, reason: 'invalid-url' }; }
+  if (parsed.protocol !== 'https:') return { ok: false, reason: 'scheme', protocol: parsed.protocol };
+  await shell.openExternal(parsed.toString());
+  return { ok: true };
+});
+
+// 批次：自动更新接入——手动检查 / 下载 / 取消 / 安装（均经 handleSafe 校验来源）
+// 这些通道有副作用（网络下载、退出安装），不得加入 SIDE_EFFECT_FREE 只读白名单。
+handleSafe('updater:check', async () => UPDATER.safeCheck(false));
+handleSafe('updater:download', async () => UPDATER.startDownload());
+handleSafe('updater:cancel-download', () => UPDATER.cancelDownload());
+handleSafe('updater:install', () => UPDATER.installUpdate());
 
 // 系统主题
 handleSafe('app:get-theme', () => {
@@ -5206,6 +5226,9 @@ app.whenReady().then(() => {
     writeLog('error', e.message);
   }
   createWindow();
+
+  // 批次：自动更新接入——主窗口创建后挂载；内部自行判断 isPackaged，开发环境自动短路
+  UPDATER.initUpdater(mainWindow, writeLog);
 
   // 系统指标启动预热：后台提前采集一轮填充缓存，
   // 用户进入/切回「系统概览」首页时首轮渲染即时出数据（无需等 pwsh 冷启动）

@@ -497,10 +497,8 @@ body {
   padding: 8px;
 }
 
-/* ---------- 批次：悬浮岛侧边栏 B 档 —— 收起态悬停浮层（零 JS，:has() 驱动） ----------
-   收起为 56px 窄岛后鼠标移入：岛脱离文档流加宽到 232px 浮在主内容之上，主内容不位移，
-   移出恢复（VSCode 式 flyout）。:has() 在 Electron 44（Chromium 远超 105）可用。
-   回滚本档 = 删除本段 + 还原 index.html 的 .sidebar-rail 包裹层即可。 */
+/* 侧边栏折叠（批次：悬浮岛侧边栏 B 档）——收起为 56px 窄岛，仅通过切换按钮
+   在「展开/折叠」两态间切换，不再悬停浮出（按用户要求移除 hover 展开）。 */
 .sidebar-rail {
   /* flex 纵向容器：岛作为其 flex 子项垂直拉伸到轨道全高（即 layout 内容区全高），
      否则岛只有内容高、悬在窗口中部不落地，底部设置按钮也与主内容底不齐平 */
@@ -516,8 +514,7 @@ body {
 }
 /* 宽度归轨道管：压过上方 .sidebar.collapsed { width:56px }，岛宽 100% 跟随轨道动画，
    避免点击收起瞬间岛先跳到 56px 再等轨道的「双重宽度打架」。
-   flex:1 让岛沿轨道纵向（flex column 主轴）拉伸占满轨道全高——否则岛只有内容高、
-   悬在窗口中部不落地，底部设置按钮也与主内容底不齐平（用户反馈） */
+   flex:1 让岛沿轨道纵向（flex column 主轴）拉伸占满轨道全高 */
 .sidebar-rail .sidebar {
   width: 100%;
   flex: 1 1 auto;
@@ -525,40 +522,6 @@ body {
 .sidebar-rail .sidebar.collapsed {
   width: 100%;
   flex: 1 1 auto;
-}
-/* .layout 有 isolation:isolate（独立堆叠上下文），轨道与主内容同为 z-index:2 时按
-   DOM 顺序主内容后绘制、会盖住浮出岛；悬停期间提升轨道层级（模态/Toast 等
-   body 级浮层 z-index ≥1200 且挂在 .layout 之外，不受影响） */
-.sidebar-rail:has(.sidebar.collapsed):hover {
-  z-index: 40;
-}
-/* 收起 + 悬停：岛脱离文档流浮出加宽，轨道保持 56px，主内容纹丝不动 */
-.sidebar-rail:has(.sidebar.collapsed):hover .sidebar {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 232px;
-  box-shadow: var(--shadow-island-flyout);
-}
-/* 浮出时恢复被 .sidebar.collapsed 隐藏的文字（选择器对应上方折叠隐藏规则）；
-   .nav-parent-toggle 是热区 span，原 display:flex，需排除后单独恢复，不能按 block 恢复 */
-.sidebar-rail:has(.sidebar.collapsed):hover .sidebar .nav-item span:not(.nav-parent-toggle),
-.sidebar-rail:has(.sidebar.collapsed):hover .sidebar .nav-section-title,
-.sidebar-rail:has(.sidebar.collapsed):hover .sidebar .sidebar-footer .sidebar-settings-btn span {
-  display: block;
-}
-.sidebar-rail:has(.sidebar.collapsed):hover .sidebar .nav-item .nav-parent-toggle {
-  display: flex;
-}
-.sidebar-rail:has(.sidebar.collapsed):hover .sidebar .nav-item,
-.sidebar-rail:has(.sidebar.collapsed):hover .sidebar .sidebar-footer .sidebar-settings-btn {
-  justify-content: flex-start;
-  padding: 8px 12px;
-}
-/* 最大化贴边态：轨道贴边，浮出岛左缘保持直角（右缘保留岛圆角） */
-body.win-maximized .sidebar-rail:has(.sidebar.collapsed):hover .sidebar {
-  border-radius: 0 var(--radius-btn) var(--radius-btn) 0;
 }
 
 /* 侧边栏折叠/展开切换按钮 */
@@ -7977,4 +7940,105 @@ body.electron-mica[data-skin="glass"]:not(.win-maximized) .sidebar {
   background: rgba(var(--warning-rgb), 0.14);
   border-bottom: 1px solid rgba(var(--warning-rgb), 0.4);
   pointer-events: none;
+}
+
+/* ================================================================
+   自动更新弹窗（批次：自动更新接入 2026-09-12）
+   仅使用既有 token；圆角 6px；spinner 复用全局 spin 关键帧。
+   ================================================================ */
+.upd-checking {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0;
+  color: var(--fg-secondary);
+  font-size: var(--fs-secondary);
+}
+.upd-spinner {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border-default);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+.upd-version-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.upd-version-new {
+  font-size: calc(17px * var(--font-size-scale, 1));
+  font-weight: 600;
+  color: var(--fg-primary);
+  font-variant-numeric: tabular-nums;
+}
+.upd-version-current {
+  margin-top: 4px;
+  font-size: var(--fs-secondary);
+  color: var(--fg-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+/* 更新日志：GitHub releaseNotes 纯文本展示（pre-wrap 保留换行），超高滚动 */
+.upd-notes {
+  margin-top: 12px;
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-small);
+  background: var(--bg-input);
+  color: var(--fg-secondary);
+  font-size: var(--fs-secondary);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.upd-dl-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.upd-dl-label { color: var(--fg-secondary); font-size: var(--fs-secondary); }
+.upd-dl-percent {
+  font-size: calc(17px * var(--font-size-scale, 1));
+  font-weight: 600;
+  color: var(--fg-primary);
+  font-variant-numeric: tabular-nums;
+}
+.upd-dl-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  font-size: var(--fs-secondary);
+  color: var(--fg-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.upd-ready-title {
+  font-size: calc(15px * var(--font-size-scale, 1));
+  font-weight: 600;
+  color: var(--fg-primary);
+}
+.upd-ready-desc {
+  margin-top: 8px;
+  color: var(--fg-secondary);
+  font-size: var(--fs-secondary);
+  line-height: 1.7;
+}
+.upd-error-msg {
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--danger) 32%, transparent);
+  border-radius: var(--radius-small);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
+  font-size: var(--fs-secondary);
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+@media (prefers-reduced-motion: reduce) {
+  .upd-spinner { animation: none; border-top-color: var(--border-default); }
 }

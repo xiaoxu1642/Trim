@@ -8,12 +8,27 @@ contextBridge.exposeInMainWorld('api', {
     getInfo: () => ipcRenderer.invoke('app:get-info'),
     getTheme: () => ipcRenderer.invoke('app:get-theme'),
     readUsage: () => ipcRenderer.invoke('app:read-usage'),
+    // 外部 https 链接（主进程只放行 https，防注入）
+    openExternal: (url) => ipcRenderer.invoke('app:open-external', url),
     onMemoryTrim: (callback) => {
       const handler = () => callback();
       ipcRenderer.on('memory:trim', handler);
       return () => ipcRenderer.removeListener('memory:trim', handler);
     }
   },
+  // 应用自动更新（electron-updater；状态由主进程推送，渲染层只订阅）
+  updater: {
+    check: () => ipcRenderer.invoke('updater:check'),
+    download: () => ipcRenderer.invoke('updater:download'),
+    cancelDownload: () => ipcRenderer.invoke('updater:cancel-download'),
+    install: () => ipcRenderer.invoke('updater:install'),
+    onState: (callback) => {
+      const handler = (_, state) => callback(state);
+      ipcRenderer.on('updater:state-changed', handler);
+      return () => ipcRenderer.removeListener('updater:state-changed', handler);
+    }
+  },
+
   device: {
     scan: () => ipcRenderer.invoke('device:scan')
   },

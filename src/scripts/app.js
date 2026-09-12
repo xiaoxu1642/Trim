@@ -705,6 +705,10 @@
     document.getElementById('btnClearLog')?.addEventListener('click', () => logger.clear());
     document.getElementById('btnUsageGuide')?.addEventListener('click', showUsageGuide);
     document.getElementById('btnUsageClose')?.addEventListener('click', closeUsageGuide);
+    // 批次：外部链接（GitHub 主页）—— 走受控 IPC，主进程校验 https
+    document.getElementById('btnGitHub')?.addEventListener('click', () => {
+      try { window.api?.app?.openExternal('https://github.com/xiaoxu1642/Trim'); } catch (_) {}
+    });
     const usageBackdrop = document.getElementById('usageBackdrop');
     usageBackdrop?.addEventListener('click', (e) => {
       if (e.target === usageBackdrop) closeUsageGuide();

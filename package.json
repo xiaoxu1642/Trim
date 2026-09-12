@@ -1,10 +1,14 @@
 {
   "name": "trim",
-  "version": "2.5.0",
+  "version": "2.5.1",
   "description": "Trim",
   "main": "main.js",
   "author": "xiaoxu",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/xiaoxu1642/Trim.git"
+  },
   "scripts": {
     "start": "electron .",
     "test": "node test-features.js",
@@ -12,10 +16,14 @@
     "prebuild": "node scripts/gen-fallback.js",
     "prebuild:dir": "node scripts/gen-fallback.js",
     "prebuild:portable": "node scripts/gen-fallback.js",
-    "build": "electron-builder --win --x64",
-    "build:portable": "electron-builder --win portable --x64",
-    "build:dir": "electron-builder --win --x64 --dir",
-    "postinstall": "electron-builder install-app-deps"
+    "prebuild:setup": "node scripts/gen-fallback.js",
+    "prerelease": "node scripts/gen-fallback.js",
+    "build": "electron-builder --win --x64 --publish never",
+    "build:portable": "electron-builder --win portable --x64 --publish never",
+    "build:setup": "electron-builder --win nsis --x64 --publish never",
+    "build:dir": "electron-builder --win --x64 --dir --publish never",
+    "postinstall": "electron-builder install-app-deps",
+    "release": "electron-builder --win nsis --x64 --publish always"
   },
   "devDependencies": {
     "electron": "^44.1.1",
@@ -27,7 +35,7 @@
     "copyright": "Copyright © 2026 xiaoxu",
     "electronDist": "node_modules/electron/dist",
     "directories": {
-      "output": "build-release",
+      "output": "D:\\KaiFa\\Trim\\Trim goujian\\build-release",
       "buildResources": "build"
     },
     "files": [
@@ -55,8 +63,22 @@
         "to": "fastsize/TrimFastSize.dll"
       }
     ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "xiaoxu1642",
+        "repo": "Trim",
+        "releaseType": "release"
+      }
+    ],
     "win": {
       "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
         {
           "target": "portable",
           "arch": [
@@ -67,7 +89,21 @@
       "icon": "src/assets/ico/Trim.ico",
       "requestedExecutionLevel": "asInvoker",
       "artifactName": "${productName}-Portable-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Trim",
+      "differentialPackage": true,
+      "deleteAppDataOnUninstall": true,
+      "artifactName": "${productName}-Setup-${version}.${ext}"
     }
   },
-  "dependencies": {}
+  "dependencies": {
+    "electron-updater": "^6.8.9"
+  }
 }
