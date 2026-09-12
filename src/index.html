@@ -1065,14 +1065,40 @@
                   <div class="appearance-sub-head">预设主题选择</div>
                   <div class="skin-row">
                     <span class="skin-row-label">预设背景</span>
-                    <select id="presetBgSelect" data-tip="选择内置渐变墙纸">
+                    <select id="presetBgSelect" data-tip="选择内置渐变墙纸或实拍壁纸">
                       <option value="">无</option>
                       <option value="aurora">极光 Aurora</option>
                       <option value="sunset">落日 Sunset</option>
                       <option value="graphite">石墨 Graphite</option>
+                      <option value="wp-winter">冬日 · 二次元</option>
+                      <option value="wp-mountain">山峰 · 乡村</option>
+                      <option value="wp-gaming">电竞 · 玩趣</option>
+                      <option value="wp-anime">动漫 · 场景</option>
+                      <option value="wp-doll">Doll · 手办</option>
                     </select>
                   </div>
-                  <p class="appearance-hint">内置渐变墙纸铺于页面底层，可与导入的图片背景叠加使用</p>
+                  <p class="appearance-hint">内置渐变墙纸与实拍壁纸铺于页面底层，可与导入的图片背景叠加使用</p>
+                </div>
+                <!-- 壁纸轮换（v2.8.0）：仅实拍壁纸（wp-*）预设生效，默认 10s，可调/可关 -->
+                <div class="appearance-sub">
+                  <div class="appearance-sub-head">壁纸轮换</div>
+                  <div class="skin-row">
+                    <span class="skin-row-label">自动轮换</span>
+                    <label class="toggle-switch" for="wallpaperRotateToggle" data-tip="在内置实拍壁纸之间自动轮换；选择渐变或无背景时轮换暂停">
+                      <input type="checkbox" id="wallpaperRotateToggle" />
+                      <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                    </label>
+                  </div>
+                  <div class="skin-row">
+                    <span class="skin-row-label">轮换间隔</span>
+                    <select id="wallpaperIntervalSelect" data-tip="壁纸自动轮换的时间间隔">
+                      <option value="10">10 秒</option>
+                      <option value="30">30 秒</option>
+                      <option value="60">60 秒</option>
+                      <option value="300">5 分钟</option>
+                    </select>
+                  </div>
+                  <p class="appearance-hint">窗口隐藏时自动暂停轮换，省电不打扰</p>
                 </div>
                 <!-- 主题颜色选择（设置页整合4）：原「颜色选择」卡收编至此 -->
                 <div class="appearance-sub">
@@ -1231,6 +1257,7 @@
             <div class="settings-system-body" id="systemInfoBody">
               <div class="info-row"><span>应用版本</span><span id="infoVersion">--</span></div>
               <div class="info-row"><span>数据目录</span><span id="infoPortable">--</span></div>
+              <div class="info-row" id="diagDwmRow" style="display:none"><span>兼容性提示</span><span id="diagDwmText">--</span></div>
               <div class="info-row"><span>Electron</span><span id="infoElectron">--</span></div>
               <div class="info-row"><span>Node.js</span><span id="infoNode">--</span></div>
               <div class="info-row"><span>Chrome</span><span id="infoChrome">--</span></div>

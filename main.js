@@ -1,6 +1,6 @@
 // main.js - Electron 主进程
 // 负责窗口创建、管理员权限提升、IPC 通信、PowerShell 调用
-const { app, BrowserWindow, ipcMain, shell, dialog, screen, safeStorage, session } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, screen, safeStorage, session, powerMonitor } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -77,7 +77,7 @@ let lastFinderSnapshot = new Map();
 const MAIN_WINDOW_MIN_WIDTH = 1294;
 const MAIN_WINDOW_MIN_HEIGHT = 870;
 const TITLEBAR_OVERLAY = Object.freeze({
-  // v2.7.2：完全透明覆盖层（Mineradio 式）——min/max/close 按钮直接浮在网页内容上：
+  // v2.7.2：完全透明覆盖层——min/max/close 按钮直接浮在网页内容上：
   // 启动页期间浮在 WebGL 画面上、常规态浮在 DOM 标题栏底色上，任何场景都无色块接缝，
   // 也不再需要随启动页/主题动态换色（旧 splash:overlay 融合通道已下线）。
   // Electron 需 ≥39（透明色下 symbol hover 高亮错误已在 37/38/39 分支修复，见 electron#48193）。
@@ -154,6 +154,7 @@ const SIDE_EFFECT_FREE = new Set([
   'optimizer:list', 'overview:hardware', 'overview:metrics',   // 优化项清单/硬件信息/指标查询
   'overview:checkup',                                          // 系统体检（v2.6.0 只读诊断）
   'updater:get-mirror',                                        // 更新镜像偏好读取（v2.6.0）
+  'appearance:get-env', 'diag:dwm-conflict',                   // 环境状态/注入工具检测结果读取（v2.8.0）
   'paths:load', 'realtime:adapters', 'realtime:report-list'    // 路径配置/网络适配器/测速报告列表
 ]);
 
@@ -817,6 +818,7 @@ function createWindow() {
   }
 
   mainWindow = new BrowserWindow(windowOptions);
+  bindFocusBroadcast(mainWindow);
   secureWindowNavigation(mainWindow);
   mainWindow.setIgnoreMouseEvents(false);
   mainWindow.setFocusable(true);
@@ -3004,6 +3006,86 @@ function broadcastMaterialChanged(effective) {
   });
 }
 
+// ==================== 环境自适应（v2.8.0：电池 / 系统透明开关 / 焦点 / 注入工具检测） ====================
+// 会话级降级：不改用户存储的偏好，环境恢复后自动回弹。渲染层液态玻璃引擎与
+// 窗口材质各自消费；全部自动、无前端入口（产品裁定：系统优化工具的省电自觉）。
+let envOnBattery = false;
+let envTransparencyOn = true;
+let batteryMaterialSwapped = false;
+let dwmToolHint = null;
+
+function broadcastEnvState() {
+  const env = { onBattery: envOnBattery, transparencyOff: !envTransparencyOn };
+  BrowserWindow.getAllWindows().forEach((w) => {
+    if (w.isDestroyed()) return;
+    try { w.webContents.send('appearance:env-state', env); } catch (e) {}
+  });
+}
+
+// 读系统「透明效果」开关（HKCU EnableTransparency）。读不到按开启处理，不误降级
+function readSysTransparency() {
+  try {
+    const out = spawnSync('reg', ['query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize', '/v', 'EnableTransparency'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+    const m = /EnableTransparency\s+REG_DWORD\s+(0x[0-9a-f]+)/i.exec(out.stdout || '');
+    return m ? parseInt(m[1], 16) !== 0 : true;
+  } catch (e) {
+    return true;
+  }
+}
+
+// 电池供电：亚克力系材质临时降级为 mica（更省电），接电恢复用户设置。
+// 窗口最大化时跳过（Win11 27H2 运行中重设原生材质可能黑屏，等下次事件再试）
+function applyBatteryMaterialSwap(onBattery) {
+  try {
+    const ap = loadAppearance();
+    const materialEnabled = ap.materialEnabled !== false;
+    const material = ap.material || 'mica';
+    const swappable = materialEnabled && (material === 'acrylic' || material === 'thin-acrylic');
+    if (onBattery && swappable) {
+      if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isMaximized()) {
+        writeLog('info', '电池供电：窗口处于最大化，材质降级跳过（防 27H2 材质重设风险）');
+        return;
+      }
+      applyNativeMaterialAll('mica');
+      broadcastMaterialChanged('mica');
+      batteryMaterialSwapped = true;
+      writeLog('info', '电池供电：窗口材质临时降级为 mica（接电自动恢复）');
+    } else if (!onBattery && batteryMaterialSwapped) {
+      batteryMaterialSwapped = false;
+      if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isMaximized()) return; // 还原路径同上跳过
+      applyNativeMaterialAll(materialEnabled ? material : 'none');
+      broadcastMaterialChanged(materialEnabled ? material : 'none');
+      writeLog('info', '已接通电源：窗口材质恢复用户设置');
+    }
+  } catch (e) {
+    writeLog('warn', `电池材质降级失败: ${e.message}`);
+  }
+}
+
+// 第三方 DWM 注入类美化工具一次性轻量检测（完全启动后 12s 才跑：tasklist + schtasks
+// 各一次、有超时、不轮询不驻留）。命中只记日志 + 设置页友好提示，绝不自动禁用对方
+function detectDwmInjectTools() {
+  try {
+    const tl = spawnSync('tasklist', ['/FI', 'IMAGENAME eq DWMBlurGlass.exe', '/FO', 'CSV'], { encoding: 'utf8', timeout: 8000, windowsHide: true });
+    if (/DWMBlurGlass\.exe/i.test(tl.stdout || '')) return 'dwm-blur-tool';
+  } catch (e) { /* tasklist 不可用忽略 */ }
+  try {
+    const st = spawnSync('schtasks', ['/Query', '/TN', 'DWMBlurGlass_Extend'], { encoding: 'utf8', timeout: 8000, windowsHide: true });
+    if (st.status === 0) return 'dwm-blur-task';
+  } catch (e) { /* schtasks 不可用忽略 */ }
+  return null;
+}
+
+// 焦点差异化（v2.8.0）：窗口失焦/聚焦广播给对应渲染层（body.win-inactive 视觉纱）
+function bindFocusBroadcast(win) {
+  if (!win) return;
+  win.on('focus', () => { try { win.webContents.send('window:focus-state', { focused: true }); } catch (e) {} });
+  win.on('blur', () => { try { win.webContents.send('window:focus-state', { focused: false }); } catch (e) {} });
+}
+
+handleSafe('appearance:get-env', async () => ({ onBattery: envOnBattery, transparencyOff: !envTransparencyOn }));
+handleSafe('diag:dwm-conflict', async () => ({ detected: !!dwmToolHint, kind: dwmToolHint ? dwmToolHint.kind : null }));
+
 handleSafe('appearance:set-material', async (event, { material } = {}) => {
   const allowed = ['mica', 'mica-alt', 'acrylic', 'thin-acrylic', 'none'];
   if (!allowed.includes(material)) return { success: false, message: '未知的材质' };
@@ -4956,6 +5038,7 @@ handleSafe('processManager:open-window', async () => {
     if (processManagerWindow && !processManagerWindow.isDestroyed()) processManagerWindow.show();
   });
   processManagerWindow.on('closed', () => { processManagerWindow = null; });
+  bindFocusBroadcast(processManagerWindow);
   return { success: true };
 });
 
@@ -5011,6 +5094,7 @@ handleSafe('models:open-window', async () => {
     if (modelsWindow && !modelsWindow.isDestroyed()) modelsWindow.show();
   });
   modelsWindow.on('closed', () => { modelsWindow = null; });
+  bindFocusBroadcast(modelsWindow);
   return { success: true };
 });
 
@@ -5059,6 +5143,7 @@ handleSafe('preview:open-window', async (event, payload = {}) => {
     if (!previewWindow.isDestroyed()) previewWindow.webContents.send('preview:data', payload);
   });
   previewWindow.on('closed', () => { previewWindow = null; });
+  bindFocusBroadcast(previewWindow);
   return { success: true };
 });
 
@@ -5140,6 +5225,7 @@ handleSafe('peripheral:open-window', async () => {
     if (peripheralWindow && !peripheralWindow.isDestroyed()) peripheralWindow.show();
   });
   peripheralWindow.on('closed', () => { peripheralWindow = null; });
+  bindFocusBroadcast(peripheralWindow);
   return { success: true };
 });
 
@@ -5522,6 +5608,32 @@ app.whenReady().then(() => {
   // v2.7.0（任务2）：应用首次启动即后台全量扫描优化项是否已生效并持久化（常态化记录）。
   // 延迟 3s 错开指标预热与窗口创建的 pwsh 抢占；扫描失败保留旧记录不影响使用。
   setTimeout(() => { refreshOptimizerDetectCache(); }, 3000);
+
+  // v2.8.0：环境自适应初始化——电池状态、系统透明开关；后续变化实时广播
+  try {
+    envOnBattery = powerMonitor.isOnBatteryPower();
+    envTransparencyOn = readSysTransparency();
+    broadcastEnvState();
+    applyBatteryMaterialSwap(envOnBattery);
+    powerMonitor.on('on-battery', () => { envOnBattery = true; broadcastEnvState(); applyBatteryMaterialSwap(true); });
+    powerMonitor.on('on-ac', () => { envOnBattery = false; broadcastEnvState(); applyBatteryMaterialSwap(false); });
+    powerMonitor.on('resume', () => { envTransparencyOn = readSysTransparency(); broadcastEnvState(); });
+    writeLog('info', `环境自适应就绪: 电池=${envOnBattery ? '是' : '否'} 系统透明效果=${envTransparencyOn ? '开' : '关'}`);
+  } catch (e) {
+    writeLog('warn', `环境自适应初始化失败: ${e.message}`);
+  }
+
+  // v2.8.0：第三方 DWM 注入类美化工具一次性轻量检测——完全启动 12s 后跑一次，
+  // 只提示不干预；命中时设置页「系统信息」出现兼容性提示行
+  setTimeout(() => {
+    try {
+      const hit = detectDwmInjectTools();
+      if (hit) {
+        dwmToolHint = { detected: true, kind: hit };
+        writeLog('warn', `检测到第三方窗口美化工具痕迹（${hit}）：旧版本可能导致 Electron 应用缩略图缺失甚至崩溃，建议将其更新到最新版本`);
+      }
+    } catch (e) { writeLog('warn', `注入工具检测异常: ${e.message}`); }
+  }, 12000);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

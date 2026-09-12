@@ -1382,6 +1382,87 @@ check('v2.7.2：启动加速编排 / 透明覆盖层 / postbuild 清旧包', () 
   if (!cleanSrc.includes('SendToRecycleBin')) throw new Error('clean-old-packages 应优先回收站');
 });
 
+// ==================== 8. v2.8.0 批次（内嵌壁纸轮换 / 玻璃质感与自适应 / 焦点差异化） ====================
+console.log('[8/8] v2.8.0 批次检查');
+
+check('内嵌壁纸资源与轮换引擎（任务2）', () => {
+  for (const f of ['wp-winter.jpg', 'wp-mountain.jpg', 'wp-gaming.jpg', 'wp-anime.jpg', 'wp-doll.jpg']) {
+    const p = abs('src/assets/bg/' + f);
+    if (!fs.existsSync(p)) throw new Error('缺少内嵌壁纸 ' + f);
+    if (fs.statSync(p).size > 2 * 1024 * 1024) throw new Error('壁纸体积超 2MB（应压缩）: ' + f);
+  }
+  const html = fs.readFileSync(abs('src/index.html'), 'utf8');
+  for (const wp of ['wp-winter', 'wp-mountain', 'wp-gaming', 'wp-anime', 'wp-doll']) {
+    if (!html.includes(`value="${wp}"`)) throw new Error('预设选择器缺少 ' + wp);
+  }
+  for (const id of ['wallpaperRotateToggle', 'wallpaperIntervalSelect']) {
+    if (!html.includes(`id="${id}"`)) throw new Error('index.html 缺少轮换控件 ' + id);
+  }
+  const pbSrc = fs.readFileSync(abs('src/scripts/pathbinding.js'), 'utf8');
+  for (const needle of ['WP_LIST', 'wallpaperRotate', 'wallpaperInterval', 'visibilitychange']) {
+    if (!pbSrc.includes(needle)) throw new Error('pathbinding.js 缺少轮换引擎要素 ' + needle);
+  }
+  const css = fs.readFileSync(abs('src/styles/main.css'), 'utf8');
+  for (const wp of ['wp-winter', 'wp-anime', 'wp-doll']) {
+    if (!css.includes(`data-preset-bg="${wp}"`)) throw new Error('main.css 缺少壁纸预设规则 ' + wp);
+  }
+});
+
+check('v2.8.0 玻璃死代码清理与质感参数化（P0-①/P0-②/P1-⑤）', () => {
+  const css = fs.readFileSync(abs('src/styles/main.css'), 'utf8');
+  // 暗色玻璃 token 死代码已删（--lg-tint-primary 只应出现一次，即 .theme-light 内）
+  const tintCount = (css.match(/--lg-tint-primary:/g) || []).length;
+  if (tintCount !== 1) throw new Error('--lg-tint-primary 应只剩 .theme-light 一处，实际 ' + tintCount);
+  // 质感参数化：5 处硬编码收敛为变量
+  if (css.includes('saturate(1.65)')) throw new Error('main.css 仍存在 saturate(1.65) 硬编码');
+  for (const v of ['--glass-satur:', '--glass-bright:', '--glass-blur-soft:']) {
+    if (!css.includes(v)) throw new Error('main.css 缺少玻璃参数 ' + v);
+  }
+  const lgSrc = fs.readFileSync(abs('src/scripts/liquid-glass.js'), 'utf8');
+  // 噪点层：feTurbulence 必须在 aberration（full 专属）分支内
+  const tbIdx = lgSrc.indexOf("fe('feTurbulence'");
+  if (tbIdx === -1) throw new Error('liquid-glass.js 缺少噪点层 feTurbulence');
+  const abIdx = lgSrc.indexOf('if (aberration) {', Math.max(0, tbIdx - 600));
+  if (abIdx === -1 || abIdx > tbIdx) throw new Error('feTurbulence 未被 aberration（full 档）分支包裹');
+  if (!lgSrc.includes('glassSatur') || !lgSrc.includes('glassBright')) throw new Error('liquid-glass.js 未接入质感参数');
+  // theme-dark 死语句清理
+  const themeSrc = fs.readFileSync(abs('src/scripts/theme.js'), 'utf8');
+  for (const f of ['src/scripts/theme.js', 'src/scripts/window-material.js', 'src/scripts/models-window.js', 'src/scripts/process-manager-window.js']) {
+    if (fs.readFileSync(abs(f), 'utf8').includes("remove('theme-dark')")) throw new Error(f + ' 仍存在 remove(theme-dark) 死语句');
+  }
+});
+
+check('v2.8.0 环境自适应与焦点差异化（P0-③/P1-④⑥⑦）', () => {
+  const mainSrc = fs.readFileSync(abs('main.js'), 'utf8');
+  for (const needle of ["powerMonitor.on('on-battery'", "powerMonitor.on('on-ac'", 'readSysTransparency', 'EnableTransparency',
+    'bindFocusBroadcast', "send('appearance:env-state'", "send('window:focus-state'", 'detectDwmInjectTools']) {
+    if (!mainSrc.includes(needle)) throw new Error('main.js 缺少 ' + needle);
+  }
+  // 焦点广播覆盖全部 5 个窗口创建点
+  const bindCount = (mainSrc.match(/bindFocusBroadcast\(/g) || []).length;
+  if (bindCount < 6) throw new Error('bindFocusBroadcast 应为 1 定义 + 5 调用，实际 ' + bindCount);
+  const lgSrc = fs.readFileSync(abs('src/scripts/liquid-glass.js'), 'utf8');
+  for (const needle of ['envBattery', 'envNoTransparency', 'prefers-reduced-transparency', 'effectiveMode']) {
+    if (!lgSrc.includes(needle)) throw new Error('liquid-glass.js 缺少环境自适应要素 ' + needle);
+  }
+  // UI 提示不出现任何第三方品牌名（只描述类别）
+  const appSrc = fs.readFileSync(abs('src/scripts/app.js'), 'utf8');
+  if (!/检测到第三方窗口美化工具/.test(appSrc)) throw new Error('app.js 缺少兼容性提示文案');
+  for (const brand of ['DWMBlurGlass', 'MicaForEveryone', 'TranslucentFlyouts']) {
+    if (appSrc.includes(brand)) throw new Error('UI 提示不允许出现第三方品牌名: ' + brand);
+  }
+  // preload 通道
+  const preloadSrc = fs.readFileSync(abs('preload.js'), 'utf8');
+  for (const needle of ['getEnv', 'onEnvState', 'onFocusState', 'dwmConflict']) {
+    if (!preloadSrc.includes(needle)) throw new Error('preload.js 缺少 ' + needle);
+  }
+  // IPC 双侧对齐
+  for (const ch of ['appearance:get-env', 'diag:dwm-conflict']) {
+    if (!mainSrc.includes(`'${ch}'`)) throw new Error('main.js 缺少通道 ' + ch);
+    if (!preloadSrc.includes(`'${ch}'`)) throw new Error('preload.js 缺少通道 ' + ch);
+  }
+});
+
 // ==================== 汇总 ====================
 console.log('');
 console.log(`结果: ${passed} 通过, ${failed} 失败`);

@@ -330,9 +330,8 @@
     else window.close();
   }
 
-  // 恒浅色（v2.1：应用固定浅色，不再跟随系统主题）
+  // 恒浅色（v2.1：应用固定浅色，不再跟随系统主题；v2.8.0 清理死代码不再 remove theme-dark）
   function applyTheme() {
-    document.body.classList.remove('theme-dark');
     document.body.classList.add('theme-light');
   }
 

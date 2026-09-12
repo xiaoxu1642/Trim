@@ -10,7 +10,8 @@
   var IS_ELECTRON = !!window.api?.app;
 
   function applyTheme() {
-    document.body.classList.remove('theme-dark');
+    // v2.8.0：清理死代码——应用恒挂 theme-light（「固定浅色」产品决策），
+    // 不再执行无效的 theme-dark 移除语句（main.css 暗色玻璃 token 已同步删除）
     document.body.classList.add('theme-light');
   }
 
@@ -45,6 +46,11 @@
     // 主进程广播：材质变化实时跟随（主窗设置页切换材质时子窗即时生效）
     window.api.appearance?.onMaterialChanged?.(function (material) {
       applyMaterial(material, true);
+    });
+
+    // v2.8.0：窗口焦点状态——失焦时 body 挂 win-inactive（视觉纱降低存在感）
+    window.api.window?.onFocusState?.(function (state) {
+      document.body.classList.toggle('win-inactive', !(state && state.focused));
     });
   }
 

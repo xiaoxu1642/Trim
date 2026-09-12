@@ -37,6 +37,12 @@
   let mode = 'standard';
   let refractionSupported = true;
   let reduceMotion = false;
+  // v2.8.0：玻璃质感参数（读自 main.css --glass-satur/--glass-bright，init 时取一次）
+  let glassSatur = 1.65;
+  let glassBright = 1.04;
+  // v2.8.0：环境自适应状态（会话级降级，不改用户存储的偏好）
+  let envBattery = false;        // 电池供电：full/standard → frost
+  let envNoTransparency = false; // 系统关闭「透明效果」：强制 frost
 
   const states = new Map();      // bar -> { thumb, filterId, mapW, mapH }（分段栏滑块）
   const glassStates = new Map(); // el  -> { kind, w, h, radius, blur, refract }
@@ -258,7 +264,7 @@
       displaced = 'DISP';
     }
 
-    filter.appendChild(fe('feColorMatrix', { in: displaced, type: 'saturate', values: '1.55', result: 'SAT' }));
+    filter.appendChild(fe('feColorMatrix', { in: displaced, type: 'saturate', values: String(glassSatur), result: 'SAT' }));
     filter.appendChild(fe('feImage', { href: maps.specUrl, x: 0, y: 0, width: w, height: h, result: 'SPEC', preserveAspectRatio: 'none' }));
     // 高光贴图 alpha 作为遮罩，把增艳后的折射内容裁进高光区
     filter.appendChild(fe('feComposite', { in: 'SAT', in2: 'SPEC', operator: 'in', result: 'SMASK' }));
@@ -266,7 +272,15 @@
     specFade.appendChild(fe('feFuncA', { type: 'linear', slope: 0.5 }));
     filter.appendChild(specFade);
     filter.appendChild(fe('feBlend', { in: 'SMASK', in2: displaced, mode: 'normal', result: 'WITH' }));
-    filter.appendChild(fe('feBlend', { in: 'SFADE', in2: 'WITH', mode: 'normal' }));
+    filter.appendChild(fe('feBlend', { in: 'SFADE', in2: 'WITH', mode: 'normal', result: 'BASE' }));
+    if (aberration) {
+      // v2.8.0 噪点层（full 专属）：静态 fractalNoise 压到极低 alpha 后 soft-light 叠加，
+      // 补齐玻璃「颗粒质感」（塑料感 → 磨砂玻璃感）。滤镜按 模式x尺寸x圆角 分桶复用，
+      // turbulence 数量有上界；standard/frost 不加——AGENTS 性能护栏刻意不放开
+      filter.appendChild(fe('feTurbulence', { type: 'fractalNoise', baseFrequency: '0.9', numOctaves: '2', seed: '7', stitchTiles: 'stitch', result: 'NOISE' }));
+      filter.appendChild(fe('feColorMatrix', { in: 'NOISE', type: 'matrix', values: '0 0 0 0 0.55  0 0 0 0 0.55  0 0 0 0 0.58  0 0 0 0.06 0', result: 'GRAIN' }));
+      filter.appendChild(fe('feBlend', { in: 'GRAIN', in2: 'BASE', mode: 'soft-light' }));
+    }
     return filter;
   }
 
@@ -306,11 +320,11 @@
     if (wantRefract) {
       refractCount++;
       const id = getFilterId(mode, w, h, st.radius);
-      setBackdrop(el, `url(#${id}) blur(${blur}px) saturate(1.4) brightness(1.03)`);
+      setBackdrop(el, `url(#${id}) blur(${blur}px) saturate(${glassSatur}) brightness(${glassBright})`);
       glassRo.observe(el);
     } else {
       // 大元素 / 超上限 / 不支持折射：纯磨砂（弹层面积大，磨砂力度比按钮更高）
-      setBackdrop(el, `blur(${kind === 'floating' ? 18 : blur}px) saturate(1.45) brightness(1.03)`);
+      setBackdrop(el, `blur(${kind === 'floating' ? 18 : blur}px) saturate(${glassSatur}) brightness(${glassBright})`);
     }
     glassStates.set(el, st);
     if (kind === 'button') {
@@ -755,9 +769,10 @@
 
   let attachedMode = null; // 当前已挂折射玻璃的模式（full/standard），跨档切换需重建滤镜链
 
-  function setMode(next) {
+  function setMode(next, opts) {
     mode = normalizeMode(next);
-    persistMode(mode);
+    // v2.8.0：环境自适应降级走 persist:false——用户存的偏好不被覆盖，环境恢复后自动回弹
+    if (!opts || opts.persist !== false) persistMode(mode);
     applyModeClass();
 
     if (mode === 'off' || mode === 'frost') {
@@ -775,6 +790,27 @@
     scheduleScan();
   }
 
+  // v2.8.0：环境自适应——按电池/系统透明开关计算生效档位并应用
+  function effectiveMode() {
+    const user = readStoredMode();
+    if (envNoTransparency) return 'frost';
+    if (envBattery && (user === 'full' || user === 'standard')) return 'frost';
+    return user;
+  }
+  function applyEnv() {
+    const eff = effectiveMode();
+    if (eff !== mode) setMode(eff, { persist: false });
+  }
+  function readGlassParams() {
+    try {
+      const cs = getComputedStyle(document.body);
+      const s = parseFloat(cs.getPropertyValue('--glass-satur'));
+      const b = parseFloat(cs.getPropertyValue('--glass-bright'));
+      if (Number.isFinite(s) && s >= 1) glassSatur = s;
+      if (Number.isFinite(b) && b >= 1) glassBright = b;
+    } catch (e) { /* 读不到用默认值 */ }
+  }
+
   function getMode() { return mode; }
 
   // ============ 事件接线 ============
@@ -784,8 +820,34 @@
     mode = readStoredMode();
     refractionSupported = detectRefractionSupport();
     reduceMotion = prefersReduceMotion();
+    readGlassParams();
     document.documentElement.classList.add('lg-init');
     applyModeClass();
+
+    // v2.8.0：环境自适应接线——电池供电广播 + 系统透明效果开关媒体查询
+    try {
+      const trMQ = window.matchMedia('(prefers-reduced-transparency: reduce)');
+      envNoTransparency = trMQ.matches;
+      const onTrChange = (e) => { envNoTransparency = !!(e && e.matches); applyEnv(); };
+      if (typeof trMQ.addEventListener === 'function') trMQ.addEventListener('change', onTrChange);
+      else if (typeof trMQ.addListener === 'function') trMQ.addListener(onTrChange);
+    } catch (e) { /* 老环境无该媒体查询，忽略 */ }
+    if (window.api?.appearance?.getEnv) {
+      window.api.appearance.getEnv().then((env) => {
+        if (!env) return;
+        envBattery = !!env.onBattery;
+        if (typeof env.transparencyOff === 'boolean') envNoTransparency = env.transparencyOff;
+        applyEnv();
+      }).catch(() => {});
+    }
+    if (window.api?.appearance?.onEnvState) {
+      window.api.appearance.onEnvState((env) => {
+        if (!env) return;
+        envBattery = !!env.onBattery;
+        if (typeof env.transparencyOff === 'boolean') envNoTransparency = env.transparencyOff;
+        applyEnv();
+      });
+    }
 
     // 点击任意分段标签：栏内 active 切换完成后，滑块带弹簧动画跟随；
     // 点击也可能切换页面/渲染新按钮，顺带调度一次玻璃扫描
@@ -837,12 +899,13 @@
     init, mountAll, refreshAll: refreshBars, setMode, getMode,
     // 2.0 扩展：手动触发扫描（供动态渲染模块调用，可选项）
     rescan: scheduleScan,
-    // 诊断：内部状态快照（ refract 计数 / 能力检测 / 滤镜桶 ）
+    // 诊断：内部状态快照（ refract 计数 / 能力检测 / 滤镜桶 / 环境自适应 ）
     debug: () => ({
       mode, attachedMode, refractionSupported, reduceMotion, refractCount,
       glassStates: glassStates.size, elastic: elasticEls.size,
       buckets: filterBuckets.size, bars: states.size,
-      mapCache: mapCache.size
+      mapCache: mapCache.size,
+      env: { battery: envBattery, noTransparency: envNoTransparency, glassSatur, glassBright }
     })
   };
 

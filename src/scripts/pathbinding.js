@@ -700,6 +700,70 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
       saveAppearance(ap2);
       applyPresetBg(ap2.presetBg);
     });
+    // ==================== 内置实拍壁纸轮换（v2.8.0） ====================
+    // 仅 wp-* 实拍壁纸预设参与轮换（渐变/无背景时计时器空转）；默认 10s，可调/可关；
+    // 窗口隐藏时自动暂停（visibilitychange），省电不打扰。状态存 winclean-appearance。
+    const WP_LIST = ['wp-winter', 'wp-mountain', 'wp-gaming', 'wp-anime', 'wp-doll'];
+    const wpRotateToggle = document.getElementById('wallpaperRotateToggle');
+    const wpIntervalSelect = document.getElementById('wallpaperIntervalSelect');
+    let wpTimer = null;
+    function wpRotateOn() { return !!(wpRotateToggle && wpRotateToggle.checked); }
+    function wpIntervalMs() {
+      const v = parseInt(wpIntervalSelect && wpIntervalSelect.value, 10);
+      return Number.isFinite(v) && v >= 5 ? v * 1000 : 10000;
+    }
+    function wpStop() { if (wpTimer) { clearInterval(wpTimer); wpTimer = null; } }
+    function wpCurrent() {
+      const cur = loadAppearance().presetBg || '';
+      return WP_LIST.indexOf(cur);
+    }
+    function wpTick() {
+      const idx = wpCurrent();
+      if (idx === -1) return; // 当前不是实拍壁纸（用户切到渐变/无背景），保持不动
+      const next = WP_LIST[(idx + 1) % WP_LIST.length];
+      const ap2 = loadAppearance();
+      ap2.presetBg = next;
+      saveAppearance(ap2);
+      applyPresetBg(next);
+      if (presetBgSelect) presetBgSelect.value = next; // 选择器同步跟随，所见即所得
+    }
+    function wpSync() {
+      wpStop();
+      if (!wpRotateOn()) return;
+      // 开启轮换但当前不是实拍壁纸：先落到第一张，立即进入轮换节奏
+      if (wpCurrent() === -1) {
+        const ap2 = loadAppearance();
+        ap2.presetBg = WP_LIST[0];
+        saveAppearance(ap2);
+        applyPresetBg(WP_LIST[0]);
+        if (presetBgSelect) presetBgSelect.value = WP_LIST[0];
+      }
+      wpTimer = setInterval(wpTick, wpIntervalMs());
+    }
+    if (wpRotateToggle) {
+      wpRotateToggle.checked = ap.wallpaperRotate === '1';
+      wpRotateToggle.addEventListener('change', () => {
+        const ap2 = loadAppearance();
+        ap2.wallpaperRotate = wpRotateToggle.checked ? '1' : '';
+        saveAppearance(ap2);
+        wpSync();
+      });
+    }
+    if (wpIntervalSelect) {
+      wpIntervalSelect.value = ap.wallpaperInterval || '10';
+      wpIntervalSelect.addEventListener('change', () => {
+        const ap2 = loadAppearance();
+        ap2.wallpaperInterval = wpIntervalSelect.value;
+        saveAppearance(ap2);
+        wpSync(); // 间隔变化立即按新周期重启计时器
+      });
+    }
+    // 窗口隐藏（最小化/切走）暂停轮换，回来继续——省电且不空转
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) wpStop();
+      else wpSync();
+    });
+    wpSync();
     // 背景模糊度滑块（位于「背景图片」卡内，预设背景/导入图片均可叠加）
     const blurSlider = document.getElementById('bgBlur');
     const blurVal = document.getElementById('bgBlurVal');

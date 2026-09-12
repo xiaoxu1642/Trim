@@ -435,7 +435,7 @@
   async function loadAppInfo() {
     if (!window.api?.app) {
       // 浏览器预览模式
-      setInfo('infoVersion', '2.7.2');
+      setInfo('infoVersion', '2.8.0');
       setInfo('infoPortable', '标准安装');
       setInfo('infoElectron', 'N/A');
       setInfo('infoNode', 'N/A');
@@ -704,6 +704,24 @@
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') trimRendererMemory();
     });
+
+    // v2.8.0：窗口焦点状态——失焦时 body 挂 win-inactive（视觉纱降低存在感）
+    if (window.api?.window?.onFocusState) {
+      window.api.window.onFocusState((state) => {
+        document.body.classList.toggle('win-inactive', !(state && state.focused));
+      });
+    }
+
+    // v2.8.0：第三方窗口美化工具兼容性提示（主进程启动后一次性检测的结果，无工具时不可见）
+    if (window.api?.diag?.dwmConflict) {
+      window.api.diag.dwmConflict().then((r) => {
+        if (!r || !r.detected) return;
+        const row = document.getElementById('diagDwmRow');
+        const text = document.getElementById('diagDwmText');
+        if (row) row.style.display = '';
+        if (text) text.textContent = '检测到第三方窗口美化工具，旧版本可能导致窗口预览异常，建议更新到最新版本';
+      }).catch(() => {});
+    }
 
     // v2.7.1：真实初始化完成——启动页（splash.js）监听此事件收尾进度并进入主界面，
     // 替代纯假进度等待；预览模式无监听方，派发无副作用

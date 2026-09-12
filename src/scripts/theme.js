@@ -12,8 +12,8 @@
   }
 
   function applyTheme() {
-    // 恒浅色：只挂 theme-light，main.css 的 theme-dark 规则不再生效
-    document.body.classList.remove('theme-dark');
+    // 恒浅色：只挂 theme-light（v2.8.0 清理死代码：无效的 theme-dark 移除语句已删除，
+    // main.css 暗色玻璃 token 已同步删除）
     document.body.classList.add('theme-light');
 
     // 标题栏是独立系统表面，固定浅色

@@ -240,8 +240,8 @@ body[data-skin="glass"] .empty-state,
 body[data-skin="glass"] .overview-card,
 body[data-skin="glass"] .table-card {
   /* 模糊半径由设置页「背景模糊度」滑块写入 --glass-blur（0-26px），缺省 26px 保持原液态玻璃观感 */
-  -webkit-backdrop-filter: blur(var(--glass-blur, 26px)) saturate(1.65) brightness(1.04);
-  backdrop-filter: blur(var(--glass-blur, 26px)) saturate(1.65) brightness(1.04);
+  -webkit-backdrop-filter: blur(var(--glass-blur-soft, 15.6px)) saturate(var(--glass-satur, 1.65)) brightness(var(--glass-bright, 1.04));
+  backdrop-filter: blur(var(--glass-blur-soft, 15.6px)) saturate(var(--glass-satur, 1.65)) brightness(var(--glass-bright, 1.04));
   border-color: var(--glass-border);
   box-shadow:
     inset 0 1px 0 var(--glass-highlight),
@@ -7526,13 +7526,10 @@ body.bg-image-on .main-content {
      full 额外有指针弹性形变(.lg-elastic)与 WebGL 弹层焦散(.lg-shimmer-canvas)
    ================================================================ */
 
-/* ---------- 液态玻璃 tint token（不依赖材质开关，lg 四档都可能用到） ---------- */
+/* ---------- 液态玻璃 tint token（不依赖材质开关，lg 四档都可能用到） ----------
+   v2.8.0：清理死代码——原 :root 暗色玻璃 token（alpha 0.22 一套）因应用恒挂 theme-light
+   而永不生效（「固定浅色」是产品决策，见 readme），删除后只留通用的 --lg-glass-fg。 */
 :root {
-  --lg-tint-primary: rgba(201, 225, 248, 0.22);   /* #C9E1F8 冰蓝 */
-  --lg-tint-secondary: rgba(233, 234, 246, 0.17); /* #E9EAF6 薰衣草白 */
-  --lg-tint-tertiary: rgba(246, 234, 239, 0.22);  /* #F6EAEF 浅粉 */
-  --lg-glass-border: rgba(255, 255, 255, 0.18);
-  --lg-glass-highlight: rgba(255, 255, 255, 0.26);
   --lg-glass-fg: var(--fg-primary);
 }
 .theme-light {
@@ -7542,6 +7539,13 @@ body.bg-image-on .main-content {
   --lg-glass-border: rgba(255, 255, 255, 0.75);
   --lg-glass-highlight: rgba(255, 255, 255, 0.85);
   --lg-glass-fg: var(--fg-primary);
+  /* v2.8.0：玻璃质感参数化（原 5 处饱和度/亮度硬编码收敛至此；
+     liquid-glass.js 的 SVG 滤镜链与内联 backdrop 同读这两个变量） */
+  --glass-satur: 1.65;
+  --glass-bright: 1.04;
+  /* 分层模糊：卡片/设置分区等中小面积玻璃面用弱模糊，侧栏等大面保持全量
+     （借鉴成熟窗口美化工具「重背景轻前景」的层次配方） */
+  --glass-blur-soft: calc(var(--glass-blur, 26px) * 0.6);
 }
 
 /* ---------- 材质面纱分级（dark=碳墨浓度 / light=浅玻璃色板） ---------- */
@@ -7885,8 +7889,8 @@ body[data-skin="glass"] .appearance-card,
 body[data-skin="glass"] .overview-card,
 body[data-skin="glass"] .summary-card,
 body[data-skin="glass"] .empty-state {
-  -webkit-backdrop-filter: blur(var(--glass-blur, 26px)) saturate(1.65) brightness(1.04);
-  backdrop-filter: blur(var(--glass-blur, 26px)) saturate(1.65) brightness(1.04);
+  -webkit-backdrop-filter: blur(var(--glass-blur-soft, 15.6px)) saturate(var(--glass-satur, 1.65)) brightness(var(--glass-bright, 1.04));
+  backdrop-filter: blur(var(--glass-blur-soft, 15.6px)) saturate(var(--glass-satur, 1.65)) brightness(var(--glass-bright, 1.04));
 }
 body.electron-mica[data-skin="glass"] .card,
 body.electron-mica[data-skin="glass"] .table-card,
@@ -7895,8 +7899,8 @@ body.electron-mica[data-skin="glass"] .appearance-card,
 body.electron-mica[data-skin="glass"] .overview-card,
 body.electron-mica[data-skin="glass"] .summary-card,
 body.electron-mica[data-skin="glass"] .empty-state {
-  -webkit-backdrop-filter: blur(var(--glass-blur, 26px)) saturate(1.65) brightness(1.04);
-  backdrop-filter: blur(var(--glass-blur, 26px)) saturate(1.65) brightness(1.04);
+  -webkit-backdrop-filter: blur(var(--glass-blur-soft, 15.6px)) saturate(var(--glass-satur, 1.65)) brightness(var(--glass-bright, 1.04));
+  backdrop-filter: blur(var(--glass-blur-soft, 15.6px)) saturate(var(--glass-satur, 1.65)) brightness(var(--glass-bright, 1.04));
 }
 body[data-preset-bg][data-skin="glass"] .card,
 body[data-preset-bg][data-skin="glass"] .table-card,
@@ -7905,12 +7909,13 @@ body[data-preset-bg][data-skin="glass"] .appearance-card,
 body[data-preset-bg][data-skin="glass"] .overview-card,
 body[data-preset-bg][data-skin="glass"] .summary-card,
 body[data-preset-bg][data-skin="glass"] .empty-state {
-  -webkit-backdrop-filter: blur(var(--glass-blur, 26px)) saturate(1.65) brightness(1.04);
-  backdrop-filter: blur(var(--glass-blur, 26px)) saturate(1.65) brightness(1.04);
+  -webkit-backdrop-filter: blur(var(--glass-blur-soft, 15.6px)) saturate(var(--glass-satur, 1.65)) brightness(var(--glass-bright, 1.04));
+  backdrop-filter: blur(var(--glass-blur-soft, 15.6px)) saturate(var(--glass-satur, 1.65)) brightness(var(--glass-bright, 1.04));
 }
 body.electron-mica[data-skin="glass"]:not(.win-maximized) .sidebar {
-  -webkit-backdrop-filter: blur(var(--glass-blur, 26px)) saturate(1.65) brightness(1.04);
-  backdrop-filter: blur(var(--glass-blur, 26px)) saturate(1.65) brightness(1.04);
+  /* 侧栏是大面积玻璃面：保持全量模糊（分层模糊配方里「重背景」的一侧） */
+  -webkit-backdrop-filter: blur(var(--glass-blur, 26px)) saturate(var(--glass-satur, 1.65)) brightness(var(--glass-bright, 1.04));
+  backdrop-filter: blur(var(--glass-blur, 26px)) saturate(var(--glass-satur, 1.65)) brightness(var(--glass-bright, 1.04));
 }
 
 /* ==================== 审查 3-1/6-1：系统「透明度效果」降级 ==================== */
@@ -8300,3 +8305,41 @@ body:has(.splash-overlay:not(.finished)) .titlebar-title { visibility: hidden; }
 }
 .splash-enter:hover { background: #4338CA; transform: translateY(-1px); }
 .splash-enter:focus-visible { outline: 2px solid #8B5CF6; outline-offset: 3px; }
+
+/* ==================== v2.8.0 批次样式 ==================== */
+
+/* 内嵌实拍壁纸预设（v2.8.0）：与渐变预设同管道（data-preset-bg），底图铺满 + 顶部雾化渐变保可读性；
+   图片随包分发（src/assets/bg/，经 asar 读取），轮换只切 data-preset-bg 属性值 */
+body[data-preset-bg^="wp-"] .layout::before {
+  display: block !important;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+body[data-preset-bg="wp-winter"] .layout::before {
+  background-image: linear-gradient(180deg, rgba(247, 248, 251, 0.30), rgba(247, 248, 251, 0.55)), url('../assets/bg/wp-winter.jpg');
+}
+body[data-preset-bg="wp-mountain"] .layout::before {
+  background-image: linear-gradient(180deg, rgba(247, 248, 251, 0.30), rgba(247, 248, 251, 0.55)), url('../assets/bg/wp-mountain.jpg');
+}
+body[data-preset-bg="wp-gaming"] .layout::before {
+  background-image: linear-gradient(180deg, rgba(247, 248, 251, 0.32), rgba(247, 248, 251, 0.58)), url('../assets/bg/wp-gaming.jpg');
+}
+body[data-preset-bg="wp-anime"] .layout::before {
+  background-image: linear-gradient(180deg, rgba(247, 248, 251, 0.30), rgba(247, 248, 251, 0.55)), url('../assets/bg/wp-anime.jpg');
+}
+body[data-preset-bg="wp-doll"] .layout::before {
+  background-image: linear-gradient(180deg, rgba(247, 248, 251, 0.32), rgba(247, 248, 251, 0.58)), url('../assets/bg/wp-doll.jpg');
+}
+
+/* 焦点差异化（v2.8.0）：窗口失焦时叠加一层极淡的暗色纱（z 在启动页之下），
+   内容整体降低存在感；不用 body opacity——它会创建隔离组、破坏玻璃面的
+   backdrop-filter 采样。纱是后绘制覆盖层，玻璃取样不受影响 */
+body.win-inactive::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.04);
+  pointer-events: none;
+  z-index: 9998;
+}

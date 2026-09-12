@@ -48,6 +48,12 @@ contextBridge.exposeInMainWorld('api', {
     maximize: () => ipcRenderer.send('window:maximize'),
     close: () => ipcRenderer.send('window:close'),
     updateOverlay: (isDark) => ipcRenderer.invoke('window:update-overlay', { isDark }),
+    // v2.8.0：窗口焦点状态（失焦差异化视觉纱）
+    onFocusState: (callback) => {
+      const handler = (_, state) => callback(state);
+      ipcRenderer.on('window:focus-state', handler);
+      return () => ipcRenderer.removeListener('window:focus-state', handler);
+    },
     onResized: (callback) => {
       const handler = (_, bounds) => callback(bounds);
       ipcRenderer.on('window:resized', handler);
@@ -136,6 +142,12 @@ contextBridge.exposeInMainWorld('api', {
     close: (info) => ipcRenderer.invoke('modal:close', { ...info })
   },
 
+  // 诊断（只读）：环境兼容性提示
+  diag: {
+    // v2.8.0：第三方 DWM 注入类美化工具痕迹检测（主进程启动后一次性检测的结果）
+    dwmConflict: () => ipcRenderer.invoke('diag:dwm-conflict')
+  },
+
   // AI 简介设置
   settings: {
     load: () => ipcRenderer.invoke('settings:load'),
@@ -185,6 +197,13 @@ contextBridge.exposeInMainWorld('api', {
       const handler = (_, material) => callback(material);
       ipcRenderer.on('appearance:material-changed', handler);
       return () => ipcRenderer.removeListener('appearance:material-changed', handler);
+    },
+    // v2.8.0：环境状态（电池/系统透明开关）——主动查询 + 主进程推送（会话级降级用）
+    getEnv: () => ipcRenderer.invoke('appearance:get-env'),
+    onEnvState: (callback) => {
+      const handler = (_, env) => callback(env);
+      ipcRenderer.on('appearance:env-state', handler);
+      return () => ipcRenderer.removeListener('appearance:env-state', handler);
     },
     importBg: () => ipcRenderer.invoke('appearance:bg-import'),
     deleteBg: (file) => ipcRenderer.invoke('appearance:bg-delete', { file }),
