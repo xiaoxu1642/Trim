@@ -657,6 +657,31 @@
           ],
           "evidence": "QQ浏览器各 Profile 网页缓存",
           "recommended": false
+        },
+        {
+          "id": "cloudSyncCache",
+          "name": "云端扫描",
+          "risk": "low",
+          "detect": [
+            {
+              "type": "file",
+              "path": "%LOCALAPPDATA%\\Google\\Chrome\\User Data"
+            },
+            {
+              "type": "file",
+              "path": "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data"
+            }
+          ],
+          "fileKeys": [
+            {
+              "path": "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\*\\Sync Data"
+            },
+            {
+              "path": "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\*\\Sync Data"
+            }
+          ],
+          "evidence": "由 Winapp2 云端浏览器同步缓存规则转换（Chrome/Edge Sync Data），仅清空目录内容，浏览器自动重建",
+          "recommended": false
         }
       ]
     },

@@ -435,7 +435,8 @@
   async function loadAppInfo() {
     if (!window.api?.app) {
       // 浏览器预览模式
-      setInfo('infoVersion', '2.0.0');
+      setInfo('infoVersion', '2.6.0');
+      setInfo('infoPortable', '标准安装');
       setInfo('infoElectron', 'N/A');
       setInfo('infoNode', 'N/A');
       setInfo('infoChrome', navigator.userAgent.match(/Chrome\/([\d.]+)/)?.[1] || 'N/A');
@@ -450,6 +451,8 @@
     try {
       const info = await window.api.app.getInfo();
       setInfo('infoVersion', info.version);
+      // v2.6.0（P2-9）：数据目录形态（程序目录存在 Trim.portable 标记 = 便携模式）
+      setInfo('infoPortable', info.portable ? '便携模式（程序目录\\data）' : '标准安装（%APPDATA%\\Trim）');
       setInfo('infoElectron', info.electron);
       setInfo('infoNode', info.node);
       setInfo('infoChrome', info.chrome);

@@ -8042,3 +8042,80 @@ body.electron-mica[data-skin="glass"]:not(.win-maximized) .sidebar {
 @media (prefers-reduced-motion: reduce) {
   .upd-spinner { animation: none; border-top-color: var(--border-default); }
 }
+
+/* ==================== v2.6.0 批次样式 ==================== */
+
+/* 系统体检（P1-6）：只读诊断清单——状态徽章 + 标题 + 取值 + 证据等级，复用既有语义 token */
+.checkup-evidence-legend {
+  flex: 1;
+  text-align: right;
+  font-size: var(--fs-meta);
+  color: var(--fg-tertiary);
+  cursor: help;
+}
+.checkup-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-small);
+  background: var(--bg-card, transparent);
+  overflow: hidden;
+}
+.checkup-row {
+  padding: 10px 13px;
+  border-bottom: 1px solid var(--border-default);
+}
+.checkup-row:last-child { border-bottom: none; }
+.checkup-row-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.checkup-row-title {
+  font-weight: calc(600 * var(--font-weight-scale, 1));
+  font-size: var(--fs-secondary);
+  color: var(--fg-primary);
+}
+.checkup-row-value {
+  font-size: var(--fs-secondary);
+  color: var(--fg-secondary);
+  overflow-wrap: anywhere;
+}
+.checkup-row-evidence {
+  margin-left: auto;
+  font-size: var(--fs-meta);
+  color: var(--fg-tertiary);
+  border: 1px solid var(--border-default);
+  border-radius: 999px; /* 胶囊徽章例外（AGENTS §5 允许） */
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+.checkup-row-detail {
+  margin: 6px 0 0;
+  font-size: var(--fs-meta);
+  line-height: 1.6;
+  color: var(--fg-tertiary);
+  overflow-wrap: anywhere;
+}
+/* 异常/注意行左侧语义色条（只用 token 色，不引入新颜色） */
+.checkup-row[data-status="bad"] { box-shadow: inset 3px 0 0 var(--danger); }
+.checkup-row[data-status="warn"] { box-shadow: inset 3px 0 0 var(--warning); }
+
+/* 优化项详情弹窗：预期效果说明（P2-7） */
+.opt-modal-effect-hint {
+  margin: -8px 0 14px;
+  font-size: var(--fs-meta);
+  line-height: 1.6;
+  color: var(--fg-tertiary);
+}
+
+/* 优化中心：未完成还原横幅（P0-1）——与管理员提醒同形，右侧留出按钮 */
+.optimizer-banner.stale span { flex: 1; }
+.optimizer-banner.stale .btn { flex: none; }
+
+/* 设置页：更新镜像下拉（P2-8） */
+.updater-mirror-select {
+  width: 200px;
+  flex: none;
+}

@@ -1,0 +1,990 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trim 自动更新接入方案 · electron-builder + electron-updater</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%234cc2ff' d='M12 4V1L8 5l4 4V6a6 6 0 1 1-6 6H4a8 8 0 1 0 8-8z'/%3E%3C/svg%3E">
+<style>
+/* ============ 设计基线：对齐 Trim Fluent Design 深色语言 ============ */
+:root{
+  --bg:#1f1f1f; --bg-raise:#262626; --card:#2b2b2b; --card-2:#313131;
+  --stroke:rgba(255,255,255,.09); --stroke-strong:rgba(255,255,255,.16);
+  --txt:#f2f2f2; --txt-2:#c8c8c8; --txt-3:#9a9a9a;
+  --accent:#4cc2ff; --accent-press:#2ea8e6; --accent-soft:rgba(76,194,255,.12);
+  --ok:#6ccb5f; --ok-soft:rgba(108,203,95,.12);
+  --warn:#f5c451; --warn-soft:rgba(245,196,81,.12);
+  --danger:#ff7b72; --danger-soft:rgba(255,123,114,.12);
+  --code-bg:#181818; --code-line:#3a3a3a;
+  --mono:"Cascadia Code","Cascadia Mono",Consolas,"Courier New",monospace;
+  --sans:"Microsoft YaHei UI","Microsoft YaHei","Segoe UI",system-ui,sans-serif;
+  --radius:8px; --nav-w:248px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto} *{animation:none!important;transition:none!important}}
+body{
+  background:var(--bg); color:var(--txt); font-family:var(--sans);
+  font-size:15px; line-height:1.75; -webkit-font-smoothing:antialiased;
+  overflow-x:hidden;
+}
+::selection{background:rgba(76,194,255,.3)}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+
+/* ============ 左侧目录 ============ */
+.toc{
+  position:fixed;left:0;top:0;bottom:0;width:var(--nav-w);
+  background:var(--bg-raise);border-right:1px solid var(--stroke);
+  padding:22px 14px;overflow-y:auto;z-index:40;
+}
+.toc-brand{display:flex;align-items:center;gap:10px;padding:0 8px 16px;border-bottom:1px solid var(--stroke);margin-bottom:12px}
+.toc-brand svg{flex:none}
+.toc-brand b{font-size:15px;letter-spacing:.5px}
+.toc-brand span{display:block;font-size:11px;color:var(--txt-3);font-weight:400;margin-top:2px}
+.toc a{
+  display:block;color:var(--txt-2);font-size:13px;padding:6px 10px;border-radius:6px;
+  border-left:2px solid transparent;margin:1px 0;line-height:1.5;
+}
+.toc a:hover{background:rgba(255,255,255,.05);color:var(--txt);text-decoration:none}
+.toc a.active{color:var(--accent);background:var(--accent-soft);border-left-color:var(--accent)}
+.toc a .n{color:var(--txt-3);font-family:var(--mono);font-size:11px;margin-right:7px}
+.toc a.active .n{color:var(--accent)}
+
+/* ============ 主栏 ============ */
+.main{margin-left:var(--nav-w);padding:0 48px 100px;min-width:0}
+.wrap{max-width:980px;margin:0 auto}
+section{padding-top:56px;scroll-margin-top:24px}
+.eyebrow{font-family:var(--mono);font-size:12px;color:var(--accent);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:10px}
+h1{font-size:32px;line-height:1.3;font-weight:700;letter-spacing:.3px}
+h2{font-size:23px;font-weight:700;margin-bottom:18px;display:flex;align-items:center;gap:12px}
+h2::before{content:"";width:4px;height:20px;background:var(--accent);border-radius:2px;flex:none}
+h3{font-size:17px;font-weight:700;margin:22px 0 10px}
+h4{font-size:15px;font-weight:700;margin:16px 0 8px;color:var(--txt)}
+p{color:var(--txt-2);margin:8px 0}
+ul,ol{color:var(--txt-2);padding-left:22px;margin:8px 0}
+li{margin:5px 0}
+strong{color:var(--txt);font-weight:700}
+code{font-family:var(--mono);font-size:12.5px;background:rgba(255,255,255,.08);padding:1px 6px;border-radius:4px;color:#e6d8a8}
+
+/* Hero */
+.hero{padding:64px 0 30px;border-bottom:1px solid var(--stroke);margin-bottom:8px}
+.hero-meta{display:flex;flex-wrap:wrap;gap:8px;margin:20px 0 16px}
+.tag{
+  font-size:12px;padding:3px 11px;border-radius:100px;border:1px solid var(--stroke-strong);
+  color:var(--txt-2);background:rgba(255,255,255,.03);display:inline-flex;align-items:center;gap:6px;
+}
+.tag b{color:var(--txt);font-weight:600}
+.dot{width:7px;height:7px;border-radius:50%;flex:none}
+.dot.blue{background:var(--accent)} .dot.green{background:var(--ok)} .dot.orange{background:var(--warn)} .dot.red{background:var(--danger)}
+.hero-lead{font-size:16px;color:var(--txt-2);max-width:780px}
+.hero-lead b{color:var(--txt)}
+
+/* 卡片栅格 */
+.grid{display:grid;gap:14px}
+.g2{grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+.g4{grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
+.g3{grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+.card{
+  background:var(--card);border:1px solid var(--stroke);border-radius:var(--radius);
+  padding:18px 18px 16px;
+}
+.card .ico{
+  width:34px;height:34px;border-radius:7px;display:flex;align-items:center;justify-content:center;
+  background:var(--accent-soft);margin-bottom:12px;
+}
+.card h4{margin:0 0 6px;font-size:14.5px}
+.card p{font-size:13px;margin:0;color:var(--txt-3);line-height:1.65}
+.card.ok .ico{background:var(--ok-soft)} .card.warn .ico{background:var(--warn-soft)} .card.danger .ico{background:var(--danger-soft)}
+.card .k{font-family:var(--mono);font-size:11px;color:var(--txt-3);letter-spacing:1px;margin-bottom:8px}
+
+/* 结论横幅 */
+.verdict{
+  border:1px solid var(--stroke-strong);border-radius:var(--radius);padding:20px 22px;
+  background:linear-gradient(0deg,rgba(76,194,255,.05),rgba(76,194,255,.05)),var(--card);
+  display:flex;gap:16px;align-items:flex-start;
+}
+.verdict svg{flex:none;margin-top:3px}
+.verdict h3{margin:0 0 6px}
+.verdict p{margin:0;font-size:13.5px}
+
+/* 流程图 */
+.flow{display:flex;align-items:stretch;gap:0;flex-wrap:wrap;margin:18px 0 6px}
+.fnode{
+  flex:1 1 130px;min-width:0;background:var(--card);border:1px solid var(--stroke);border-radius:var(--radius);
+  padding:12px 12px 11px;text-align:center;position:relative;
+}
+.fnode .fi{display:flex;justify-content:center;margin-bottom:7px}
+.fnode b{display:block;font-size:13px}
+.fnode span{font-size:11.5px;color:var(--txt-3);line-height:1.5;display:block;margin-top:3px}
+.farrow{display:flex;align-items:center;justify-content:center;flex:0 0 26px;color:var(--txt-3)}
+.fnode.hl{border-color:rgba(76,194,255,.5);background:var(--accent-soft)}
+@media (max-width:760px){.farrow{transform:rotate(90deg);flex-basis:20px}}
+
+/* 代码块 */
+.codewrap{position:relative;margin:12px 0 18px;border:1px solid var(--stroke);border-radius:var(--radius);overflow:hidden;background:var(--code-bg)}
+.codebar{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:7px 14px;background:#222;border-bottom:1px solid var(--stroke);font-size:12px;color:var(--txt-3);
+}
+.codebar .langs{display:flex;gap:8px;align-items:center}
+.codebar .lang{font-family:var(--mono);font-size:11px}
+.copy-btn{
+  font-family:var(--sans);font-size:11.5px;color:var(--txt-2);background:var(--card-2);
+  border:1px solid var(--stroke);border-radius:5px;padding:3px 11px;cursor:pointer;display:inline-flex;gap:5px;align-items:center;
+}
+.copy-btn:hover{color:var(--txt);border-color:var(--stroke-strong)}
+.copy-btn.ok{color:var(--ok);border-color:rgba(108,203,95,.4)}
+pre{padding:14px 16px;overflow-x:auto;font-family:var(--mono);font-size:12.5px;line-height:1.7;color:#d4d4d4}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.tok-c{color:#6a9955} .tok-k{color:#569cd6} .tok-s{color:#ce9178} .tok-n{color:#b5cea8} .tok-f{color:#dcdcaa}
+
+/* 步骤卡 */
+details.step{border:1px solid var(--stroke);border-radius:var(--radius);background:var(--card);margin-bottom:12px;overflow:hidden}
+details.step summary{
+  list-style:none;cursor:pointer;padding:16px 20px;display:flex;align-items:center;gap:14px;user-select:none;
+}
+details.step summary::-webkit-details-marker{display:none}
+.stepnum{
+  width:30px;height:30px;border-radius:7px;background:var(--accent-soft);color:var(--accent);
+  font-family:var(--mono);font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center;flex:none;
+}
+.step-title{flex:1}
+.step-title b{font-size:14.5px;display:block}
+.step-title span{font-size:12.5px;color:var(--txt-3)}
+.step-chev{color:var(--txt-3);transition:transform .2s}
+details.step[open] .step-chev{transform:rotate(180deg)}
+.step-body{padding:0 20px 20px 20px;border-top:1px solid var(--stroke)}
+details.step[open] .step-body{padding-top:16px}
+
+/* 表格 */
+.tbl-wrap{border:1px solid var(--stroke);border-radius:var(--radius);overflow-x:auto;margin:14px 0}
+table{width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed;min-width:640px}
+th{background:var(--card-2);text-align:left;padding:10px 14px;font-weight:600;color:var(--txt);font-size:12.5px;border-bottom:1px solid var(--stroke)}
+td{padding:10px 14px;color:var(--txt-2);border-bottom:1px solid var(--stroke);vertical-align:top;word-wrap:break-word}
+tr:last-child td{border-bottom:none}
+td code,th code{font-size:11.5px}
+.pill{font-size:11px;padding:1px 8px;border-radius:100px;font-family:var(--mono);white-space:nowrap}
+.pill.add{background:var(--ok-soft);color:var(--ok)} .pill.mod{background:var(--warn-soft);color:var(--warn)} .pill.keep{background:rgba(255,255,255,.07);color:var(--txt-2)}
+
+/* 提示条 */
+.note{display:flex;gap:12px;align-items:flex-start;border-radius:var(--radius);padding:13px 16px;margin:12px 0;font-size:13.5px;border:1px solid}
+.note svg{flex:none;margin-top:3px}
+.note p{margin:0;font-size:13px}
+.note.info{background:var(--accent-soft);border-color:rgba(76,194,255,.3)}
+.note.info p,.note.info li{color:#bfe3ff}
+.note.warn{background:var(--warn-soft);border-color:rgba(245,196,81,.3)}
+.note.warn p,.note.warn li{color:#f0dfae}
+.note.danger{background:var(--danger-soft);border-color:rgba(255,123,114,.3)}
+.note.danger p,.note.danger li{color:#f3c3bf}
+.note ul{margin:4px 0}
+
+/* 状态机 */
+.state-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:14px 0}
+.state{border:1px solid var(--stroke);border-radius:var(--radius);padding:12px;background:var(--card);text-align:center}
+.state .sn{font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:.3px}
+.state .sd{font-size:11.5px;color:var(--txt-3);margin-top:4px;line-height:1.5}
+.state.s-checking .sn{color:var(--accent)} .state.s-avail .sn{color:var(--warn)}
+.state.s-dl .sn{color:var(--accent)} .state.s-ready .sn{color:var(--ok)} .state.s-err .sn{color:var(--danger)}
+
+/* 时间轴（三列对齐） */
+.timeline{margin:16px 0;display:grid;grid-template-columns:96px 28px 1fr;row-gap:0;column-gap:0}
+.tl-time{grid-column:1;padding:14px 12px 14px 0;text-align:right;font-family:var(--mono);font-size:12px;color:var(--txt-3);line-height:1.5}
+.tl-axis{grid-column:2;position:relative;display:flex;justify-content:center}
+.tl-axis::before{content:"";position:absolute;top:0;bottom:0;width:2px;background:var(--stroke-strong)}
+.tl-axis::after{content:"";position:absolute;bottom:0;width:2px;height:20px;background:transparent}
+.tl-dot{width:12px;height:12px;border-radius:50%;background:var(--accent);border:2px solid var(--bg);z-index:1;margin-top:18px;box-shadow:0 0 0 2px var(--accent)}
+.tl-body{grid-column:3;padding:8px 0 20px 18px}
+.tl-body b{font-size:14px}
+.tl-body p{font-size:13px;margin:3px 0 0}
+.tl-body code{font-size:11.5px}
+.timeline .tl-axis.tl-last::before{display:none}
+
+/* checklist */
+.check-list{list-style:none;padding:0;margin:12px 0}
+.check-list li{display:flex;gap:11px;align-items:flex-start;padding:10px 14px;border:1px solid var(--stroke);border-radius:var(--radius);background:var(--card);margin-bottom:8px;cursor:pointer}
+.check-list li:hover{border-color:var(--stroke-strong)}
+.check-list input{margin-top:5px;accent-color:var(--accent);width:15px;height:15px;flex:none;cursor:pointer}
+.check-list label{cursor:pointer;font-size:13.5px;color:var(--txt-2)}
+.check-list li.done label{color:var(--txt-3);text-decoration:line-through}
+.check-progress{font-size:12.5px;color:var(--txt-3);margin:6px 0 0;font-family:var(--mono)}
+
+/* 避坑列表 */
+/* 避坑网格同样自适应，窄屏自动降为单列 */
+.pit{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:12px}
+.pit .card{padding:15px 16px}
+.pit .card h4{display:flex;gap:8px;align-items:center;font-size:13.5px;margin-bottom:6px}
+.pit .card p{font-size:12.5px;line-height:1.65}
+.pit .num{font-family:var(--mono);color:var(--danger);font-size:11px;flex:none}
+
+footer{margin-left:var(--nav-w);padding:28px 48px;border-top:1px solid var(--stroke);color:var(--txt-3);font-size:12.5px}
+footer .wrap{display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
+
+/* 响应式 */
+@media (max-width:1024px){
+  .toc{display:none}
+  .main,footer{margin-left:0}
+  .main{padding:0 22px 70px} footer{padding:24px 22px}
+}
+@media (max-width:760px){
+  /* 流程链改纵向排列，阅读顺序不变 */
+  .flow{flex-direction:column}
+  .fnode{width:100%;flex-basis:auto}
+}
+@media (max-width:560px){
+  h1{font-size:24px}.g4{grid-template-columns:1fr}
+  .timeline{grid-template-columns:24px 1fr}.tl-time{grid-column:2;text-align:left;grid-row:1;padding:0 0 2px 18px}
+  .tl-axis{grid-column:1;grid-row:1/span 2}.tl-body{grid-column:2}
+}
+</style>
+</head>
+<body>
+
+<!-- ============ 左侧目录 ============ -->
+<nav class="toc" id="toc">
+  <div class="toc-brand">
+    <svg width="26" height="26" viewBox="0 0 24 24"><path fill="#4cc2ff" d="M12 4V1L8 5l4 4V6a6 6 0 1 1-6 6H4a8 8 0 1 0 8-8z"/></svg>
+    <div><b>Trim 自动更新</b><span>electron-builder · electron-updater</span></div>
+  </div>
+  <a href="#sec-overview"><span class="n">00</span>方案概览与现状</a>
+  <a href="#sec-flow"><span class="n">01</span>自动更新全链路</a>
+  <a href="#sec-files"><span class="n">02</span>改动文件清单</a>
+  <a href="#sec-steps"><span class="n">03</span>七步落地实施</a>
+  <a href="#sec-state"><span class="n">04</span>更新状态机</a>
+  <a href="#sec-release"><span class="n">05</span>GitHub 发布 SOP</a>
+  <a href="#sec-diff"><span class="n">06</span>差量更新原理</a>
+  <a href="#sec-pitfalls"><span class="n">07</span>避坑清单</a>
+  <a href="#sec-verify"><span class="n">08</span>验证与回滚</a>
+</nav>
+
+<div class="main"><div class="wrap">
+
+<!-- ============ 00 概览 ============ -->
+<header class="hero" id="sec-overview">
+  <div class="eyebrow">Implementation Plan · 2026-09-12</div>
+  <h1>Trim 安装包与 GitHub 自动更新接入方案</h1>
+  <div class="hero-meta">
+    <span class="tag"><span class="dot blue"></span>仓库 <b>xiaoxu1642/TuneForge</b></span>
+    <span class="tag"><span class="dot green"></span>当前版本 <b>v2.5.0</b></span>
+    <span class="tag">Electron <b>44.1.1</b></span>
+    <span class="tag">electron-builder <b>26.15.3</b></span>
+    <span class="tag">分支 <b>main</b></span>
+  </div>
+  <p class="hero-lead">
+    目标：用 <b>electron-builder</b> 产出 Windows 安装版（NSIS Setup），用 <b>electron-updater</b> 对接
+    GitHub Releases，实现「启动后台检查 → 提示新版本 → 下载（差量）→ 用户确认 → 退出并静默替换重启」的闭环。
+    本方案只做设计与代码级落地指引，<b>不直接改动项目源码</b>，确认后按步骤实施。
+  </p>
+</header>
+
+<section style="padding-top:34px">
+  <h2>现状诊断（基于仓库实读）</h2>
+  <div class="grid g4">
+    <div class="card warn">
+      <div class="ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="#f5c451"><path d="M12 2 1 21h22L12 2zm0 6c.6 0 1 .4 1 1v5h-2V9c0-.6.4-1 1-1zm0 9a1.2 1.2 0 1 1 0 2.4A1.2 1.2 0 0 1 12 17z"/></svg></div>
+      <div class="k">打包目标</div>
+      <h4>仅 portable 便携版</h4>
+      <p>win.target 只有 portable，便携版在临时目录解压运行，无法走标准 NSIS 替换式自动更新。</p>
+    </div>
+    <div class="card danger">
+      <div class="ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="#ff7b72"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm-1 5h2v7h-2V7zm0 9h2v2h-2v-2z"/></svg></div>
+      <div class="k">运行时依赖</div>
+      <h4>缺少 electron-updater</h4>
+      <p>dependencies 为空，需安装 electron-updater，且必须放在 dependencies（要打进 asar）。</p>
+    </div>
+    <div class="card warn">
+      <div class="ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="#f5c451"><path d="m9.5 18-5-5 1.4-1.4L9.5 15.2 18.1 6.6l1.4 1.4-10 10z"/></svg></div>
+      <div class="k">发布配置</div>
+      <h4>缺 repository / publish</h4>
+      <p>package.json 未声明仓库地址与更新源，electron-updater 无从定位 latest.yml。</p>
+    </div>
+    <div class="card ok">
+      <div class="ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="#6ccb5f"><path d="m9.5 18-5-5 1.4-1.4L9.5 15.2 18.1 6.6l1.4 1.4-10 10z"/></svg></div>
+      <div class="k">已就绪</div>
+      <h4>GitHub 远端与规范齐备</h4>
+      <p>origin 已指向 TuneForge，main 分支、历史 tag v2.0.0；IPC 白名单与统一弹窗规范可直接复用。</p>
+    </div>
+  </div>
+
+  <div class="verdict" style="margin-top:16px">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="#4cc2ff"><path d="M12 4V1L8 5l4 4V6a6 6 0 1 1-6 6H4a8 8 0 1 0 8-8z"/></svg>
+    <div>
+      <h3>核心结论：新增 NSIS 安装版，与便携版并存</h3>
+      <p>新增 <code>nsis</code> target 作为可自动更新的正式安装版（产物 <code>Trim-Setup-x.y.z.exe</code>）；
+      现有 <code>portable</code> target 保留，继续服务绿色版用户（仅手动下载新版，不接入自动更新）。
+      安装方式选 <strong>每用户安装（perMachine: false）</strong>，配合项目已有的
+      <code>asInvoker</code> 权限级别，整套下载替换流程 <strong>不弹 UAC</strong>。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 01 全链路 ============ -->
+<section id="sec-flow">
+  <h2>自动更新全链路</h2>
+  <p>electron-updater 不访问 GitHub API，而是直接下载 Release 资产里的静态清单 <code>latest.yml</code>；
+  完整性由清单内的 <strong>SHA-512</strong> 保证，不依赖代码签名证书。</p>
+  <div class="flow">
+    <div class="fnode">
+      <div class="fi"><svg width="22" height="22" viewBox="0 0 24 24" fill="#4cc2ff"><path d="M4 18h16v2H4zM12 3l5 5h-3v6h-4V8H7l5-5z"/></svg></div>
+      <b>应用启动</b><span>窗口就绪后延迟 8s 静默检查；设置页可手动检查</span>
+    </div>
+    <div class="farrow"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8.6 5.6 15 12l-6.4 6.4L10 20l8-8-8-8-1.4 1.6z"/></svg></div>
+    <div class="fnode hl">
+      <div class="fi"><svg width="22" height="22" viewBox="0 0 24 24" fill="#4cc2ff"><path d="M6 2h9l5 5v15H6V2zm8 1.5V8h4.5L14 3.5zM8 12h8v2H8v-2zm0 4h8v2H8v-2z"/></svg></div>
+      <b>拉取 latest.yml</b><span>releases/latest/download/latest.yml，含版本号/哈希/包名</span>
+    </div>
+    <div class="farrow"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8.6 5.6 15 12l-6.4 6.4L10 20l8-8-8-8-1.4 1.6z"/></svg></div>
+    <div class="fnode">
+      <div class="fi"><svg width="22" height="22" viewBox="0 0 24 24" fill="#4cc2ff"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg></div>
+      <b>SemVer 比对</b><span>2.5.1 &gt; 2.5.0 才提示；相同/更低则静默结束</span>
+    </div>
+    <div class="farrow"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8.6 5.6 15 12l-6.4 6.4L10 20l8-8-8-8-1.4 1.6z"/></svg></div>
+    <div class="fnode">
+      <div class="fi"><svg width="22" height="22" viewBox="0 0 24 24" fill="#4cc2ff"><path d="M12 3a9 9 0 1 0 9 9h-2a7 7 0 1 1-7-7V3zm1 1h8v8l-2.6-2.6A6.97 6.97 0 0 0 13 4z"/></svg></div>
+      <b>差量下载</b><span>blockmap 分块比对，仅拉变化块，失败回退全量</span>
+    </div>
+  </div>
+  <div class="flow">
+    <div class="fnode">
+      <div class="fi"><svg width="22" height="22" viewBox="0 0 24 24" fill="#6ccb5f"><path d="m9.5 18-5-5 1.4-1.4L9.5 15.2 18.1 6.6l1.4 1.4-10 10z"/></svg></div>
+      <b>SHA-512 校验</b><span>与 latest.yml 记录不符则丢弃安装包并报错</span>
+    </div>
+    <div class="farrow"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8.6 5.6 15 12l-6.4 6.4L10 20l8-8-8-8-1.4 1.6z"/></svg></div>
+    <div class="fnode">
+      <div class="fi"><svg width="22" height="22" viewBox="0 0 24 24" fill="#6ccb5f"><path d="M12 3 4 7v6c0 4.4 3.4 8.5 8 9 4.6-.5 8-4.6 8-9V7l-8-4z"/></svg></div>
+      <b>暂存安装包</b><span>下载到用户目录缓存，等待用户确认，不强制退出</span>
+    </div>
+    <div class="farrow"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8.6 5.6 15 12l-6.4 6.4L10 20l8-8-8-8-1.4 1.6z"/></svg></div>
+    <div class="fnode hl">
+      <div class="fi"><svg width="22" height="22" viewBox="0 0 24 24" fill="#4cc2ff"><path d="M12 4V1L8 5l4 4V6a6 6 0 1 1-6 6H4a8 8 0 1 0 8-8z"/></svg></div>
+      <b>quitAndInstall</b><span>用户确认后退出，NSIS 静默覆盖安装（含 finder.exe 等资源）</span>
+    </div>
+    <div class="farrow"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8.6 5.6 15 12l-6.4 6.4L10 20l8-8-8-8-1.4 1.6z"/></svg></div>
+    <div class="fnode">
+      <div class="fi"><svg width="22" height="22" viewBox="0 0 24 24" fill="#6ccb5f"><path d="M13 3 4 14h6l-1 7 9-11h-6l1-7z"/></svg></div>
+      <b>自动重启</b><span>新版本启动，app.getVersion() 即为新版本号</span>
+    </div>
+  </div>
+  <div class="note info">
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="#4cc2ff"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+    <p>更新清单的固定地址：<code>https://github.com/xiaoxu1642/TuneForge/releases/latest/download/latest.yml</code>，
+    浏览器直接打开能下载到该文件，即代表发布侧结构正确。</p>
+  </div>
+</section>
+
+<!-- ============ 02 文件清单 ============ -->
+<section id="sec-files">
+  <h2>改动文件清单（共 7 处）</h2>
+  <p>严格遵循项目红线：主进程共享模块放 <code>src/main/</code>；新增 IPC 走 <code>handleSafe</code> 并同步 preload 白名单；
+  渲染层不拼 HTML、复用 <code>modal.js</code> 统一弹窗；<code>index.html</code> 禁内联脚本。</p>
+  <div class="tbl-wrap">
+    <table>
+      <colgroup><col style="width:26%"><col style="width:11%"><col style="width:63%"></colgroup>
+      <thead><tr><th>文件</th><th>动作</th><th>改动内容</th></tr></thead>
+      <tbody>
+        <tr><td><code>package.json</code></td><td><span class="pill mod">修改</span></td><td>加 repository、build.publish（github 源）、nsis target 与安装器参数、release 脚本、dependencies 增 electron-updater</td></tr>
+        <tr><td><code>src/main/updater.js</code></td><td><span class="pill add">新增</span></td><td>autoUpdater 封装：事件转状态推送、isPackaged 短路、手动检查/下载/取消/安装，约 120 行</td></tr>
+        <tr><td><code>main.js</code></td><td><span class="pill mod">修改</span></td><td>三处：头部 require 模块；whenReady 内 createWindow() 后 initUpdater；IPC 区注册 4 个 updater:* 通道</td></tr>
+        <tr><td><code>preload.js</code></td><td><span class="pill mod">修改</span></td><td>window.api.updater 白名单：check / download / cancelDownload / install / onState</td></tr>
+        <tr><td><code>src/scripts/updater-ui.js</code></td><td><span class="pill add">新增</span></td><td>渲染层状态机：订阅状态、更新弹窗与进度条、按钮动作分发，文本一律 textContent</td></tr>
+        <tr><td><code>src/index.html</code></td><td><span class="pill mod">修改</span></td><td>在 app.js 之前加一行 &lt;script src="scripts/updater-ui.js"&gt;（modal.js 之后即可）</td></tr>
+        <tr><td>设置页视图（app.js 内）</td><td><span class="pill mod">修改</span></td><td>「检查更新」行：当前版本号取 app:get-info（已返回 version），按钮 data-action="check-update"</td></tr>
+        <tr><td>portable 打包链路</td><td><span class="pill keep">不动</span></td><td>build:portable 脚本、便携版产物命名全部保留，互不影响</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============ 03 实施步骤 ============ -->
+<section id="sec-steps">
+  <h2>七步落地实施（含完整代码）</h2>
+  <p>点击每一步展开，代码块右上角可一键复制。代码已按项目规范写好中文注释与「自动更新接入」批次标注。</p>
+
+  <details class="step" open>
+    <summary>
+      <span class="stepnum">1</span>
+      <span class="step-title"><b>安装依赖（electron-updater 必须进 dependencies）</b><span>前置确认 finder.exe 为最新 release 构建</span></span>
+      <svg class="step-chev" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6 1.4-1.4z"/></svg>
+    </summary>
+    <div class="step-body">
+      <p>若 Rust 侧近期有改动，先刷新原生查找器（extraResources 从 release 目录取件）：</p>
+      <div class="codewrap"><div class="codebar"><span class="langs"><span class="lang">pwsh</span></span><button class="copy-btn">复制</button></div>
+<pre><code><span class="tok-c"># 1) 原生查找器 release 构建（有 Rust 改动时才需要）</span>
+cargo build --release --manifest-path native-scanner/Cargo.toml
+
+<span class="tok-c"># 2) 安装运行时依赖 —— 必须是 --save（dependencies），不能装进 devDependencies</span>
+npm i electron-updater@^6</code></pre></div>
+      <div class="note danger">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="#ff7b72"><path d="M12 2 1 21h22L12 2zm-1 5h2v7h-2V7zm0 9h2v2h-2v-2z"/></svg>
+        <p>electron-updater 是<strong>运行时</strong>依赖。若误装到 devDependencies，开发时一切正常、打包后 asar 里找不到模块，安装版启动即崩。安装后确认它出现在 package.json 的 <code>dependencies</code> 节点下。</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="step">
+    <summary>
+      <span class="stepnum">2</span>
+      <span class="step-title"><b>改造 package.json：仓库声明 / 更新源 / NSIS / 脚本</b><span>在现有 build 配置上增量修改，portable 全部保留</span></span>
+      <svg class="step-chev" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6 1.4-1.4z"/></svg>
+    </summary>
+    <div class="step-body">
+      <p>① 顶层加 <code>repository</code>（部分版本 electron-builder 会据此兜底推断发布源）：</p>
+      <div class="codewrap"><div class="codebar"><span class="langs"><span class="lang">json · package.json 顶层</span></span><button class="copy-btn">复制</button></div>
+<pre><code><span class="tok-s">"repository"</span>: {
+  <span class="tok-s">"type"</span>: <span class="tok-s">"git"</span>,
+  <span class="tok-s">"url"</span>: <span class="tok-s">"https://github.com/xiaoxu1642/TuneForge.git"</span>
+},</code></pre></div>
+      <p>② scripts 增加 setup / release 两条（原 build 同时产出两种包）：</p>
+      <div class="codewrap"><div class="codebar"><span class="langs"><span class="lang">json · scripts</span></span><button class="copy-btn">复制</button></div>
+<pre><code><span class="tok-s">"build:setup"</span>: <span class="tok-s">"electron-builder --win nsis --x64"</span>,
+<span class="tok-c">// 自动发布：读环境变量 GH_TOKEN（GitHub PAT，勾选 repo 权限），自动建 Release 并上传产物</span>
+<span class="tok-s">"release"</span>: <span class="tok-s">"electron-builder --win nsis --x64 --publish always"</span></code></pre></div>
+      <p>③ build 节点内加 <code>publish</code>，win.target 增加 nsis，并新增 nsis 段：</p>
+      <div class="codewrap"><div class="codebar"><span class="langs"><span class="lang">json · build 节点（只列新增/变化项）</span></span><button class="copy-btn">复制</button></div>
+<pre><code><span class="tok-s">"publish"</span>: [
+  {
+    <span class="tok-s">"provider"</span>: <span class="tok-s">"github"</span>,
+    <span class="tok-s">"owner"</span>: <span class="tok-s">"xiaoxu1642"</span>,
+    <span class="tok-s">"repo"</span>: <span class="tok-s">"TuneForge"</span>,
+    <span class="tok-s">"releaseType"</span>: <span class="tok-s">"release"</span>
+  }
+],
+<span class="tok-s">"win"</span>: {
+  <span class="tok-s">"target"</span>: [
+    { <span class="tok-s">"target"</span>: <span class="tok-s">"nsis"</span>,     <span class="tok-s">"arch"</span>: [<span class="tok-s">"x64"</span>] },
+    { <span class="tok-s">"target"</span>: <span class="tok-s">"portable"</span>, <span class="tok-s">"arch"</span>: [<span class="tok-s">"x64"</span>] }
+  ],
+  <span class="tok-s">"icon"</span>: <span class="tok-s">"src/assets/ico/Trim.ico"</span>,
+  <span class="tok-s">"requestedExecutionLevel"</span>: <span class="tok-s">"asInvoker"</span>
+},
+<span class="tok-s">"nsis"</span>: {
+  <span class="tok-s">"oneClick"</span>: false,                          <span class="tok-c">// 向导式安装，用户可选目录</span>
+  <span class="tok-s">"perMachine"</span>: false,                        <span class="tok-c">// 每用户安装到 %LOCALAPPDATA%，更新免 UAC 的关键</span>
+  <span class="tok-s">"allowElevation"</span>: true,
+  <span class="tok-s">"allowToChangeInstallationDirectory"</span>: true,
+  <span class="tok-s">"createDesktopShortcut"</span>: true,
+  <span class="tok-s">"createStartMenuShortcut"</span>: true,
+  <span class="tok-s">"shortcutName"</span>: <span class="tok-s">"Trim"</span>,
+  <span class="tok-s">"differentialPackage"</span>: true,               <span class="tok-c">// 生成 .blockmap，启用差量更新</span>
+  <span class="tok-s">"deleteAppDataOnUninstall"</span>: false,         <span class="tok-c">// 卸载保留用户配置与清理记录</span>
+  <span class="tok-s">"artifactName"</span>: <span class="tok-s">"${productName}-Setup-${version}.${ext}"</span>
+}</code></pre></div>
+      <div class="note info">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="#4cc2ff"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+        <p>打包时 electron-builder 会自动把更新源写进 <code>resources/app-update.yml</code>，运行期 autoUpdater 读它定位 GitHub，<strong>该文件自动生成、不要手写、不要入库</strong>。</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="step">
+    <summary>
+      <span class="stepnum">3</span>
+      <span class="step-title"><b>新增 src/main/updater.js：autoUpdater 封装</b><span>状态全部事件化推给渲染层，主进程不弹原生框</span></span>
+      <svg class="step-chev" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6 1.4-1.4z"/></svg>
+    </summary>
+    <div class="step-body">
+      <div class="codewrap"><div class="codebar"><span class="langs"><span class="lang">js · src/main/updater.js（新增）</span></span><button class="copy-btn">复制</button></div>
+<pre><code><span class="tok-c">// src/main/updater.js — 应用自动更新（electron-updater + GitHub Releases）
+// 批次：自动更新接入
+// 约束：
+// 1) 仅打包后生效（app.isPackaged），开发环境 npm start 直接短路；
+// 2) 状态全部经事件推给渲染层，由统一弹窗服务呈现，主进程不弹原生 dialog；
+// 3) 下载完成不强制退出：用户确认后才 quitAndInstall，避免打断清理/测速任务；
+// 4) 更新源来自打包时自动生成的 resources/app-update.yml。</span>
+<span class="tok-k">const</span> { autoUpdater, CancellationToken } = <span class="tok-f">require</span>(<span class="tok-s">'electron-updater'</span>);
+<span class="tok-k">const</span> { app } = <span class="tok-f">require</span>(<span class="tok-s">'electron'</span>);
+
+<span class="tok-k">let</span> winRef = <span class="tok-k">null</span>;
+<span class="tok-k">let</span> writeLog = () =&gt; {};
+<span class="tok-k">let</span> cancelToken = <span class="tok-k">null</span>;
+<span class="tok-k">let</span> started = <span class="tok-k">false</span>;
+
+<span class="tok-c">// 统一向主窗口渲染层推送状态（phase 见第 04 节状态机）</span>
+<span class="tok-k">function</span> <span class="tok-f">push</span>(state) {
+  <span class="tok-k">try</span> { winRef?.webContents?.<span class="tok-f">send</span>(<span class="tok-s">'updater:state-changed'</span>, state); } <span class="tok-k">catch</span> (_) {}
+}
+
+<span class="tok-k">function</span> <span class="tok-f">normalizeNotes</span>(notes) {
+  <span class="tok-k">if</span> (!notes) <span class="tok-k">return</span> <span class="tok-s">''</span>;
+  <span class="tok-k">if</span> (<span class="tok-k">typeof</span> notes === <span class="tok-s">'string'</span>) <span class="tok-k">return</span> notes;
+  <span class="tok-k">if</span> (<span class="tok-f">Array</span>.<span class="tok-f">isArray</span>(notes))
+    <span class="tok-k">return</span> notes.<span class="tok-f">map</span>(n =&gt; n.note || n.title || <span class="tok-s">''</span>).<span class="tok-f">filter</span>(Boolean).<span class="tok-f">join</span>(<span class="tok-s">'\n'</span>);
+  <span class="tok-k">return</span> <span class="tok-f">String</span>(notes);
+}
+
+<span class="tok-c">// mainWindow：主窗口引用；logger：项目现有 writeLog(level, msg)</span>
+<span class="tok-k">function</span> <span class="tok-f">initUpdater</span>(mainWindow, logger) {
+  <span class="tok-k">if</span> (started) <span class="tok-k">return</span>;
+  started = <span class="tok-k">true</span>;
+  winRef = mainWindow;
+  <span class="tok-k">if</span> (<span class="tok-k">typeof</span> logger === <span class="tok-s">'function'</span>) writeLog = logger;
+
+  <span class="tok-k">if</span> (!app.isPackaged) {
+    <span class="tok-f">writeLog</span>(<span class="tok-s">'info'</span>, <span class="tok-s">'[updater] 开发环境，跳过自动更新'</span>);
+    <span class="tok-k">return</span>;
+  }
+
+  autoUpdater.autoDownload = <span class="tok-k">false</span>;       <span class="tok-c">// 发现新版先问用户，不偷跑流量</span>
+  autoUpdater.autoInstallOnAppQuit = <span class="tok-k">true</span>; <span class="tok-c">// 已下载完时，退出应用顺手安装</span>
+  autoUpdater.logger = {
+    info: m =&gt; <span class="tok-f">writeLog</span>(<span class="tok-s">'info'</span>, <span class="tok-s">`[updater] ${m}`</span>),
+    warn: m =&gt; <span class="tok-f">writeLog</span>(<span class="tok-s">'warn'</span>, <span class="tok-s">`[updater] ${m}`</span>),
+    error: m =&gt; <span class="tok-f">writeLog</span>(<span class="tok-s">'error'</span>, <span class="tok-s">`[updater] ${m}`</span>),
+    debug: () =&gt; {}
+  };
+
+  autoUpdater.<span class="tok-f">on</span>(<span class="tok-s">'checking-for-update'</span>, () =&gt; <span class="tok-f">push</span>({ phase: <span class="tok-s">'checking'</span> }));
+  autoUpdater.<span class="tok-f">on</span>(<span class="tok-s">'update-available'</span>, info =&gt; {
+    <span class="tok-f">writeLog</span>(<span class="tok-s">'info'</span>, <span class="tok-s">`[updater] 发现新版本 ${info.version}（当前 ${info.currentVersion}）`</span>);
+    <span class="tok-f">push</span>({ phase: <span class="tok-s">'available'</span>, version: info.version,
+      currentVersion: <span class="tok-f">String</span>(info.currentVersion),
+      releaseNotes: <span class="tok-f">normalizeNotes</span>(info.releaseNotes), releaseDate: info.releaseDate });
+  });
+  autoUpdater.<span class="tok-f">on</span>(<span class="tok-s">'update-not-available'</span>, info =&gt;
+    <span class="tok-f">push</span>({ phase: <span class="tok-s">'latest'</span>, currentVersion: info?.currentVersion?.version || <span class="tok-s">''</span> }));
+  autoUpdater.<span class="tok-f">on</span>(<span class="tok-s">'download-progress'</span>, p =&gt; <span class="tok-f">push</span>({
+    phase: <span class="tok-s">'downloading'</span>, percent: Math.<span class="tok-f">round</span>(p.percent || 0),
+    speed: p.bytesPerSecond || 0, transferred: p.transferred || 0, total: p.total || 0
+  }));
+  autoUpdater.<span class="tok-f">on</span>(<span class="tok-s">'update-downloaded'</span>, info =&gt;
+    <span class="tok-f">push</span>({ phase: <span class="tok-s">'ready'</span>, version: info.version }));
+  autoUpdater.<span class="tok-f">on</span>(<span class="tok-s">'error'</span>, err =&gt; {
+    <span class="tok-f">writeLog</span>(<span class="tok-s">'error'</span>, <span class="tok-s">`[updater] ${err?.stack || err}`</span>);
+    <span class="tok-f">push</span>({ phase: <span class="tok-s">'error'</span>, message: err?.message || <span class="tok-f">String</span>(err) });
+  });
+
+  <span class="tok-c">// 启动 8s 后静默检查一次：避开窗口动画与概览预热的资源抢占期</span>
+  <span class="tok-f">setTimeout</span>(() =&gt; <span class="tok-f">safeCheck</span>(<span class="tok-k">true</span>), 8000);
+}
+
+<span class="tok-c">// silent=true：网络失败/无新版都不打扰用户（启动后台检查用）</span>
+<span class="tok-k">async function</span> <span class="tok-f">safeCheck</span>(silent = <span class="tok-k">false</span>) {
+  <span class="tok-k">if</span> (!app.isPackaged) <span class="tok-k">return</span> { skipped: <span class="tok-k">true</span>, reason: <span class="tok-s">'dev'</span> };
+  <span class="tok-k">try</span> {
+    <span class="tok-k">await</span> autoUpdater.<span class="tok-f">checkForUpdates</span>();
+    <span class="tok-k">return</span> { ok: <span class="tok-k">true</span> };
+  } <span class="tok-k">catch</span> (e) {
+    <span class="tok-f">writeLog</span>(<span class="tok-s">'error'</span>, <span class="tok-s">`[updater] 检查失败: ${e.message}`</span>);
+    <span class="tok-k">if</span> (!silent) <span class="tok-f">push</span>({ phase: <span class="tok-s">'error'</span>, message: e.message });
+    <span class="tok-k">return</span> { ok: <span class="tok-k">false</span>, error: e.message };
+  }
+}
+
+<span class="tok-k">async function</span> <span class="tok-f">startDownload</span>() {
+  <span class="tok-k">if</span> (cancelToken) <span class="tok-k">return</span> { ok: <span class="tok-k">false</span>, error: <span class="tok-s">'already-downloading'</span> };
+  cancelToken = <span class="tok-k">new</span> <span class="tok-f">CancellationToken</span>();
+  <span class="tok-k">try</span> {
+    <span class="tok-k">await</span> autoUpdater.<span class="tok-f">downloadUpdate</span>(cancelToken);
+    <span class="tok-k">return</span> { ok: <span class="tok-k">true</span> };
+  } <span class="tok-k">catch</span> (e) {
+    cancelToken = <span class="tok-k">null</span>;
+    <span class="tok-f">writeLog</span>(<span class="tok-s">'error'</span>, <span class="tok-s">`[updater] 下载失败: ${e.message}`</span>);
+    <span class="tok-f">push</span>({ phase: <span class="tok-s">'error'</span>, message: e.message });
+    <span class="tok-k">return</span> { ok: <span class="tok-k">false</span>, error: e.message };
+  }
+}
+
+<span class="tok-k">function</span> <span class="tok-f">cancelDownload</span>() {
+  <span class="tok-k">try</span> { cancelToken?.<span class="tok-f">cancel</span>(); } <span class="tok-k">catch</span> (_) {}
+  cancelToken = <span class="tok-k">null</span>;
+  <span class="tok-f">push</span>({ phase: <span class="tok-s">'idle'</span> });
+}
+
+<span class="tok-k">function</span> <span class="tok-f">installUpdate</span>() {
+  <span class="tok-f">writeLog</span>(<span class="tok-s">'info'</span>, <span class="tok-s">'[updater] 用户确认安装，退出并执行替换'</span>);
+  <span class="tok-c">// isSilent=true 由 NSIS 静默安装；isForceRunAfter=true 安装完自动重启 Trim</span>
+  autoUpdater.<span class="tok-f">quitAndInstall</span>(<span class="tok-k">true</span>, <span class="tok-k">true</span>);
+}
+
+module.exports = { initUpdater, safeCheck, startDownload, cancelDownload, installUpdate };</code></pre></div>
+    </div>
+  </details>
+
+  <details class="step">
+    <summary>
+      <span class="stepnum">4</span>
+      <span class="step-title"><b>main.js 三处挂载：require / whenReady / IPC</b><span>全部通道走 handleSafe 来源校验</span></span>
+      <svg class="step-chev" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6 1.4-1.4z"/></svg>
+    </summary>
+    <div class="step-body">
+      <p>① 头部 require 区（约第 22 行 RULES_SIG 附近）：</p>
+      <div class="codewrap"><div class="codebar"><span class="langs"><span class="lang">js · main.js 头部</span></span><button class="copy-btn">复制</button></div>
+<pre><code><span class="tok-k">const</span> UPDATER = <span class="tok-f">require</span>(<span class="tok-s">'./src/main/updater'</span>); <span class="tok-c">// 批次：自动更新接入</span></code></pre></div>
+      <p>② <code>app.whenReady</code> 内 <code>createWindow();</code>（第 5208 行）之后：</p>
+      <div class="codewrap"><div class="codebar"><span class="langs"><span class="lang">js · whenReady 内</span></span><button class="copy-btn">复制</button></div>
+<pre><code><span class="tok-f">createWindow</span>();
+<span class="tok-c">// 自动更新接入：主窗口创建后挂载；内部自行判断 isPackaged，开发环境自动跳过</span>
+UPDATER.<span class="tok-f">initUpdater</span>(mainWindow, writeLog);</code></pre></div>
+      <p>③ IPC 区（建议放在 <code>app:get-info</code> 处理器之后）：</p>
+      <div class="codewrap"><div class="codebar"><span class="langs"><span class="lang">js · IPC 区</span></span><button class="copy-btn">复制</button></div>
+<pre><code><span class="tok-c">// 自动更新接入：手动检查 / 下载 / 取消 / 安装（均经 handleSafe 校验来源）</span>
+<span class="tok-f">handleSafe</span>(<span class="tok-s">'updater:check'</span>, async () =&gt; UPDATER.<span class="tok-f">safeCheck</span>(<span class="tok-k">false</span>));
+<span class="tok-f">handleSafe</span>(<span class="tok-s">'updater:download'</span>, async () =&gt; UPDATER.<span class="tok-f">startDownload</span>());
+<span class="tok-f">handleSafe</span>(<span class="tok-s">'updater:cancel-download'</span>, () =&gt; UPDATER.<span class="tok-f">cancelDownload</span>());
+<span class="tok-f">handleSafe</span>(<span class="tok-s">'updater:install'</span>, () =&gt; UPDATER.<span class="tok-f">installUpdate</span>());</code></pre></div>
+      <div class="note warn">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="#f5c451"><path d="M12 2 1 21h22L12 2zm-1 5h2v7h-2V7zm0 9h2v2h-2v-2z"/></svg>
+        <p>主→渲染的状态推送不走 IPC 白名单（<code>webContents.send</code> 是主进程主动下发），但 preload 必须显式订阅该频道，见第 5 步。这些通道有副作用，<strong>不要</strong>加入 SIDE_EFFECT_FREE 只读白名单。</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="step">
+    <summary>
+      <span class="stepnum">5</span>
+      <span class="step-title"><b>preload.js 增加 window.api.updater 白名单</b><span>与现有通道风格一致，返回取消订阅函数</span></span>
+      <svg class="step-chev" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6 1.4-1.4z"/></svg>
+    </summary>
+    <div class="step-body">
+      <div class="codewrap"><div class="codebar"><span class="langs"><span class="lang">js · preload.js（contextBridge 内新增一节）</span></span><button class="copy-btn">复制</button></div>
+<pre><code>  <span class="tok-c">// 应用自动更新（electron-updater；状态由主进程推送，渲染层只订阅）</span>
+  updater: {
+    check: () =&gt; ipcRenderer.<span class="tok-f">invoke</span>(<span class="tok-s">'updater:check'</span>),
+    download: () =&gt; ipcRenderer.<span class="tok-f">invoke</span>(<span class="tok-s">'updater:download'</span>),
+    cancelDownload: () =&gt; ipcRenderer.<span class="tok-f">invoke</span>(<span class="tok-s">'updater:cancel-download'</span>),
+    install: () =&gt; ipcRenderer.<span class="tok-f">invoke</span>(<span class="tok-s">'updater:install'</span>),
+    onState: (callback) =&gt; {
+      <span class="tok-k">const</span> handler = (_, state) =&gt; <span class="tok-f">callback</span>(state);
+      ipcRenderer.<span class="tok-f">on</span>(<span class="tok-s">'updater:state-changed'</span>, handler);
+      <span class="tok-k">return</span> () =&gt; ipcRenderer.<span class="tok-f">removeListener</span>(<span class="tok-s">'updater:state-changed'</span>, handler);
+    }
+  },</code></pre></div>
+    </div>
+  </details>
+
+  <details class="step">
+    <summary>
+      <span class="stepnum">6</span>
+      <span class="step-title"><b>渲染层 updater-ui.js + index.html 挂载 + 设置页入口</b><span>复用 modal.js，文本转义，进度实时刷新</span></span>
+      <svg class="step-chev" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6 1.4-1.4z"/></svg>
+    </summary>
+    <div class="step-body">
+      <div class="codewrap"><div class="codebar"><span class="langs"><span class="lang">js · src/scripts/updater-ui.js（新增，骨架）</span></span><button class="copy-btn">复制</button></div>
+<pre><code><span class="tok-c">// src/scripts/updater-ui.js — 自动更新渲染层状态机
+// 约束：复用 modal.js 统一弹窗；所有文本走 textContent（禁拼 HTML）；
+// window.api 缺失时优雅降级（与 ds 未加载兜底一致）。</span>
+(<span class="tok-k">function</span> () {
+  <span class="tok-s">'use strict'</span>;
+  <span class="tok-k">const</span> state = { phase: <span class="tok-s">'idle'</span>, percent: 0, version: <span class="tok-s">''</span>, message: <span class="tok-s">''</span> };
+  <span class="tok-k">let</span> unbind = <span class="tok-k">null</span>;
+
+  <span class="tok-c">// phase: idle/checking/available/latest/downloading/ready/error
+  // 按 phase 切换弹窗：检查中转圈、available 显示版本与更新日志+「下载」、
+  // downloading 显示百分比进度条与「取消」、ready 显示「立即重启」、latest 提示已是最新
+  <span class="tok-k">function</span> <span class="tok-f">render</span>() {
+    <span class="tok-c">// TODO(实施): 用 ds.js 现有 modal/进度条组件重绘，全部 textContent 赋值，
+    // 进度条宽度 = state.percent + '%'，不要用 innerHTML 拼字符串
+  }
+
+  <span class="tok-k">async function</span> <span class="tok-f">checkManual</span>() {
+    <span class="tok-k">await</span> window.api.updater.<span class="tok-f">check</span>(); <span class="tok-c">// 状态由 onState 回流驱动 render</span>
+  }
+
+  document.<span class="tok-f">addEventListener</span>(<span class="tok-s">'DOMContentLoaded'</span>, () =&gt; {
+    <span class="tok-k">if</span> (!window.api?.updater) <span class="tok-k">return</span>; <span class="tok-c">// 优雅降级</span>
+    unbind = window.api.updater.<span class="tok-f">onState</span>(s =&gt; { Object.<span class="tok-f">assign</span>(state, s); <span class="tok-f">render</span>(); });
+
+    document.<span class="tok-f">addEventListener</span>(<span class="tok-s">'click'</span>, (e) =&gt; {
+      <span class="tok-k">const</span> act = el =&gt; e.target.<span class="tok-f">closest</span>(el);
+      <span class="tok-k">if</span> (<span class="tok-f">act</span>(<span class="tok-s">'[data-action="check-update"]'</span>)) <span class="tok-f">checkManual</span>();
+      <span class="tok-k">if</span> (<span class="tok-f">act</span>(<span class="tok-s">'[data-action="download-update"]'</span>)) window.api.updater.<span class="tok-f">download</span>();
+      <span class="tok-k">if</span> (<span class="tok-f">act</span>(<span class="tok-s">'[data-action="cancel-update"]'</span>)) window.api.updater.<span class="tok-f">cancelDownload</span>();
+      <span class="tok-k">if</span> (<span class="tok-f">act</span>(<span class="tok-s">'[data-action="install-update"]'</span>)) window.api.updater.<span class="tok-f">install</span>();
+    });
+  });
+
+  window.<span class="tok-f">addEventListener</span>(<span class="tok-s">'beforeunload'</span>, () =&gt; { <span class="tok-k">try</span> { unbind?.(); } <span class="tok-k">catch</span> (_) {} });
+})();</code></pre></div>
+      <p>index.html 脚本顺序（modal.js 之后、app.js 之前，符合「ds 先于使用方」的既有顺序约束）：</p>
+      <div class="codewrap"><div class="codebar"><span class="langs"><span class="lang">html · src/index.html（约 1241 行 app.js 之前）</span></span><button class="copy-btn">复制</button></div>
+<pre><code>  &lt;script src=<span class="tok-s">"scripts/maintenance.js"</span>&gt;&lt;/script&gt;
+  &lt;script src=<span class="tok-s">"scripts/updater-ui.js"</span>&gt;&lt;/script&gt; &lt;!-- 自动更新接入 --&gt;
+  &lt;script src=<span class="tok-s">"scripts/app.js"</span>&gt;&lt;/script&gt;</code></pre></div>
+      <p>设置页「关于」区域加一行（版本号已由 <code>app:get-info</code> 返回，无需新通道）：</p>
+      <div class="codewrap"><div class="codebar"><span class="langs"><span class="lang">html · 设置页片段</span></span><button class="copy-btn">复制</button></div>
+<pre><code>&lt;button class=<span class="tok-s">"ds-btn"</span> data-action=<span class="tok-s">"check-update"</span>&gt;检查更新&lt;/button&gt;
+&lt;span class=<span class="tok-s">"ds-text-3"</span> data-role=<span class="tok-s">"app-version"</span>&gt;当前版本 --&lt;/span&gt;</code></pre></div>
+    </div>
+  </details>
+
+  <details class="step">
+    <summary>
+      <span class="stepnum">7</span>
+      <span class="step-title"><b>首次构建并核对产物三件套</b><span>Setup.exe + .blockmap + latest.yml 缺一不可</span></span>
+      <svg class="step-chev" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6 1.4-1.4z"/></svg>
+    </summary>
+    <div class="step-body">
+      <div class="codewrap"><div class="codebar"><span class="langs"><span class="lang">pwsh</span></span><button class="copy-btn">复制</button></div>
+<pre><code><span class="tok-c"># 同时产出 nsis 安装版 + portable 便携版（prebuild 钩子会自动 gen-fallback）</span>
+npm run build
+
+<span class="tok-c"># 输出目录：D:\KaiFa\Trim\Trim goujian\build-release\</span>
+<span class="tok-c"># 必须看到：</span>
+<span class="tok-c">#   Trim-Setup-2.5.0.exe            ← NSIS 安装包（给用户安装/更新用）</span>
+<span class="tok-c">#   Trim-Setup-2.5.0.exe.blockmap   ← 差量分块映射（更新时只下变化块）</span>
+<span class="tok-c">#   latest.yml                      ← 更新清单（版本、SHA-512、包名、发布时间）</span>
+<span class="tok-c">#   Trim-Portable-2.5.0.exe         ← 便携版（保留，不参与自动更新）</span></code></pre></div>
+      <p>latest.yml 内容由构建器自动生成，结构示意（哈希无需手填）：</p>
+      <div class="codewrap"><div class="codebar"><span class="langs"><span class="lang">yaml · latest.yml（示意）</span></span><button class="copy-btn">复制</button></div>
+<pre><code>version: 2.5.1
+files:
+  - url: Trim-Setup-2.5.1.exe
+    sha512: <span class="tok-c">&lt;构建时自动计算&gt;</span>
+    size: 98765432
+    blockMapSize: 120345
+path: Trim-Setup-2.5.1.exe
+sha512: <span class="tok-c">&lt;构建时自动计算&gt;</span>
+releaseDate: <span class="tok-s">'2026-09-12T10:00:00.000Z'</span></code></pre></div>
+    </div>
+  </details>
+</section>
+
+<!-- ============ 04 状态机 ============ -->
+<section id="sec-state">
+  <h2>更新状态机（主进程 phase → 渲染层 UI）</h2>
+  <p>updater.js 只推一个字段 <code>phase</code> 加负载数据，渲染层据此切换弹窗形态，避免多通道状态错乱。</p>
+  <div class="state-grid">
+    <div class="state"><div class="sn">idle</div><div class="sd">初始/取消后归位，不显示</div></div>
+    <div class="state s-checking"><div class="sn">checking</div><div class="sd">正在请求 latest.yml，弹窗显示转圈</div></div>
+    <div class="state s-avail"><div class="sn">available</div><div class="sd">发现新版，显示版本/更新日志/「下载」</div></div>
+    <div class="state"><div class="sn">latest</div><div class="sd">已是最新版，手动检查时轻提示</div></div>
+    <div class="state s-dl"><div class="sn">downloading</div><div class="sd">percent 0→100，进度条+速率+「取消」</div></div>
+    <div class="state s-ready"><div class="sn">ready</div><div class="sd">校验完成已暂存，显示「立即重启」</div></div>
+    <div class="state s-err"><div class="sn">error</div><div class="sd">失败原因文本；后台静默检查不弹此态</div></div>
+  </div>
+  <div class="flow">
+    <div class="fnode"><b>checking</b><span>手动/8s 定时</span></div>
+    <div class="farrow"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8.6 5.6 15 12l-6.4 6.4L10 20l8-8-8-8-1.4 1.6z"/></svg></div>
+    <div class="fnode hl"><b>available ?</b><span>SemVer 判定分支</span></div>
+    <div class="farrow"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8.6 5.6 15 12l-6.4 6.4L10 20l8-8-8-8-1.4 1.6z"/></svg></div>
+    <div class="fnode"><b>downloading</b><span>可 cancel 回 idle</span></div>
+    <div class="farrow"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8.6 5.6 15 12l-6.4 6.4L10 20l8-8-8-8-1.4 1.6z"/></svg></div>
+    <div class="fnode"><b>ready</b><span>SHA-512 通过</span></div>
+    <div class="farrow"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8.6 5.6 15 12l-6.4 6.4L10 20l8-8-8-8-1.4 1.6z"/></svg></div>
+    <div class="fnode hl"><b>install → restart</b><span>quitAndInstall</span></div>
+  </div>
+  <div class="note info">
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="#4cc2ff"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+    <p>任何阶段网络失败都进 error；启动 8s 的后台检查以 silent 模式调用，error/latest 均不弹窗，只有用户手动点「检查更新」才把结果显性化。</p>
+  </div>
+</section>
+
+<!-- ============ 05 发布 SOP ============ -->
+<section id="sec-release">
+  <h2>GitHub Releases 发布 SOP</h2>
+  <p>每次发版固定走下面的时间轴。自动与手动二选一，推荐先用<strong>手动</strong>跑通一次再配自动发布。</p>
+  <div class="timeline">
+    <div class="tl-time">T0 · 改版本</div>
+    <div class="tl-axis"><span class="tl-dot"></span></div>
+    <div class="tl-body"><b>提升 package.json 的 version</b><p>严格 SemVer 递增，如 2.5.0 → <code>2.5.1</code>；修复用 patch、新功能用 minor。不递增则客户端比对认为「无新版」。</p></div>
+
+    <div class="tl-time">T+1 · 构建</div>
+    <div class="tl-axis"><span class="tl-dot"></span></div>
+    <div class="tl-body"><b>本地出包</b><p>有 Rust 改动先 <code>cargo build --release</code>；随后 <code>npm run build</code>（prebuild 自动执行 gen-fallback）。到输出目录核对三件套。</p></div>
+
+    <div class="tl-time">T+2 · 提交</div>
+    <div class="tl-axis"><span class="tl-dot"></span></div>
+    <div class="tl-body"><b>提交代码并打 tag</b><p><code>git add -A &amp;&amp; git commit &amp;&amp; git tag v2.5.1 &amp;&amp; git push origin main --tags</code>。tag 必须带 <code>v</code> 前缀且与 version 对应。</p></div>
+
+    <div class="tl-time">T+3 · 发布</div>
+    <div class="tl-axis"><span class="tl-dot"></span></div>
+    <div class="tl-body">
+      <b>建 Release 并上传产物（二选一）</b>
+      <p><strong>方式 A 自动：</strong>准备 GitHub Token（PAT 勾选 repo 权限），PowerShell 下 <code>$env:GH_TOKEN="ghp_xxx"</code> 后执行 <code>npm run release</code>，electron-builder 自动建 Release、传全部资产。</p>
+      <p><strong>方式 B 手动：</strong>GitHub 仓库 → Releases → Draft a new release → 选 tag <code>v2.5.1</code> → 上传 <code>Trim-Setup-2.5.1.exe</code>、<code>.blockmap</code>、<code>latest.yml</code> 三个文件 → Publish release。</p>
+    </div>
+
+    <div class="tl-time">T+4 · 验收</div>
+    <div class="tl-axis"><span class="tl-dot"></span></div>
+    <div class="tl-body"><b>确认客户端可收</b><p>浏览器打开 <code>releases/latest/download/latest.yml</code> 能下载且 version 为新版；已装旧版的机器点「检查更新」走完全链路。</p></div>
+
+    <div class="tl-time tl-last">灰度 · 可选</div>
+    <div class="tl-axis tl-last"><span class="tl-dot" style="background:var(--warn);box-shadow:0 0 0 2px var(--warn)"></span></div>
+    <div class="tl-body tl-last"><b>beta 预发布通道</b><p>Release 勾选 Set as pre-release 即成为 beta 通道；客户端需 <code>autoUpdater.channel = 'beta'</code> 才会收到，稳定版用户不受影响，可用于小范围灰度。</p></div>
+  </div>
+
+  <div class="note danger">
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="#ff7b72"><path d="M12 2 1 21h22L12 2zm-1 5h2v7h-2V7zm0 9h2v2h-2v-2z"/></svg>
+    <div>
+      <p>三个发布侧高频「收不到更新」原因：</p>
+      <ul>
+        <li>Release 保存为 <strong>Draft</strong>：草稿资产需要登录鉴权，updater 直接 404，必须 Publish；</li>
+        <li>漏传 <strong>latest.yml</strong>：客户端没有版本清单可比；</li>
+        <li>tag/version <strong>不一致或没递增</strong>：SemVer 判定无新版。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 06 差量原理 ============ -->
+<section id="sec-diff">
+  <h2>差量更新（blockmap）原理</h2>
+  <div class="grid g2">
+    <div class="card">
+      <h4>分块哈希比对</h4>
+      <p style="margin-top:6px">electron-builder 把安装包按约 64KB 切块，对每块算哈希写入 .blockmap。更新时客户端先下载<strong>新旧两个 blockmap</strong>（仅几十 KB），逐块比对：哈希相同的块跳过，只下载变化块，再本地拼出完整新包。</p>
+    </div>
+    <div class="card">
+      <h4>自动全量兜底</h4>
+      <p style="margin-top:6px">差量拼接失败、块损坏或 blockmap 缺失时，electron-updater 自动回退下载完整 Setup.exe，用户侧只表现为下载量变多，流程不中断。最终都以 latest.yml 的整包 SHA-512 校验为准。</p>
+    </div>
+  </div>
+  <h3>一次典型 2.5.0 → 2.5.1 的流量构成</h3>
+  <div class="flow" style="margin-top:10px">
+    <div class="fnode"><b>新旧 blockmap</b><span>各几十 KB，必下</span></div>
+    <div class="farrow"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8.6 5.6 15 12l-6.4 6.4L10 20l8-8-8-8-1.4 1.6z"/></svg></div>
+    <div class="fnode hl"><b>变化块</b><span>通常仅占整包 10%~40%（取决于 asar 改动面）</span></div>
+    <div class="farrow"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8.6 5.6 15 12l-6.4 6.4L10 20l8-8-8-8-1.4 1.6z"/></svg></div>
+    <div class="fnode"><b>本地拼包</b><span>旧包缓存块 + 新块合成</span></div>
+    <div class="farrow"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8.6 5.6 15 12l-6.4 6.4L10 20l8-8-8-8-1.4 1.6z"/></svg></div>
+    <div class="fnode"><b>SHA-512 整包校验</b><span>与 latest.yml 一致才允许安装</span></div>
+  </div>
+  <div class="note warn">
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="#f5c451"><path d="M12 2 1 21h22L12 2zm-1 5h2v7h-2V7zm0 9h2v2h-2v-2z"/></svg>
+    <p>差量命中率与包结构有关：<code>extraResources</code> 里的 finder.exe、TrimFastSize.dll 若本版未重新编译，其对应块保持不变，不会重复下载；因此<strong>没改 Rust 就不要无意义重编 finder.exe</strong>，可减小更新包体积。</p>
+  </div>
+</section>
+
+<!-- ============ 07 避坑 ============ -->
+<section id="sec-pitfalls">
+  <h2>避坑清单（14 条）</h2>
+  <div class="pit">
+    <div class="card"><h4><span class="num">01</span>portable 不支持标准自动更新</h4><p>便携版每次解压到 %TEMP% 临时目录运行，没有固定安装路径可供 NSIS 覆盖。自动更新只面向 nsis 安装版，便携版保留手动下载。</p></div>
+    <div class="card"><h4><span class="num">02</span>依赖放错节点直接崩</h4><p>electron-updater 必须在 dependencies。devDependencies 不进 asar，打包后 require 抛 MODULE_NOT_FOUND。</p></div>
+    <div class="card"><h4><span class="num">03</span>三件套必须同传</h4><p>latest.yml 负责「发现新版」，.blockmap 负责「差量」，exe 负责「安装」。缺 yml 完全收不到，缺 blockmap 退化为全量。</p></div>
+    <div class="card"><h4><span class="num">04</span>Draft 不可见、pre-release 走 beta</h4><p>草稿要鉴权导致 404；预发布版只有 channel='beta' 的客户端能收到，正式版用户看不到。</p></div>
+    <div class="card"><h4><span class="num">05</span>版本号与 tag 规则</h4><p>SemVer 严格递增（2.5.1&gt;2.5.0），git tag 用 v 前缀（v2.5.1）。两者不一致是最常见的「明明发了却收不到」。</p></div>
+    <div class="card"><h4><span class="num">06</span>开发环境必须短路</h4><p>npm start 时 resources 下没有 app-update.yml，检查必然报错。updater.js 已用 app.isPackaged 短路，不要删这道判断。</p></div>
+    <div class="card"><h4><span class="num">07</span>验证必须先装「旧版」</h4><p>自动更新只对已安装的 Setup 版生效：先安装 2.5.0，再发布 2.5.1，才能在本机看到完整更新链路。</p></div>
+    <div class="card"><h4><span class="num">08</span>免 UAC 的组合条件</h4><p>perMachine:false（装 %LOCALAPPDATA%\Programs）+ asInvoker（项目已配置）。改成 perMachine:true 装 Program Files 后，每次更新都弹 UAC。</p></div>
+    <div class="card"><h4><span class="num">09</span>未签名 ≠ 不能更新</h4><p>完整性由 SHA-512 保证，无需代码签名证书；但未签名安装包首跑有 SmartScreen 信誉提示，属另一回事，后续可再补证书签名。</p></div>
+    <div class="card"><h4><span class="num">10</span>国内 GitHub 网络抖动</h4><p>后台静默检查失败不打扰用户；若普遍超时，可换 generic 源：把三件套放自有静态服务器/对象存储，publish 改为 {"provider":"generic","url":"https://你的地址/updates/win/"}，客户端代码无需动。</p></div>
+    <div class="card"><h4><span class="num">11</span>下载完别强退</h4><p>清理、测速、大文件扫描可能正在运行。autoDownload=false + 用户确认安装；autoInstallOnAppQuit 只在用户正常退出时兜底。</p></div>
+    <div class="card"><h4><span class="num">12</span>extraResources 自动跟随</h4><p>finder.exe、TrimFastSize.dll 已在 build.extraResources，NSIS 安装与更新替换时自动带上，不需要为更新单独处理。</p></div>
+    <div class="card"><h4><span class="num">13</span>输出目录含空格</h4><p>「Trim goujian」目录名带空格，本地 pwsh 脚本路径必须引号包裹；electron-builder 本身不受影响。</p></div>
+    <div class="card"><h4><span class="num">14</span>回归测试同步</h4><p>新增渲染脚本与配置后执行 npm run test（test-features.js 含双源一致性等断言）；改动 JS 一律 node --check。</p></div>
+  </div>
+</section>
+
+<!-- ============ 08 验证 ============ -->
+<section id="sec-verify">
+  <h2>验证、本地演练与回滚</h2>
+
+  <h3>不依赖 GitHub 的本地全链路演练</h3>
+  <p>正式发布前，用 generic 本地文件源在本机走一遍真实更新（验证完删除临时代码）：</p>
+  <div class="codewrap"><div class="codebar"><span class="langs"><span class="lang">js · updater.js initUpdater 内临时插入</span></span><button class="copy-btn">复制</button></div>
+<pre><code><span class="tok-c">// 仅本地验证用：把更新源指向本机构建目录（file:// 协议，注意正斜杠）</span>
+autoUpdater.<span class="tok-f">setFeedURL</span>({ provider: <span class="tok-s">'generic'</span>, url: <span class="tok-s">'file:///D:/KaiFa/Trim/Trim%20goujian/build-release/'</span> });</code></pre></div>
+  <ol>
+    <li>version 保持 2.5.0，<code>npm run build:setup</code>，安装生成的 Trim-Setup-2.5.0.exe；</li>
+    <li>version 改成 2.5.1，再次构建，<strong>新产物覆盖到同一输出目录</strong>（该目录即「更新服务器」）；</li>
+    <li>启动已安装的 2.5.0 → 检查更新 → 下载 → 立即重启；</li>
+    <li>重启后设置页版本号显示 2.5.1 即全链路通过；删除 setFeedURL 临时代码。</li>
+  </ol>
+
+  <h3>交付前检查项（可勾选，自动保存在浏览器）</h3>
+  <ul class="check-list" id="checklist">
+    <li><input type="checkbox" id="c1"><label for="c1">改动的 JS 文件全部通过 node --check（updater.js / main.js / preload.js / updater-ui.js）</label></li>
+    <li><input type="checkbox" id="c2"><label for="c2">npm test 全部通过（双源一致性、尺寸常量等既有断言无回归）</label></li>
+    <li><input type="checkbox" id="c3"><label for="c3">electron-updater 出现在 dependencies，而非 devDependencies</label></li>
+    <li><input type="checkbox" id="c4"><label for="c4">构建产物三件套齐全：Setup.exe / .blockmap / latest.yml</label></li>
+    <li><input type="checkbox" id="c5"><label for="c5">本地 file 源演练：2.5.0 → 2.5.1 下载、校验、替换、重启成功</label></li>
+    <li><input type="checkbox" id="c6"><label for="c6">CDP 真机验证更新弹窗：检查/下载进度/取消/立即重启各态，且外观遵循 ds token</label></li>
+    <li><input type="checkbox" id="c7"><label for="c7">Release 为正式发布（非 Draft），latest.yml 浏览器可直接下载</label></li>
+    <li><input type="checkbox" id="c8"><label for="c8">开发模式 npm start 不发起更新请求、日志输出「开发环境，跳过自动更新」</label></li>
+  </ul>
+  <p class="check-progress" id="checkProgress">已完成 0 / 8</p>
+
+  <h3>回滚策略</h3>
+  <div class="grid g2">
+    <div class="card">
+      <h4>发布侧回滚（推荐）</h4>
+      <p style="margin-top:6px">新版本出问题：在 GitHub 将该 Release 标记为 Draft 或删除资产（latest.yml 一并下架），客户端随即检查不到新版，停留在旧版本；修复后提升 patch 版本重新发布即可，<strong>不要</strong>重新发布相同版本号。</p>
+    </div>
+    <div class="card">
+      <h4>用户侧回滚</h4>
+      <p style="margin-top:6px">NSIS 卸载保留用户数据（deleteAppDataOnUninstall:false），用户可卸载新版后安装旧版 Setup；配置、白名单与清理记录不丢失。</p>
+    </div>
+  </div>
+</section>
+
+</div></div>
+
+<footer>
+  <div class="wrap">
+    <span>Trim 自动更新接入方案 · electron-builder 26 + electron-updater 6 · 2026-09-12</span>
+    <span>仓库 xiaoxu1642/TuneForge · 本页为设计方案，确认后按七步实施</span>
+  </div>
+</footer>
+
+<script>
+(function(){
+  'use strict';
+  /* ---- 代码块复制 ---- */
+  document.querySelectorAll('.copy-btn').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var pre = btn.closest('.codewrap').querySelector('pre');
+      var text = pre.innerText;
+      var done = function(){
+        btn.classList.add('ok'); btn.textContent = '已复制';
+        setTimeout(function(){ btn.classList.remove('ok'); btn.textContent = '复制'; }, 1600);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done).catch(function(){ fallback(text, done); });
+      } else { fallback(text, done); }
+    });
+  });
+  function fallback(text, cb){
+    var ta=document.createElement('textarea'); ta.value=text;
+    ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta);
+    ta.select();
+    try{ document.execCommand('copy'); cb(); }catch(e){}
+    document.body.removeChild(ta);
+  }
+
+  /* ---- 目录滚动高亮 ---- */
+  var links = Array.prototype.slice.call(document.querySelectorAll('.toc a'));
+  var secs = links.map(function(a){ return document.querySelector(a.getAttribute('href')); });
+  var spy = new IntersectionObserver(function(entries){
+    entries.forEach(function(en){
+      if(en.isIntersecting){
+        links.forEach(function(a){ a.classList.toggle('active', a.getAttribute('href') === '#'+en.target.id); });
+      }
+    });
+  }, { rootMargin: '-15% 0px -70% 0px' });
+  secs.forEach(function(s){ if(s) spy.observe(s); });
+
+  /* ---- 步骤手风琴：每次只展开一个 ---- */
+  var steps = document.querySelectorAll('details.step');
+  steps.forEach(function(d){
+    d.addEventListener('toggle', function(){
+      if(d.open){ steps.forEach(function(o){ if(o!==d) o.open=false; }); }
+    });
+  });
+
+  /* ---- 验收清单 localStorage 记忆 ---- */
+  var KEY='trim-updater-plan-checklist-v1';
+  var boxes = document.querySelectorAll('#checklist input');
+  var saved={};
+  try{ saved=JSON.parse(localStorage.getItem(KEY)||'{}'); }catch(e){}
+  function refresh(){
+    var n=0;
+    boxes.forEach(function(b){
+      b.checked=!!saved[b.id];
+      b.closest('li').classList.toggle('done', b.checked);
+      if(b.checked)n++;
+    });
+    document.getElementById('checkProgress').textContent='已完成 '+n+' / '+boxes.length;
+  }
+  boxes.forEach(function(b){
+    b.addEventListener('change', function(){
+      saved[b.id]=b.checked;
+      try{ localStorage.setItem(KEY, JSON.stringify(saved)); }catch(e){}
+      refresh();
+    });
+  });
+  refresh();
+})();
+</script>
+</body>
+</html>

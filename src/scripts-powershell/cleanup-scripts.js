@@ -33,6 +33,8 @@ const { RULE_PATH_EVAL_PS } = require('../main/ps-rule-path-eval');
 // v2.2 第 2 批（D18）：受保护路径清单的唯一来源。main.js 启动时用 Electron known folder
 // 补全后调 configureProtectedRoots，本模块经 require 缓存拿到同一份清单再注入 PS。
 const PROTECT = require('../main/ps-protect-path');
+// 🟡1：数据目录规则读取侧复验 ed25519 签名，与写入侧 main.js cleanup:update-rules 共用同一实现。
+const RULES_SIG = require('../main/rules-signature');
 
 const RULES_FILE = path.join(__dirname, '..', 'data', 'cleanup-rules.json');
 // 数据目录与 main.js APP_DATA_DIR（%APPDATA%\Trim）保持一致；此处不依赖 electron app
@@ -87,6 +89,24 @@ function mergeRules(base, custom) {
   return merged;
 }
 
+// 🟡1：读取数据目录规则并复验 ed25519 签名。仅当签名通过且结构合法才返回，否则 null（回退内置规则）。
+// 写入侧 main.js cleanup:update-rules 已在落盘前验签；此处补上读取侧复验，堵住「下载后被本地篡改」的旁路。
+function readVerifiedDataRules() {
+  try {
+    if (!fs.existsSync(DATA_RULES_FILE)) return null;
+    const text = fs.readFileSync(DATA_RULES_FILE, 'utf8');
+    const verdict = RULES_SIG.verifyRulesSignature(text);
+    if (!verdict.ok) {
+      console.warn('[cleanup] 数据目录规则验签未通过，已回退内置规则:', verdict.reason);
+      return null;
+    }
+    const parsed = JSON.parse(text);
+    return parsed && Array.isArray(parsed.groups) ? parsed : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 function loadRules() {
   const custom = [];
   try {
@@ -100,12 +120,20 @@ function loadRules() {
     }
   } catch (e) { /* 自定义目录不可读则忽略 */ }
   let dataMTime = 0;
-  try { dataMTime = fs.existsSync(DATA_RULES_FILE) ? fs.statSync(DATA_RULES_FILE).mtimeMs : 0; } catch (e) {}
-  const sig = dataMTime + '|' + custom.length + '|' + custom.map(c => c.mtimeMs).join(',');
+  let dataSize = 0;
+  try {
+    if (fs.existsSync(DATA_RULES_FILE)) {
+      const st = fs.statSync(DATA_RULES_FILE);
+      dataMTime = st.mtimeMs;
+      dataSize = st.size;
+    }
+  } catch (e) {}
+  // size 一并入缓存键：防「保留 mtime 的篡改」绕过读取侧复验（🟡1）
+  const sig = dataMTime + '|' + dataSize + '|' + custom.length + '|' + custom.map(c => c.mtimeMs).join(',');
   if (RULES_CACHE && sig === RULES_CACHE_SIG) return RULES_CACHE;
 
-  // 优先级：数据目录（在线更新产物）> 内置
-  let rules = (dataMTime && safeReadJson(DATA_RULES_FILE)) || safeReadJson(RULES_FILE);
+  // 优先级：数据目录（在线更新产物）> 内置。数据目录走验签复验（fail-closed），失败自动回退内置。
+  let rules = readVerifiedDataRules() || safeReadJson(RULES_FILE);
   if (!rules) rules = { version: 0, rulesVersion: 0, groups: [] };
   for (const c of custom) {
     const parsed = safeReadJson(c.path);

@@ -1,5 +1,6 @@
-// overview.js - 系统概览模块
-// 实时采集 CPU/内存/磁盘/开机时长，融合硬件信息展示
+// overview.js - 系统体检模块（v2.6.0 P1-6，原「系统概览」升级）
+// 实时采集 CPU/内存/磁盘/开机时长，融合硬件信息；新增只读体检诊断
+// （借鉴 Pavise SystemAudit：全部只读、每条结论自带证据等级、检测不出如实标「未验证」）
 (function () {
   'use strict';
 
@@ -10,7 +11,9 @@
     running: false,
     timer: null,
     hardwareLoaded: false,
-    lastErrAt: 0
+    lastErrAt: 0,
+    checkupLoaded: false,
+    checkupBusy: false
   };
 
   // ===== 格式化工具 =====
@@ -123,6 +126,71 @@
     return primary;
   }
 
+  // ===== 系统体检（v2.6.0 P1-6，只读诊断） =====
+  // 状态徽章复用 ds-badge（ok/warn/bad/neutral），证据等级以文字标签展示。
+  const CHECKUP_STATUS_BADGE = { ok: 'ok', warn: 'warn', bad: 'bad', unknown: 'neutral' };
+  const CHECKUP_STATUS_TEXT = { ok: '正常', warn: '注意', bad: '异常', unknown: '无法判定' };
+
+  function checkupStatusBadge(status) {
+    const type = CHECKUP_STATUS_BADGE[status] || 'neutral';
+    const label = CHECKUP_STATUS_TEXT[status] || status;
+    return window.ds && window.ds.badgeHtml
+      ? window.ds.badgeHtml(type, label, { small: true })
+      : `<span class="ds-badge ${type} sm">${escapeHtml(label)}</span>`;
+  }
+
+  function renderCheckup(checks) {
+    const root = $('ovCheckupList');
+    if (!root) return;
+    if (!Array.isArray(checks) || !checks.length) {
+      root.innerHTML = '<div class="empty-state"><p>本次体检未返回结论。</p></div>';
+      return;
+    }
+    // 异常 > 注意 > 正常 排序（问题项优先露出），同档保持主进程返回顺序
+    const rank = { bad: 0, warn: 1, unknown: 2, ok: 3 };
+    const sorted = checks.slice().sort((a, b) => (rank[a.status] ?? 3) - (rank[b.status] ?? 3));
+    root.innerHTML = sorted.map(c => `
+      <div class="checkup-row" data-status="${escapeHtml(c.status || 'unknown')}">
+        <div class="checkup-row-head">
+          ${checkupStatusBadge(c.status)}
+          <span class="checkup-row-title">${escapeHtml(c.title || '')}</span>
+          <span class="checkup-row-value">${escapeHtml(c.value || '')}</span>
+          <span class="checkup-row-evidence">${escapeHtml(c.evidence || '未验证')}</span>
+        </div>
+        <p class="checkup-row-detail">${escapeHtml(c.detail || '')}</p>
+      </div>`).join('');
+  }
+
+  async function loadCheckup(force) {
+    if (state.checkupBusy) return;
+    const root = $('ovCheckupList');
+    if (!root) return;
+    if (!window.api?.overview?.checkup) {
+      // 浏览器预览模式：静态示例，保持布局一致
+      renderCheckup([
+        { id: 'cpu_topology', title: 'CPU 拓扑', status: 'ok', value: '8 核 16 线程', detail: '浏览器预览示例数据', evidence: '本机实测' },
+        { id: 'memory_channels', title: '内存通道', status: 'warn', value: '1 条 / 16 GB', detail: '单通道运行，建议组双通道（预览示例）', evidence: '本机实测' },
+        { id: 'disk_health', title: '磁盘健康', status: 'unknown', value: '无法读取', detail: '预览模式下不执行体检', evidence: '未验证' }
+      ]);
+      return;
+    }
+    state.checkupBusy = true;
+    const btn = $('btnCheckupRerunText');
+    if (btn) btn.textContent = '体检中…';
+    if (force) root.innerHTML = '<div class="empty-state"><p>体检中…</p></div>';
+    try {
+      const resp = await window.api.overview.checkup({ refresh: !!force });
+      if (!resp || !resp.success) throw new Error((resp && resp.message) || '体检失败');
+      renderCheckup(resp.data && resp.data.checks);
+      state.checkupLoaded = true;
+    } catch (e) {
+      root.innerHTML = `<div class="empty-state"><p>体检失败：${escapeHtml(e.message)}</p></div>`;
+    } finally {
+      state.checkupBusy = false;
+      if (btn) btn.textContent = '重新体检';
+    }
+  }
+
   // ===== 硬件信息（首次扫描缓存，后期手动刷新才更新） =====
   async function loadHardware(force) {
     if (state.hardwareLoaded && !force) return;
@@ -202,24 +270,28 @@
     tick();
     // 硬件信息走主进程缓存（毫秒级），立即渲染，避免等首轮指标采集完成才加载
     loadHardware();
+    // 系统体检：进页面自动执行一次（主进程 5 分钟缓存，重复进出不重复拉起 PowerShell）
+    loadCheckup(false);
     state.timer = setInterval(tick, POLL_INTERVAL);
-    window.app?.log('info', '系统概览实时监控启动');
+    window.app?.log('info', '系统体检实时监控启动');
   }
 
   function stop() {
     if (!state.running) return;
     state.running = false;
     if (state.timer) { clearInterval(state.timer); state.timer = null; }
-    window.app?.log('info', '系统概览实时监控停止');
+    window.app?.log('info', '系统体检实时监控停止');
   }
 
   function refresh() {
     loadHardware(true);
+    loadCheckup(true); // 手动刷新强制重新体检
     tick();
   }
 
   function init() {
     $('btnOverviewRefresh')?.addEventListener('click', refresh);
+    $('btnCheckupRerun')?.addEventListener('click', () => loadCheckup(true));
     // 概览卡片整卡跳转：内存卡 → 内存清理，磁盘卡 → 磁盘清理（data-jump 指定目标页）
     document.querySelectorAll('.overview-jump-card').forEach(card => {
       const go = () => {

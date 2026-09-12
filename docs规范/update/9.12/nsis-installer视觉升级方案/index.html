@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trim 安装器视觉升级方案 v3.1 · 薰衣草渐变</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%23A6A9F2'/><stop offset='1' stop-color='%237174CC'/></linearGradient></defs><rect width='24' height='24' rx='6' fill='%23171832'/><text x='12' y='17' font-size='13' font-family='Arial' font-weight='bold' fill='url(%23g)' text-anchor='middle'>T</text></svg>">
+<style>
+:root{
+  --bg:#141419;--bg-raise:#1b1b22;--card:#22222b;--stroke:rgba(255,255,255,.08);--stroke-strong:rgba(139,142,224,.28);
+  --txt:#ececf2;--txt-2:#a8a8b6;--txt-3:#74748a;
+  --accent:#8B8EE0;--accent-2:#A6A9F2;--accent-3:#7174CC;--accent-deep:#171832;
+  --accent-soft:rgba(139,142,224,.14);
+  --ok:#6ecb83;--warn:#e0b86e;--bad:#e07a7a;
+  --grad-hero:linear-gradient(135deg,#20214a 0%,#171832 45%,#141419 100%);
+  --grad-btn:linear-gradient(180deg,#A6A9F2 0%,#8B8EE0 100%);
+  --grad-logo:linear-gradient(140deg,#A6A9F2 0%,#7174CC 100%);
+  --grad-bar:linear-gradient(90deg,#A6A9F2 0%,#7174CC 100%);
+  --mono:"Cascadia Code","Cascadia Mono",Consolas,"Courier New",monospace;
+  --sans:"Microsoft YaHei UI","Microsoft YaHei","Segoe UI",system-ui,sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--txt);font-family:var(--sans);font-size:15px;line-height:1.75;-webkit-font-smoothing:antialiased}
+.toc{position:fixed;left:0;top:0;bottom:0;width:236px;background:var(--bg-raise);border-right:1px solid var(--stroke);padding:22px 14px;overflow-y:auto;z-index:40}
+.toc .brand{display:flex;align-items:center;gap:10px;margin-bottom:6px;padding:0 6px}
+.toc .brand .logo{width:30px;height:30px;border-radius:8px;background:var(--grad-logo);display:flex;align-items:center;justify-content:center;color:var(--accent-deep);font-weight:800;font-size:15px;font-family:var(--mono);box-shadow:0 3px 12px rgba(139,142,224,.4)}
+.toc .brand .name{font-weight:700;font-size:15px}
+.toc .brand .sub{font-size:11px;color:var(--txt-3);margin-top:1px}
+.toc .sec{font-size:11px;color:var(--txt-3);text-transform:uppercase;letter-spacing:1px;margin:18px 6px 6px}
+.toc a{display:block;color:var(--txt-2);font-size:13px;padding:6px 10px;border-radius:5px;border-left:2px solid transparent;margin:1px 0;line-height:1.4;text-decoration:none}
+.toc a:hover{color:var(--txt);background:rgba(139,142,224,.1)}
+.main{margin-left:236px;max-width:1000px;padding:40px 48px 90px}
+.eyebrow{font-size:12px;color:var(--accent-2);letter-spacing:2px;text-transform:uppercase;font-family:var(--mono);margin-bottom:10px}
+h1{font-size:34px;font-weight:800;line-height:1.25;margin-bottom:14px;letter-spacing:-.5px}
+h1 .accent{background:var(--grad-btn);-webkit-background-clip:text;background-clip:text;color:transparent}
+.lead{color:var(--txt-2);font-size:16px;line-height:1.85;margin-bottom:18px;max-width:790px}
+.tags{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:28px}
+.tag{font-size:12px;padding:3px 11px;border-radius:100px;border:1px solid var(--stroke);color:var(--txt-2);background:rgba(255,255,255,.03)}
+.tag.hot{border-color:var(--stroke-strong);color:var(--accent-2);background:var(--accent-soft)}
+h2{font-size:24px;font-weight:700;margin:44px 0 14px;padding-top:14px;border-top:1px solid var(--stroke);letter-spacing:-.3px}
+h2 .n{color:var(--accent);font-family:var(--mono);font-size:15px;margin-right:8px;font-weight:500}
+h3{font-size:17px;font-weight:700;margin:26px 0 10px;color:#f4f4f8}
+h4{font-size:14px;font-weight:700;margin:18px 0 8px;color:var(--txt)}
+p{margin:10px 0;color:var(--txt-2)}
+p strong,li strong{color:var(--txt);font-weight:600}
+ul,ol{margin:10px 0 10px 22px;color:var(--txt-2)}
+li{margin:5px 0}
+code{font-family:var(--mono);font-size:12.5px;background:rgba(255,255,255,.06);padding:1px 5px;border-radius:4px;color:#dcdcf5}
+pre{background:#101017;border:1px solid var(--stroke);border-radius:10px;padding:16px 18px;overflow-x:auto;margin:14px 0}
+pre code{background:none;padding:0;font-size:12.5px;line-height:1.7;color:#cfd3dd;display:block;white-space:pre}
+.card{background:var(--card);border:1px solid var(--stroke);border-radius:12px;padding:18px 20px;margin:14px 0}
+.card.warn{border-color:rgba(224,184,110,.35);background:rgba(224,184,110,.06)}
+.card.ok{border-color:var(--stroke-strong);background:rgba(139,142,224,.07)}
+.card.bad{border-color:rgba(224,122,122,.35);background:rgba(224,122,122,.05)}
+.card h4{margin-top:0}
+.card p:last-child,.card ul:last-child{margin-bottom:0}
+table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13.5px}
+th,td{border:1px solid var(--stroke);padding:9px 12px;text-align:left;vertical-align:top}
+th{background:rgba(139,142,224,.08);color:var(--txt);font-weight:600;font-size:13px}
+td{color:var(--txt-2)}
+td strong{color:var(--txt)}
+.sw{display:inline-block;width:13px;height:13px;border-radius:4px;border:1px solid rgba(255,255,255,.16);vertical-align:-2px;margin-right:6px}
+.sw.g1{background:var(--grad-hero)}.sw.g2{background:var(--grad-btn)}.sw.g3{background:var(--grad-logo)}.sw.g4{background:var(--grad-bar)}
+.mono{font-family:var(--mono);font-size:12.5px}
+.pill{display:inline-block;font-size:11px;padding:1px 8px;border-radius:100px;border:1px solid var(--stroke);color:var(--txt-3);margin-left:6px;vertical-align:1px}
+.pill.do{border-color:rgba(110,203,131,.4);color:var(--ok)}
+.pill.no{border-color:rgba(224,122,122,.4);color:var(--bad)}
+.mock-wrap{margin:18px 0 8px}
+.mock{width:640px;max-width:100%;height:440px;background:var(--grad-hero);border:1px solid rgba(139,142,224,.22);border-radius:12px;overflow:hidden;display:flex;flex-direction:column;font-size:13px;box-shadow:0 18px 48px rgba(23,24,50,.65),0 0 0 1px rgba(139,142,224,.06) inset;position:relative}
+.mock:before{content:"";position:absolute;left:-120px;top:-160px;width:420px;height:360px;background:radial-gradient(circle,rgba(139,142,224,.30) 0%,rgba(139,142,224,0) 68%);pointer-events:none}
+.mock .cap{height:28px;background:rgba(10,10,16,.55);border-bottom:1px solid rgba(139,142,224,.16);display:flex;align-items:center;gap:8px;padding:0 10px;color:#8B93A5;font-size:11px;position:relative}
+.mock .cap .dot{width:9px;height:9px;border-radius:50%;background:rgba(255,255,255,.14)}
+.mock .cap .t{margin-left:6px;font-family:var(--mono)}
+.mock .bd{flex:1;padding:22px 26px;display:flex;flex-direction:column;gap:14px;position:relative}
+.mock .ft{height:52px;border-top:1px solid rgba(139,142,224,.16);display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:0 22px;background:rgba(10,10,16,.35);position:relative}
+.mock .brandrow{display:flex;align-items:center;gap:10px}
+.mock .lg{width:32px;height:32px;border-radius:9px;background:var(--grad-logo);color:#171832;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:16px;box-shadow:0 6px 18px rgba(139,142,224,.45)}
+.mock .bn{font-weight:700;color:#F4F6FA;font-size:14px}
+.mock .ver{margin-left:auto;color:#8B93A5;font-size:11px;font-family:var(--mono)}
+.mock h5{font-size:19px;color:#F4F6FA;font-weight:700;margin:0}
+.mock .sub{color:#9EA3B8;font-size:12px}
+.mock .field{display:flex;gap:8px}
+.mock .input{flex:1;height:34px;background:rgba(36,41,54,.85);border:1px solid rgba(139,142,224,.28);border-radius:8px;display:flex;align-items:center;padding:0 10px;color:#C3C9D4;font-size:12px;box-shadow:0 0 0 3px rgba(139,142,224,.07)}
+.mock .btn{height:32px;padding:0 18px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:12.5px;border:1px solid rgba(255,255,255,.14);color:#C3C9D4;background:rgba(255,255,255,.03)}
+.mock .btn.pri{background:var(--grad-btn);color:#151631;border-color:rgba(255,255,255,.35);font-weight:700;box-shadow:0 6px 18px rgba(139,142,224,.42)}
+.mock .row{display:flex;align-items:center;gap:10px;background:rgba(255,255,255,.035);border:1px solid rgba(139,142,224,.16);border-radius:12px;padding:11px 13px;color:#C9CEDC;font-size:12.5px}
+.mock .cb{width:15px;height:15px;border-radius:4px;background:var(--grad-logo);color:#171832;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800}
+.mock .hint{margin-left:auto;color:#8B93A5;font-size:11px}
+.mock .note{color:#8B93A5;font-size:11.5px;margin-top:auto}
+.mock .bar{height:7px;border-radius:100px;background:rgba(255,255,255,.07);overflow:hidden;box-shadow:0 0 0 1px rgba(139,142,224,.14)}
+.mock .bar i{display:block;height:100%;width:68%;background:var(--grad-bar);border-radius:100px;box-shadow:0 0 14px rgba(139,142,224,.6)}
+.mock .log{font-family:var(--mono);font-size:11.5px;color:#8B93A5;line-height:2}
+.mock .log b{color:#C9CEDC;font-weight:400}
+.mock .okc{width:58px;height:58px;border-radius:50%;background:radial-gradient(circle,rgba(52,199,123,.24) 0%,rgba(52,199,123,.06) 70%);color:#34C77B;display:flex;align-items:center;justify-content:center;font-size:28px;margin:4px auto 0;box-shadow:0 0 26px rgba(52,199,123,.28)}
+.mock .center{text-align:center}
+.mock .stats{display:flex;gap:10px;margin-top:4px}
+.mock .stat{flex:1;background:rgba(255,255,255,.035);border:1px solid rgba(139,142,224,.16);border-radius:12px;padding:10px;text-align:center}
+.mock .stat b{display:block;color:#F4F6FA;font-size:16px;font-weight:700}
+.mock .stat span{color:#8B93A5;font-size:11px}
+.hr{height:1px;background:var(--stroke);margin:26px 0}
+footer{margin-top:50px;padding-top:18px;border-top:1px solid var(--stroke);color:var(--txt-3);font-size:12.5px;font-family:var(--mono)}
+</style>
+</head>
+<body>
+<nav class="toc">
+  <div class="brand">
+    <div class="logo">T</div>
+    <div><div class="name">安装器视觉升级</div><div class="sub">v3.1 · 薰衣草渐变</div></div>
+  </div>
+  <div class="sec">方案</div>
+  <a href="#s0">0 · 结论速览</a>
+  <a href="#s1">1 · 前提与边界</a>
+  <a href="#s2">2 · 视觉规格</a>
+  <a href="#s3">3 · 逐页规格</a>
+  <div class="sec">落地</div>
+  <a href="#s4">4 · 技术实现骨架</a>
+  <a href="#s5">5 · 实施批次</a>
+  <a href="#s6">6 · 风险与回退</a>
+  <a href="#s7">7 · 验收清单</a>
+  <div class="sec">附录</div>
+  <a href="#s8">8 · 与 v1/v2 差异</a>
+  <a href="#s9">9 · 改动清单</a>
+</nav>
+
+<div class="main">
+  <div class="eyebrow">INSTALLER · LAVENDER GRADIENT · 2026-09-12</div>
+  <h1>Trim 安装器<span class="accent">视觉升级方案 v3.1</span></h1>
+  <p class="lead">在现有 <code>nsis.include</code> 钩子路线上，把安装器做成<strong>薰衣草紫单色系渐变</strong>的品牌化安装体验：深紫渐变底 + 光晕 + 渐变主按钮 + 渐变进度条 + 12px 圆角卡片，窗口 640×440，三页流程，卸载器同款。安装/静默/卸载链路仍走 electron-builder 原逻辑，<strong>自动更新零风险</strong>。</p>
+  <div class="tags">
+    <span class="tag hot">薰衣草渐变</span>
+    <span class="tag hot">品牌触点放宽 §5</span>
+    <span class="tag">640×440</span>
+    <span class="tag">nsis.include 钩子</span>
+    <span class="tag">零新增依赖</span>
+    <span class="tag">含卸载器</span>
+  </div>
+
+  <h2 id="s0"><span class="n">00</span>结论速览</h2>
+  <div class="card ok">
+    <h4>一句话</h4>
+    <p>路线不变（<code>nsis.include</code> 钩子），视觉整体换血：<strong>渐变只能出现在预渲染位图与位图按钮上</strong>，原生控件（输入框、复选框、进度条本体）仍是纯色 —— 这是 NSIS 的硬边界，方案里已按"渐变白名单"逐项安排。</p>
+  </div>
+  <table>
+    <tr><th style="width:150px">维度</th><th>现状（2.5.1 已发布产物）</th><th>v3.1 目标</th></tr>
+    <tr><td><strong>路线</strong></td><td><code>nsis.include</code> 注入钩子，electron-builder 模板原样保留</td><td>不变（<span class="pill no">不切 nsis.script</span>）</td></tr>
+    <tr><td><strong>窗口</strong></td><td>MUI 默认外框 ≈498×366，450×210 位图被拉伸</td><td>640×440，位图按实测页面区 1:1 出图</td></tr>
+    <tr><td><strong>主题</strong></td><td>浅色（main.css 浅色 token）</td><td>深紫基底 + 薰衣草渐变（<span class="pill do">经确认放宽 §5</span>）</td></tr>
+    <tr><td><strong>页数</strong></td><td>4 页：欢迎 → 选项 → 进度 → 完成</td><td>3 页：<strong>安装选项（合并欢迎）</strong> → 进度 → 完成</td></tr>
+    <tr><td><strong>卸载器</strong></td><td>原生 MUI 灰白向导</td><td>同主题两页（确认 → 完成）</td></tr>
+    <tr><td><strong>静默路径</strong></td><td>不受页面影响（<code>/S</code> 跳过所有 Page）</td><td>不变，且每批次都要回归验证</td></tr>
+    <tr><td><strong>工期</strong></td><td>—</td><td>2–2.5 天（4 批，见第 5 节；比纯色版多 0.5 天用于渐变资源）</td></tr>
+  </table>
+
+  <h2 id="s1"><span class="n">01</span>前提与边界</h2>
+
+  <h3>1.1 「必须切 nsis.script 才能做大窗口」→ 不成立</h3>
+  <ul>
+    <li>MUI2 的外框就是普通 Win32 对话框，运行期用 <code>USER32::MoveWindow</code> 改尺寸即可；官方 <code>Interface.nsh</code> 本身就是用 <code>GetDlgItem $mui.Button.Next $HWNDPARENT 1</code> 拿控件的。</li>
+    <li>官方还有 <code>MUI_UI</code> 定义（<code>ChangeUI all "${MUI_UI}"</code>），指向自制对话框资源可一次性换外框模板；但需要 Resource Hacker + 对话框单位换算，本方案不采用。</li>
+    <li>真正需要 <code>nsis.script</code> 的只有「无边框 / 自绘标题栏 / 透明窗口」。要做那一步，得自己重写卸载器、注册表、静默参数、UAC 兜底 —— 与"更好看的安装器"这个目标不成正比。</li>
+  </ul>
+
+  <h3>1.2 只要你还在用应用内自动更新，这三条就是硬约束</h3>
+  <p>单人用户不用管历史版本覆盖，但只要 <code>electron-updater</code> 还在，下面三条必须保持；<code>nsis.include</code> 路线<strong>免费</strong>拿到它们：</p>
+  <table>
+    <tr><th style="width:210px">契约</th><th>内容</th><th style="width:330px">来源（已核对源码）</th></tr>
+    <tr><td><strong>更新器参数</strong></td><td>应用内更新实际执行 <code>Trim-Setup-x.exe --updated /S --force-run</code></td><td><code>electron-updater/out/NsisUpdater.js:105-121</code> + <code>src/main/updater.js</code> 的 <code>quitAndInstall(true, true)</code></td></tr>
+    <tr><td><strong>卸载器预构建</strong></td><td>内嵌 <code>Uninstall Trim.exe</code> 由 electron-builder 单独编译</td><td><code>app-builder-lib/out/targets/nsis/NsisTarget.js:337-344</code></td></tr>
+    <tr><td><strong>卸载注册表</strong></td><td><code>HKCU\…\Uninstall\5657c39b-…</code> 的 DisplayName / UninstallString / EstimatedSize</td><td><code>app-builder-lib/templates/nsis/include/installer.nsh:104-160</code></td></tr>
+  </table>
+
+  <h3>1.3 视觉授权：本次放宽 §5，但只限安装器</h3>
+  <div class="card warn">
+    <h4>与 AGENTS.md §5 的关系</h4>
+    <p><code>AGENTS.md</code> §5 写的是「设计系统只用 main.css 既有 token；圆角 ≤8px；禁彩色渐变」—— 那条针对的是<strong>应用内 UI</strong>。安装器是发布触点，本次经你确认，允许使用<strong>薰衣草单色系渐变</strong>与更大圆角（≤12px），<strong>应用内界面一律不动</strong>。</p>
+    <p>放宽范围仅限：渐变、光晕、圆角 ≤12px、按钮投影。仍然不做：窗口透明、无边框、位图之外的动画、第三方 UI 插件/新依赖。</p>
+  </div>
+
+  <h3>1.4 渐变的三条工程底线</h3>
+  <ol>
+    <li><strong>色彩单色系</strong>：只允许薰衣草族（<code>#A6A9F2 → #7174CC</code>）+ 品牌深紫（<code>#171832</code>）之间过渡，禁止出现第二色相（蓝/粉/绿），避免"彩虹感"。</li>
+    <li><strong>渐变只落在位图上</strong>：24bit BMP 无 alpha，半透明必须提前合成到固定底色；原生控件（输入框/复选框/进度条本体）只能纯色。</li>
+    <li><strong>暗底上必须有"分离度"</strong>：深紫面上叠深紫卡片会糊，卡片用 <code>rgba(255,255,255,.035)</code> + <code>rgba(139,142,224,.16~.22)</code> 描边提亮（见 2.1）。</li>
+  </ol>
+  <h2 id="s2"><span class="n">02</span>视觉规格</h2>
+
+  <h3>2.1 基础色（深紫基底，非纯黑）</h3>
+  <table>
+    <tr><th style="width:190px">用途</th><th style="width:250px">token / 取值</th><th>色值</th></tr>
+    <tr><td>窗口深底（最外层）</td><td class="mono">--brand-ink</td><td><span class="sw" style="background:#141419"></span><code>#141419</code></td></tr>
+    <tr><td>品牌深紫（hero 底）</td><td class="mono">--brand-dark</td><td><span class="sw" style="background:#171832"></span><code>#171832</code>（沿用 v2 与 main.css <code>--accent-text</code>）</td></tr>
+    <tr><td>卡片面</td><td class="mono">--surface</td><td><span class="sw" style="background:#1D212B"></span><code>#1D212B</code>（叠白 3.5% 后 ≈ <code>#23232F</code>）</td></tr>
+    <tr><td>输入框/内嵌面</td><td class="mono">--bg-input</td><td><span class="sw" style="background:#242936"></span><code>#242936</code></td></tr>
+    <tr><td>主文字</td><td class="mono">--fg-primary</td><td><span class="sw" style="background:#F4F6FA"></span><code>#F4F6FA</code></td></tr>
+    <tr><td>次文字</td><td class="mono">--fg-secondary</td><td><span class="sw" style="background:#C3C9D4"></span><code>#C3C9D4</code></td></tr>
+    <tr><td>说明文字</td><td class="mono">--fg-tertiary</td><td><span class="sw" style="background:#8B93A5"></span><code>#8B93A5</code></td></tr>
+    <tr><td>强调色（薰衣草）</td><td class="mono">--accent</td><td><span class="sw" style="background:#8B8EE0"></span><code>#8B8EE0</code></td></tr>
+    <tr><td>强调亮 / 强调深</td><td class="mono">--accent-hover / --accent-press</td><td><span class="sw" style="background:#A6A9F2"></span><code>#A6A9F2</code> / <span class="sw" style="background:#7174CC"></span><code>#7174CC</code></td></tr>
+    <tr><td>成功</td><td class="mono">--success</td><td><span class="sw" style="background:#34C77B"></span><code>#34C77B</code></td></tr>
+  </table>
+
+  <h3>2.2 渐变（全部薰衣草单色系，方向统一）</h3>
+  <table>
+    <tr><th style="width:170px">名称</th><th style="width:330px">取值</th><th>允许出现的位置</th></tr>
+    <tr>
+      <td><span class="sw g1"></span><strong>hero 渐变</strong></td>
+      <td class="mono">135° · <code>#20214A → #171832 45% → #141419</code></td>
+      <td>页面背景位图整幅（页 1 / 页 3 共用）</td>
+    </tr>
+    <tr>
+      <td><span class="sw g2"></span><strong>主按钮渐变</strong></td>
+      <td class="mono">180° · <code>#A6A9F2 → #8B8EE0</code></td>
+      <td>位图按钮底（"安装 / 完成 / 卸载"），配 <code>1px</code> 高光描边 + 薰衣草投影</td>
+    </tr>
+    <tr>
+      <td><span class="sw g3"></span><strong>logo 渐变</strong></td>
+      <td class="mono">140° · <code>#A6A9F2 → #7174CC</code></td>
+      <td>32×32 logo 块、勾选框图标、统计卡强调条</td>
+    </tr>
+    <tr>
+      <td><span class="sw g4"></span><strong>进度条渐变</strong></td>
+      <td class="mono">90° · <code>#A6A9F2 → #7174CC</code></td>
+      <td>进度条"轨迹底图"；<strong>实际填充仍是纯色</strong>（见 4.4 说明）</td>
+    </tr>
+    <tr>
+      <td><span class="sw" style="background:radial-gradient(circle,#8B8EE0,transparent 70%)"></span><strong>光晕</strong></td>
+      <td class="mono">径向 · <code>rgba(139,142,224,.30) → 透明</code>，半径 ≈ 400px</td>
+      <td>页面左上角背后、主按钮下方、完成页对勾外圈（<strong>必须先合成到 hero 底色</strong>）</td>
+    </tr>
+  </table>
+
+  <h3>2.3 几何规格</h3>
+  <table>
+    <tr><th style="width:200px">项目</th><th>值</th><th>说明</th></tr>
+    <tr><td>外框客户区</td><td>640 × 440 px</td><td>含底部 52px 按钮条；比现状宽 +28%、高 +20%</td></tr>
+    <tr><td>页面位图区</td><td>640 × 388 px</td><td>= 客户区高 − 按钮条；<strong>先临时打点实测再定稿</strong>（4.1）</td></tr>
+    <tr><td>圆角</td><td>卡片 12px · 按钮 10px · logo 9px · 输入框 8px · 进度条 100px（胶囊）</td><td>仅位图可圆角；原生控件为直角，用外描边/内缩进弱化</td></tr>
+    <tr><td>内容边距</td><td>26px，卡片间距 12px</td><td>页 1 上密下疏，页脚提示贴底</td></tr>
+    <tr><td>标题 / 副标题</td><td>19–20px 粗体 / 12.5px 常规</td><td><code>Microsoft YaHei UI</code>，标题可叠 1px 极淡高光</td></tr>
+    <tr><td>进度 banner</td><td>640 × 56 px</td><td>logo + 状态文案 + 副文案，背景为 hero 渐变的横向切片</td></tr>
+    <tr><td>按钮</td><td>高 32px / 内边距 18px / 间距 10px / 投影 <code>0 6px 18px rgba(139,142,224,.42)</code></td><td>主按钮位图三态（正常 / 禁用 / 按下）</td></tr>
+  </table>
+
+  <h3>2.4 三页流程（高保真模拟）</h3>
+  <div class="mock-wrap">
+    <div class="mock">
+      <div class="cap"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="t">Trim 安装程序</span></div>
+      <div class="bd">
+        <div class="brandrow"><div class="lg">T</div><div class="bn">Trim 安装程序</div><div class="ver">v2.5.1</div></div>
+        <h5>选择安装位置</h5>
+        <div class="sub">Trim 将安装到下面的文件夹，预计占用 186 MB。</div>
+        <div class="field"><div class="input">C:\Users\…\AppData\Local\Programs\Trim</div><div class="btn">浏览…</div></div>
+        <div class="row"><span class="cb">✓</span>创建桌面快捷方式<span class="hint">推荐</span></div>
+        <div class="row"><span class="cb">✓</span>创建开始菜单快捷方式<span class="hint">推荐</span></div>
+        <div class="note">需要至少 250 MB 可用空间 · 当前可用 42.6 GB · 仅为你（当前用户）安装，不需要管理员权限</div>
+      </div>
+      <div class="ft"><div class="btn">取消</div><div class="btn pri">安装</div></div>
+    </div>
+  </div>
+  <div class="mock-wrap">
+    <div class="mock">
+      <div class="cap"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="t">Trim 安装程序</span></div>
+      <div class="bd">
+        <div class="brandrow"><div class="lg">T</div><div class="bn">正在安装 Trim</div><div class="ver">v2.5.1</div></div>
+        <div class="sub">正在解压应用资源并注册快捷方式，请稍候…</div>
+        <div class="bar"><i></i></div>
+        <div class="log">
+          <div><b>[1/4] 检查系统环境…</b> 完成</div>
+          <div><b>[2/4] 创建安装目录…</b> 完成</div>
+          <div><b>[3/4] 解压应用资源（app-64.7z）…</b> 进行中</div>
+          <div>[4/4] 注册快捷方式与卸载信息…</div>
+        </div>
+      </div>
+      <div class="ft"><div class="btn" style="opacity:.4">取消</div></div>
+    </div>
+  </div>
+  <div class="mock-wrap">
+    <div class="mock">
+      <div class="cap"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="t">Trim 安装程序</span></div>
+      <div class="bd">
+        <div class="brandrow"><div class="lg">T</div><div class="bn">Trim 安装程序</div><div class="ver">v2.5.1</div></div>
+        <div class="okc">✓</div>
+        <div class="center"><h5>安装完成</h5></div>
+        <div class="center" style="color:#8B93A5;font-size:12px">Trim 已安装到你的计算机，可从桌面或开始菜单启动。</div>
+        <div class="stats">
+          <div class="stat"><b>1,247</b><span>文件数</span></div>
+          <div class="stat"><b>186 MB</b><span>安装大小</span></div>
+          <div class="stat"><b>12.4 s</b><span>安装耗时</span></div>
+        </div>
+        <div class="row" style="margin-top:2px"><span class="cb">✓</span>安装完成后立即启动 Trim</div>
+      </div>
+      <div class="ft"><div class="btn">打开安装目录</div><div class="btn pri">完成</div></div>
+    </div>
+  </div>
+
+  <h3>2.5 渐变白名单（实现时必须按这个来）</h3>
+  <table>
+    <tr><th style="width:300px">载体</th><th>渐变</th><th style="width:120px">可行性</th></tr>
+    <tr><td>页面背景（页 1 / 页 3 / 卸载页）</td><td>hero 渐变 + 左上光晕</td><td><span class="pill do">位图</span></td></tr>
+    <tr><td>进度页 banner 带</td><td>hero 渐变横切</td><td><span class="pill do">位图</span></td></tr>
+    <tr><td>卡片/统计格底</td><td>纯色 + 薰衣草描边（不上渐变，避免糊）</td><td><span class="pill do">位图</span></td></tr>
+    <tr><td>主按钮（安装 / 完成 / 卸载）</td><td>180° 主按钮渐变 + 投影</td><td><span class="pill do">位图按钮</span></td></tr>
+    <tr><td>logo 块 / 勾选框标记 / 统计卡强调条</td><td>logo 渐变</td><td><span class="pill do">位图</span></td></tr>
+    <tr><td>进度条轨道</td><td>胶囊形轨道位图（可含渐变描边）</td><td><span class="pill do">位图</span></td></tr>
+    <tr><td>进度条填充</td><td>只能纯色，推荐取渐变中段 <code>#9A9DF0</code></td><td><span class="pill">纯色</span></td></tr>
+    <tr><td>输入框 / 复选框 / 单选</td><td>原生控件：矩形纯色 + 深色填充</td><td><span class="pill no">无渐变</span></td></tr>
+    <tr><td>窗口标题栏 / 边框</td><td>深色（DWM 深色标题栏），无自定义绘制</td><td><span class="pill">系统</span></td></tr>
+  </table>
+
+  <h2 id="s3"><span class="n">03</span>逐页规格</h2>
+
+  <h3>3.1 页 1 · 安装选项（合并原「欢迎页 + 选项页」）</h3>
+  <table>
+    <tr><th style="width:150px">区域</th><th>内容</th><th style="width:230px">实现方式</th></tr>
+    <tr><td>左上光晕 + 品牌行</td><td>32×32 渐变 logo 块（带外发光）+「Trim 安装程序」+ 右对齐 <code>v${VERSION}</code></td><td>光晕与 logo 进背景位图；版本号 NSIS 运行时绘制</td></tr>
+    <tr><td>标题 / 副标题</td><td>「选择安装位置」19px 粗体 · 副标题 12.5px <code>#9EA3B8</code></td><td>背景位图</td></tr>
+    <tr><td>路径行</td><td>输入框（8px 圆角视觉，靠 1px 薰衣草描边位图） + 「浏览…」</td><td><code>NSD_CreateControl EDIT</code> + <code>NSD_CreateButton</code>（现有代码同款）</td></tr>
+    <tr><td>选项行 ×2</td><td>12px 圆角卡片：渐变勾选标记 + 文案 + 右侧"推荐"</td><td>卡片与勾选标记进位图；文案与可点击热区用原生控件叠放</td></tr>
+    <tr><td>页脚提示</td><td>「需要至少 250 MB · 当前可用 xx GB · 仅为你安装，无需管理员权限」</td><td><code>${DriveSpace}</code>（FileFunc.nsh）取真实值</td></tr>
+    <tr><td>底部按钮</td><td>「取消」描边按钮 + 「安装」渐变主按钮</td><td>位图按钮 + <code>BM_CLICK</code> 转发原生 ID 1/2（见 4.6）</td></tr>
+  </table>
+  <div class="card warn">
+    <h4>静默路径注意</h4>
+    <p>合并页后，所有安装决策默认值必须放在 <code>customInit</code>（<code>.onInit</code> 期）：<code>$Trim.DesktopState / $Trim.StartState</code> 默认 1、<code>$INSTDIR</code> 用默认值。这样 <code>/S</code> 静默安装不经过页面也能得到正确结果 —— 现有 <code>build/installer.nsh</code> 已如此，改造时别破坏。</p>
+  </div>
+
+  <h3>3.2 页 2 · 安装进度</h3>
+  <table>
+    <tr><th style="width:150px">区域</th><th>内容</th><th style="width:230px">实现方式</th></tr>
+    <tr><td>banner 带</td><td>hero 渐变横切 + 渐变 logo +「正在安装 Trim」+ 副文案</td><td>重制 <code>instfiles-banner.bmp</code>（640×56）</td></tr>
+    <tr><td>进度条轨道</td><td>7px 胶囊轨道，含薰衣草描边与内阴影</td><td>轨道是位图；原生进度条叠在轨道内（高度压到 4–6px）</td></tr>
+    <tr><td>进度填充</td><td>纯色 <code>#9A9DF0</code>（渐变中段），外发光靠轨道位图营造</td><td><code>PBM_SETBARCOLOR</code> / <code>PBM_SETBKCOLOR</code>（现有已用）</td></tr>
+    <tr><td>步骤日志</td><td>4 行 mono 文案，逐行出现</td><td>Section 内 <code>DetailPrint</code>，显示在原生日志控件 1016</td></tr>
+  </table>
+  <div class="card">
+    <h4>关于"渐变进度条"</h4>
+    <p>原生进度条控件只能纯色填充。<strong>要真渐变有两条路</strong>：① 用位图按钮/静态图叠一层固定渐变条，配定时器按进度裁剪（需要 <code>SetTimer</code> 回调，属试验项）；② 保持纯色填充 + 轨道渐变描边（默认方案，视觉上已经是"发光薰衣草条"）。建议先走 ②，把 ① 放到批次 4 可选验证。</p>
+  </div>
+
+  <h3>3.3 页 3 · 安装完成</h3>
+  <table>
+    <tr><th style="width:150px">区域</th><th>内容</th><th style="width:230px">实现方式</th></tr>
+    <tr><td>成功标记</td><td>58px 圆形，radial 绿光晕 + 对勾（<code>#34C77B</code>）</td><td>位图（RGB 下先合成光晕）</td></tr>
+    <tr><td>标题 / 副文案</td><td>「安装完成」+ 两行说明</td><td>位图</td></tr>
+    <tr><td>统计三格</td><td>文件数 / 安装大小 / 安装耗时，卡片顶 2px 渐变强调条</td><td>运行时绘制（<code>${GetSize}</code> + <code>GetTickCount</code>，见 4.5）</td></tr>
+    <tr><td>启动勾选</td><td>「安装完成后立即启动 Trim」</td><td>现有 <code>Trim.LaunchChk</code>，文案与位置调整</td></tr>
+    <tr><td>底部按钮</td><td>「打开安装目录」描边 + 「完成」渐变主按钮</td><td>主按钮转发 ID 1；打开目录用 <code>ExecShell open "$INSTDIR"</code></td></tr>
+  </table>
+
+  <h3>3.4 卸载器（两页，同主题）</h3>
+  <table>
+    <tr><th style="width:150px">页</th><th>内容</th><th style="width:230px">钩子</th></tr>
+    <tr><td>卸载确认页</td><td>品牌行 + 「卸载 Trim」+ 说明 + 「保留我的配置与清理记录」勾选</td><td><code>!macro customUnWelcomePage</code> → <code>UninstPage custom un.XxxPre un.XxxLeave</code></td></tr>
+    <tr><td>卸载完成页</td><td>对勾（绿光晕）+「已卸载」+「配置已保留在 %APPDATA%\Trim」</td><td><code>!macro customUninstallPage</code></td></tr>
+    <tr><td>资源释放</td><td>释放 <code>page-uninstall.bmp</code> 到 <code>$PLUGINSDIR</code></td><td><code>!macro customUnInit</code>（<code>un.onInit</code> 期）</td></tr>
+  </table>
+  <h2 id="s4"><span class="n">04</span>技术实现骨架</h2>
+  <p>以下骨架基于现有 <code>build/installer.nsh</code> 的结构与约束：该文件在 <code>sharedHeader</code> 阶段先于 <code>common.nsh</code>/<code>MUI2.nsh</code> 编译；<code>-WX</code> 下未引用的 Function 会 6010 报错；nsDialogs 每页必须以 <code>nsDialogs::Show</code> 收尾。</p>
+
+  <h3>4.1 第一步：先量后画（不要凭感觉写坐标）</h3>
+  <pre><code>; 批次 1 临时打点：MUI 外框创建后量尺寸，实测完删除
+!define MUI_CUSTOMFUNCTION_GUIINIT TrimGuiProbe
+
+Function TrimGuiProbe
+  System::Alloc 16
+  Pop $R0
+  System::Call 'USER32::GetClientRect(p $HWNDPARENT, p $R0)'
+  System::Call '*$R0(i .r1, i .r2, i .r3, i .r4)'   ; 客户区 = $3 × $4
+  System::Free $R0
+  GetDlgItem $9 $HWNDPARENT 1018
+  System::Alloc 16
+  Pop $R1
+  System::Call 'USER32::GetClientRect(p $9, p $R1)'
+  System::Call '*$R1(i .r1, i .r2, i .r5, i .r6)'   ; 页面区 = $5 × $6
+  System::Free $R1
+  MessageBox MB_OK "outer client=$3 x $4$\npage(1018)=$5 x $6"
+FunctionEnd</code></pre>
+  <p>在 <strong>100% / 125% / 150%</strong> 三档缩放下各量一次，把页面区尺寸写回生成器的 <code>PAGE_W, PAGE_H</code>，保证位图 <strong>1:1 不拉伸</strong> —— 这是"渐变看起来高级而不是糊"的第一前提（渐变被拉伸时最容易出现色带）。</p>
+
+  <h3>4.2 放大窗口 + 平移底部控件</h3>
+  <pre><code>Var Trim.OrigW
+Var Trim.OrigH
+!define TRIM_W 640     ; 目标客户区宽
+!define TRIM_H 440     ; 目标客户区高（含底部 52px 按钮条）
+
+!define MUI_CUSTOMFUNCTION_GUIINIT TrimGuiInit
+
+Function TrimGuiInit
+  ; ① 记录原始客户区（后续算位移，禁止写死像素）
+  !insertmacro TRIM_GET_CLIENT $HWNDPARENT $Trim.OrigW $Trim.OrigH
+
+  ; ② 外框尺寸 = 目标客户区 + (当前外框 − 当前客户区)
+  !insertmacro TRIM_GET_WINDOW $HWNDPARENT $R7 $R8
+  IntOp $R7 $R7 - $Trim.OrigW
+  IntOp $R8 $R8 - $Trim.OrigH
+  IntOp $R7 $R7 + ${TRIM_W}
+  IntOp $R8 $R8 + ${TRIM_H}
+
+  ; ③ 居中并一次性 MoveWindow
+  System::Call 'USER32::GetSystemMetrics(i 0) i .r1'   ; SM_CXSCREEN
+  System::Call 'USER32::GetSystemMetrics(i 1) i .r2'   ; SM_CYSCREEN
+  IntOp $R5 $r1 - $R7
+  IntOp $R6 $r2 - $R8
+  IntOp $R5 $R5 / 2
+  IntOp $R6 $R6 / 2
+  System::Call 'USER32::MoveWindow(p $HWNDPARENT, i $R5, i $R6, i $R7, i $R8, i 0)'
+
+  ; ④ 底部控件按 (dx,dy) 平移：下一步(1)/取消(2)/上一步(3)/品牌文字(1028,1256)
+  IntOp $R1 ${TRIM_W} - $Trim.OrigW
+  IntOp $R2 ${TRIM_H} - $Trim.OrigH
+  !insertmacro TRIM_SHIFT_CTRL 1 $R1 $R2
+  !insertmacro TRIM_SHIFT_CTRL 2 $R1 $R2
+  !insertmacro TRIM_SHIFT_CTRL 3 $R1 $R2
+  !insertmacro TRIM_SHIFT_CTRL 1256 $R1 $R2
+
+  ; ⑤ 页面区（1018）与自绘页由现有 TrimFullBleed 按新客户区自动铺满
+  !insertmacro TRIM_DARK_TITLEBAR
+FunctionEnd</code></pre>
+  <p><code>TRIM_SHIFT_CTRL</code> 的稳妥写法：<code>GetWindowRect(控件)</code> → <code>ScreenToClient($HWNDPARENT, 左上角)</code> → 加 <code>(dx,dy)</code> → <code>MoveWindow</code>。<strong>必须用相对位移</strong>，这样 125%/150% 下按钮不会跑到窗口中间。</p>
+
+  <h3>4.3 深色标题栏（配深紫主题）</h3>
+  <pre><code>!macro TRIM_DARK_TITLEBAR
+  System::Alloc 4
+  Pop $R0
+  System::Call '*$R0(i 1)'
+  ClearErrors
+  System::Call 'dwmapi::DwmSetWindowAttribute(p $HWNDPARENT, i 20, p $R0, i 4)'  ; Win10 1903+
+  ${If} ${Errors}
+    ClearErrors
+    System::Call 'dwmapi::DwmSetWindowAttribute(p $HWNDPARENT, i 19, p $R0, i 4)' ; Win10 1809
+  ${EndIf}
+  System::Free $R0
+  ClearErrors
+!macroend</code></pre>
+
+  <h3>4.4 渐变与控件的能力边界（别在不可能的地方花时间）</h3>
+  <table>
+    <tr><th style="width:300px">想要的效果</th><th>结论</th></tr>
+    <tr><td>整幅 hero 渐变背景 + 光晕</td><td><span class="pill do">可以</span> 预渲染 24bit BMP，光晕先合成到底色</td></tr>
+    <tr><td>渐变主按钮（三态）</td><td><span class="pill do">可以</span> 三张位图按钮 + <code>BM_CLICK</code> 转发原生 ID</td></tr>
+    <tr><td>卡片圆角 + 薰衣草描边 + 投影</td><td><span class="pill do">可以</span> 位图底 + 原生文字/热区叠加</td></tr>
+    <tr><td>进度条轨道渐变 + 外发光</td><td><span class="pill do">可以</span> 轨道位图，原生条叠在其中</td></tr>
+    <tr><td>进度条填充渐变</td><td><span class="pill">半可</span> 原生条只能纯色（用渐变中段色）；真渐变需自绘 + 定时器（试验项）</td></tr>
+    <tr><td>输入框 / 复选框圆角、渐变、透明</td><td><span class="pill no">不行</span> 原生控件矩形纯色；用深色填充 + 1px 描边 + 位图图标模拟</td></tr>
+    <tr><td>hover 微动、淡入淡出、粒子</td><td><span class="pill no">不做</span> 需要子类化窗口过程/逐帧定时器，收益不成正比</td></tr>
+    <tr><td>无边框 / 圆角窗口 / 自绘标题栏</td><td><span class="pill no">不做</span> 只有切 <code>nsis.script</code> + 自绘拖动/最小化/关闭才划算</td></tr>
+  </table>
+
+  <h3>4.5 完成页统计（文件数 / 大小 / 耗时）</h3>
+  <pre><code>; ① customInit（.onInit 期）记录起始 tick
+System::Call 'kernel32::GetTickCount() i .r0'
+StrCpy $Trim.StartTick $R0
+
+; ② 完成页 TrimFinishPre 内计算（FileFunc.nsh 只放 installer pass）
+!include FileFunc.nsh        ; 必须在 !ifndef BUILD_UNINSTALLER 内，避免卸载器 pass 6010
+${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2      ; $0 = 总 KB
+System::Call 'kernel32::GetTickCount() i .r0'
+IntOp $R0 $R0 - $Trim.StartTick
+IntOp $R0 $R0 / 1000                        ; 秒
+${NSD_SetText} $Trim.StatSize "$0 KB"
+${NSD_SetText} $Trim.StatTime "$R0 s"</code></pre>
+  <p>代价：遍历约 1200 个文件 / 186 MB，实测在 <strong>50ms 量级</strong>，可接受。</p>
+
+  <h3>4.6 渐变主按钮（本方案核心，非可选）</h3>
+  <pre><code>; 思路：隐藏原生 ID 1 按钮，画位图按钮，点击时转发给原生按钮
+GetDlgItem $9 $HWNDPARENT 1
+ShowWindow $9 ${SW_HIDE}                 ; 仅在本页隐藏
+; …绘制渐变位图按钮（SS_NOTIFY 静态控件，三态位图切换）…
+GetDlgItem $9 $HWNDPARENT 1
+SendMessage $9 ${BM_CLICK} 0 0           ; 位图按钮被点击时执行
+
+; 禁用态：安装进行中不要画"可点击"样式，直接隐藏位图按钮并露出原生禁用按钮</code></pre>
+  <ul>
+    <li>需要同步的三件事：<strong>启用/禁用</strong>（进入进度页前隐藏）、<strong>Enter / Esc 快捷键</strong>（保留原生按钮做响应，位图按钮只做外观与转发）、<strong>Tab 焦点</strong>（位图按钮设 <code>WS_TABSTOP</code> 或直接不参与 Tab 循环）。</li>
+    <li>三态位图：正常 <code>#A6A9F2→#8B8EE0</code>、按下 <code>#8B8EE0→#7174CC</code>、禁用 <code>#3A3D55→#2E3049</code>（文字 <code>#8B93A5</code>）。</li>
+  </ul>
+
+  <h3>4.7 卸载器品牌化</h3>
+  <pre><code>!ifdef BUILD_UNINSTALLER
+  !macro customUnInit
+    InitPluginsDir
+    SetOutPath $PLUGINSDIR
+    File /oname=$PLUGINSDIR\page-uninstall.bmp "${BUILD_RESOURCES_DIR}\installer\page-uninstall.bmp"
+  !macroend
+
+  !macro customUnWelcomePage
+    UninstPage custom un.TrimUnWelcomePre un.TrimUnWelcomeLeave
+  !macroend
+
+  !macro customUninstallPage
+    UninstPage custom un.TrimUnDonePre
+  !macroend
+
+  Function un.TrimUnWelcomePre
+    ; nsDialogs::Create 1018 → 铺 hero 渐变底 → 叠控件 → nsDialogs::Show
+  FunctionEnd
+!endif</code></pre>
+  <div class="card warn">
+    <h4>卸载器 pass 的三个坑</h4>
+    <ul>
+      <li>函数必须 <code>Function un.Xxx</code>，页面宏用 <code>UninstPage</code>；</li>
+      <li>不能引用 installer-only 的变量/宏（现有 <code>Trim.*</code> 变量在 <code>!ifndef BUILD_UNINSTALLER</code> 内，需拆共用宏）；</li>
+      <li><code>$INSTDIR</code> 来自注册表，不要假设成编译期值。</li>
+    </ul>
+  </div>
+
+  <h3>4.8 资源生成器改造（<code>scripts/gen-installer-assets.py</code>）</h3>
+  <pre><code>PAGE_W, PAGE_H = 640, 388      # ← 打点实测后定稿（当前 450×210）
+BANNER_H = 56
+S = 2                          # 保持 2× 超采样 + LANCZOS 缩回
+
+# --- 深紫基底 ---
+INK    = (20, 20, 25)      # #141419
+DARK   = (23, 24, 50)      # #171832  brand-dark
+HERO_A = (32, 33, 74)      # #20214A  hero 起点
+DARK2  = (23, 26, 33)      # #171A21  页面右侧过渡
+CARD   = (35, 35, 47)      # 卡片面（#1D212B 叠白 3.5%）
+INPUT  = (36, 41, 54)      # #242936
+FG     = (244, 246, 250)   # #F4F6FA
+FG2    = (195, 201, 212)   # #C3C9D4
+FG3    = (139, 147, 165)   # #8B93A5
+ACC_L  = (166, 169, 242)   # #A6A9F2  accent-hover
+ACC    = (139, 142, 224)   # #8B8EE0  accent
+ACC_D  = (113, 116, 204)   # #7174CC  accent-press
+GLOW   = (139, 142, 224)   # 光晕基色（按 alpha 合成到 HERO）
+OK     = (52, 199, 123)    # #34C77B
+
+def lerp(a, b, t):                  # 线性插值：渐变的最小实现
+    return tuple(round(a[i] + (b[i] - a[i]) * t) for i in range(3))
+
+def vgrad(img, box, c1, c2):        # 竖向渐变（主按钮）
+    d = ImageDraw.Draw(img)
+    x0, y0, x1, y1 = box
+    for y in range(y0, y1):
+        d.line([(x0, y), (x1, y)], fill=lerp(c1, c2, (y - y0) / max(1, y1 - y0)))
+
+def diag_grad(img, box, c1, c2, c3):  # 135° 三段渐变（hero，起点色 c1 → c3）
+    ...  # 逐像素插值：t = (x/w * 0.5 + y/h * 0.5)，到 45% 处切到 c3
+
+def radial_glow(img, cx, cy, r, color, alpha):  # 光晕：合成到底色，不能用 alpha 通道
+    ...  # 逐像素 d = 1 - dist/r，blend = color * d^2 * alpha</code></pre>
+  <table>
+    <tr><th style="width:260px">输出文件</th><th>用途</th><th style="width:130px">尺寸</th></tr>
+    <tr><td class="mono">page-setup.bmp</td><td>页 1（安装选项，合并页）</td><td>640 × 388</td></tr>
+    <tr><td class="mono">page-finish.bmp</td><td>页 3（完成页静态部分）</td><td>640 × 388</td></tr>
+    <tr><td class="mono">page-uninstall.bmp</td><td>卸载确认 / 完成页</td><td>640 × 388</td></tr>
+    <tr><td class="mono">instfiles-banner.bmp</td><td>进度页 banner</td><td>640 × 56</td></tr>
+    <tr><td class="mono">btn-primary-*.bmp</td><td>渐变主按钮三态（用于"安装/完成/卸载"）</td><td>按控件尺寸出（约 108×32）</td></tr>
+    <tr><td class="mono">progress-track.bmp</td><td>进度条胶囊轨道（含描边/外发光）</td><td>640 × 14</td></tr>
+  </table>
+  <div class="card">
+    <h4>渐变的三个工程要点</h4>
+    <ul>
+      <li><strong>先渐变、后文字</strong>：先画渐变底，再叠文字/描边，最后 2× → 1× 降采样，文字边缘才不会带渐变杂边。</li>
+      <li><strong>防色带</strong>：暗色渐变在 8bit/通道下容易出现条带。手段：起止色差控制在小范围（本次 <code>#20214A → #171832</code> 跨度已足够小）、2× 超采样、必要时加 ±1 的抖动（dither）。</li>
+      <li><strong>无 alpha</strong>：BMP 24bit 没有透明通道，所有"半透明"必须预先合成到确定的底色；这就是为什么卡片/按钮要用固定底板而不是叠加在动态背景上。</li>
+    </ul>
+  </div>
+
+  <h2 id="s5"><span class="n">05</span>实施批次（每批可独立打包验收）</h2>
+  <table>
+    <tr><th style="width:70px">批次</th><th>内容</th><th style="width:210px">验收点</th><th style="width:80px">预计</th></tr>
+    <tr>
+      <td><strong>1</strong></td>
+      <td>窗口放大到 640×440：<code>TrimGuiInit</code> + 控件位移 + 深色标题栏；先打点实测页面区尺寸</td>
+      <td>三页按钮都在底部正确位置；100/125/150% 三档无错位；<code>/S</code> 静默安装结果不变</td>
+      <td>0.5 天</td>
+    </tr>
+    <tr>
+      <td><strong>2</strong></td>
+      <td>渐变资源：改造生成器（hero 渐变 + 光晕 + 卡片 + 尺寸），产出 4 张页面位图 + 轨道位图</td>
+      <td>无可见色带；位图 1:1 不拉伸；深底上文字无杂边</td>
+      <td>0.5–0.75 天</td>
+    </tr>
+    <tr>
+      <td><strong>3</strong></td>
+      <td>信息架构 + 渐变主按钮：欢迎/选项合并、步骤日志、完成页统计、位图按钮转发与禁用态</td>
+      <td>两页流程；完成页统计正确；按钮 Enter/Esc/禁用态正常</td>
+      <td>0.75–1 天</td>
+    </tr>
+    <tr>
+      <td><strong>4</strong></td>
+      <td>卸载器品牌化 + 全链路回归（可选：自绘渐变进度条实验）</td>
+      <td>卸载器同主题；<code>--updated /S --force-run</code> 静默升级 + 自动重启；卸载无残留</td>
+      <td>0.5 天</td>
+    </tr>
+  </table>
+  <div class="card">
+    <h4>每批固定动作</h4>
+    <ul>
+      <li>改前 <code>git status</code> 确认工作区状态（<code>build/</code> 目前未入库）；改后 <code>npm run build:setup</code> 出包。</li>
+      <li>每次出包都跑一遍静默安装：<code>Trim-Setup-2.5.1.exe /S</code>，确认快捷方式 / 开始菜单 / 卸载注册表三项正常。</li>
+      <li>批次 1 完成后先提交一次，作为视觉改造前的回退点。</li>
+    </ul>
+  </div>
+
+  <h2 id="s6"><span class="n">06</span>风险与回退</h2>
+  <table>
+    <tr><th style="width:230px">风险</th><th style="width:70px">等级</th><th>规避 / 回退</th></tr>
+    <tr><td>MUI 底部控件漏移（按钮悬空/重叠）</td><td>中</td><td>批次 1 一次性处理；逐页截图比对；位移统一走"相对原位置 + (dx,dy)"</td></tr>
+    <tr><td>高 DPI 下坐标错位</td><td>中</td><td>全部坐标由实测 rect 计算，禁写死；100/125/150% 三档验收</td></tr>
+    <tr><td>渐变出现色带（banding）</td><td>中</td><td>起止色差小 + 2× 超采样 + 需要时加抖动；渲染后放大检查 400% 目视</td></tr>
+    <tr><td>暗底上文字/图标边缘发灰</td><td>中</td><td>"先渐变后文字"的绘制顺序 + 2× 降采样；避免直接在小尺寸 RGB 画布上画字</td></tr>
+    <tr><td>位图按钮与原生按钮状态不同步</td><td>中</td><td>只在自绘页启用、离开立即恢复；禁用态直接隐藏位图按钮露出原生禁用按钮</td></tr>
+    <tr><td>安装包体积上升</td><td>低</td><td>6 张 640×388/56 BMP ≈ 3.5MB 未压缩，7z 压缩后增量 &lt; 1MB（对比 125MB 包体可忽略）</td></tr>
+    <tr><td>卸载器 pass 编译报 6010（-WX）</td><td>中</td><td>所有 <code>!include</code> 与 installer-only 变量放进 <code>!ifndef BUILD_UNINSTALLER</code>；共用宏拆成不依赖 installer 变量的版本</td></tr>
+    <tr><td>静默路径被页面逻辑污染</td><td>高</td><td>铁律：安装决策默认值一律在 <code>customInit</code> 设；每批次固定跑 <code>/S</code> 回归</td></tr>
+  </table>
+
+  <h2 id="s7"><span class="n">07</span>验收清单</h2>
+  <table>
+    <tr><th style="width:32px"></th><th style="width:230px">项目</th><th>判定标准</th></tr>
+    <tr><td>☐</td><td>构建</td><td><code>npm run build:setup</code> 成功，无 <code>-WX</code> 警告升级为错误</td></tr>
+    <tr><td>☐</td><td>视觉-页 1</td><td>hero 渐变 + 左上光晕；logo 渐变块；12px 圆角卡片；渐变主按钮"安装"</td></tr>
+    <tr><td>☐</td><td>视觉-页 2</td><td>渐变 banner；胶囊轨道 + 薰衣草发光填充；步骤日志逐行出现</td></tr>
+    <tr><td>☐</td><td>视觉-页 3</td><td>绿光晕对勾；统计三格（含渐变强调条）；渐变"完成"按钮</td></tr>
+    <tr><td>☐</td><td>视觉-卸载器</td><td>与安装器同主题，无灰白向导残留</td></tr>
+    <tr><td>☐</td><td>渐变质量</td><td>400% 放大目视无可见色带；文字/图标无灰边</td></tr>
+    <tr><td>☐</td><td>DPI</td><td>100% / 125% / 150% 三档截图，控件无重叠/超界</td></tr>
+    <tr><td>☐</td><td>按钮行为</td><td>主按钮点击/回车均生效；进度页不出现可点主按钮；Esc 取消行为与原生一致</td></tr>
+    <tr><td>☐</td><td>常规安装</td><td>逐页完成安装；桌面 + 开始菜单快捷方式存在；「应用和功能」显示 <code>Trim 2.5.1</code></td></tr>
+    <tr><td>☐</td><td>静默安装</td><td><code>Trim-Setup-2.5.1.exe /S</code>：无 UI、快捷方式照建、注册表正确</td></tr>
+    <tr><td>☐</td><td>自动更新链路</td><td><code>Trim-Setup-2.5.1.exe --updated /S --force-run</code>：静默安装并自动启动 Trim</td></tr>
+    <tr><td>☐</td><td>卸载</td><td>卸载器两页正常；目录清空、快捷方式删除、注册表键删除</td></tr>
+    <tr><td>☐</td><td>AppData 策略</td><td>卸载清 <code>%APPDATA%\Trim</code>、升级保留（<code>deleteAppDataOnUninstall</code> 行为不变）</td></tr>
+    <tr><td>☐</td><td>资源可复现</td><td><code>python scripts/gen-installer-assets.py</code> 一次生成全部位图，无手工改图</td></tr>
+  </table>
+
+  <h2 id="s8"><span class="n">08</span>与 v1 / v2 的差异对照</h2>
+  <table>
+    <tr><th style="width:150px">维度</th><th>v1 美化方案（已落地）</th><th>v2 Fancy 方案</th><th>v3.1 本方案</th></tr>
+    <tr><td>实现路线</td><td><code>nsis.include</code> 钩子</td><td><code>nsis.script</code> 完全接管</td><td><strong><code>nsis.include</code> 钩子</strong></td></tr>
+    <tr><td>窗口</td><td>≈498×366</td><td>计划 640×400（需重写脚本）</td><td>640×440（MoveWindow）</td></tr>
+    <tr><td>主题</td><td>浅色纯色</td><td>深紫 + 渐变（无落地路径）</td><td>深紫 + <strong>薰衣草渐变（有落地路径与白名单）</strong></td></tr>
+    <tr><td>圆角</td><td>≤8px</td><td>大圆角（无从实现）</td><td>≤12px 位图圆角</td></tr>
+    <tr><td>主按钮</td><td>系统原生按钮</td><td>渐变按钮（未说明实现）</td><td>三态位图按钮 + <code>BM_CLICK</code> 转发</td></tr>
+    <tr><td>页数</td><td>4 页</td><td>4 页</td><td>3 页（欢迎与选项合并）</td></tr>
+    <tr><td>卸载器</td><td>原生 MUI</td><td>未提</td><td>同主题两页</td></tr>
+    <tr><td>自动更新</td><td>安全</td><td>需重写静默/卸载契约</td><td>安全（走原逻辑）</td></tr>
+    <tr><td>工期</td><td>0.5 天</td><td>4–5 天</td><td><strong>2–2.5 天</strong></td></tr>
+  </table>
+
+  <h2 id="s9"><span class="n">09</span>改动清单（落地时按此执行）</h2>
+  <table>
+    <tr><th style="width:300px">文件</th><th>动作</th></tr>
+    <tr><td class="mono">build/installer.nsh</td><td><strong>主要改造</strong>：<code>MUI_CUSTOMFUNCTION_GUIINIT</code>（放大窗口 + 深色标题栏 + 位移）、合并页、渐变位图按钮转发、完成页统计、卸载器三个钩子；保留原有静默默认值与 <code>TrimFullBleed</code></td></tr>
+    <tr><td class="mono">scripts/gen-installer-assets.py</td><td>新增渐变/光晕绘制函数，换深紫 token 与尺寸，输出 4 张页面位图 + 3 态按钮位图 + 进度轨道位图</td></tr>
+    <tr><td class="mono">build/installer/*.bmp</td><td>重新生成的位图产物（24bit、无 alpha）</td></tr>
+    <tr><td class="mono">package.json</td><td>可选：显式补 <code>nsis.installerIcon</code> / <code>uninstallerIcon</code>（当前默认取 <code>win.icon</code>）</td></tr>
+    <tr><td class="mono">main.js · src/main/updater.js</td><td><strong>不动</strong>（自动更新链路零改动）</td></tr>
+    <tr><td class="mono">docs规范/update/9.12/nsis-fancy-installer方案/</td><td>保留作为历史方案；本文件为执行依据</td></tr>
+  </table>
+
+  <div class="card warn">
+    <h4>三条不要碰的线</h4>
+    <ol>
+      <li>不要把安装决策写进页面 <code>Leave</code> 回调 —— <code>/S</code> 静默安装根本不执行页面。</li>
+      <li>不要改 <code>registryAddInstallInfo</code> / 卸载段 —— 那是「应用和功能」和自动更新的地基。</li>
+      <li>渐变只允许落在位图上、只允许薰衣草单色系；应用内 UI 依旧遵守 <code>AGENTS.md</code> §5。</li>
+    </ol>
+  </div>
+
+  <footer>
+    Trim 安装器视觉升级方案 v3.1 · 2026-09-12 · nsis.include 钩子 + nsDialogs 自绘 + 薰衣草渐变预渲染位图<br>
+    依据：build/installer.nsh · scripts/gen-installer-assets.py · src/styles/main.css（token 来源）· AGENTS.md §5（本次放宽范围已标注）· app-builder-lib / electron-updater 源码（契约核对）
+  </footer>
+  <h2 id="s10"><span class="n">10</span>实施记录 v3.2（2026-09-12 已落地）</h2>
+  <div class="card ok">
+    <h4>已实现</h4>
+    <ul>
+      <li><strong>跟随聚光（motion-lab <code>spotlight-follow</code>）</strong>：NSIS 里没有 JS/CSS，用「分层子窗口 + 颜色键 + 均匀 alpha」等价实现 —— 440×440 的 <code>spotlight.bmp</code>（纯黑底 + 薰衣草径向柔光）作为子窗口贴上，<code>LWA_COLORKEY</code> 把纯黑键成透明、<code>LWA_ALPHA</code> 做半透明叠加，<code>WS_EX_TRANSPARENT</code> 保证点击穿透；位置由 <code>nsDialogs::CreateTimer</code> 每 30ms 取鼠标坐标后按 1/5 追赶平滑推进（避免生硬跟手）。底图整体压暗 0.86，呼应「聚光外区域变暗」。</li>
+      <li><strong>窗口 640×440</strong>：<code>TrimGuiInit</code>（<code>MUI_CUSTOMFUNCTION_GUIINIT</code>）用 <code>GetClientRect/GetWindowRect</code> 反推边框后 <code>MoveWindow</code> 并居中，底部按钮条按像素重排。</li>
+      <li><strong>薰衣草渐变体系</strong>：hero 135° <code>#20214A→#171832→#141419</code> + 两处光晕；按钮 180° <code>#A6A9F2→#8B8EE0</code>；logo/勾选框 140° <code>#A6A9F2→#7174CC</code>；卡片 12px 圆角 + 薰衣草描边。全部由 <code>scripts/gen-installer-assets.py</code> 预渲染成 24bit BMP。</li>
+      <li><strong>渐变化按钮</strong>：浏览 / 取消 / 安装 / 完成均换成圆角渐变位图按钮。</li>
+      <li><strong>勾选框</strong>：位图勾选框（checked/unchecked 双态换图）+ 底图文字，替换系统灰白控件。</li>
+      <li><strong>深色标题栏</strong>：<code>DwmSetWindowAttribute</code>（属性 20 → 19 回退）。</li>
+      <li><strong>安装包体积</strong>：125,376,512 → 125,520,665 字节（<strong>+144 KB</strong>），渐变与聚光层压缩后几乎不占体积。</li>
+    </ul>
+  </div>
+
+  <h3>10.1 实测踩坑（重做时不要再踩）</h3>
+  <table>
+    <tr><th style="width:260px">坑</th><th>现象与结论</th></tr>
+    <tr><td><strong>include 的 .nsh 必须带 UTF-8 BOM</strong></td><td>无 BOM 时 NSIS 按本地代码页解码 <code>!include</code> 文件，中文注释会把后续行吞掉，报出与真实原因无关的错（本次报的是 <code>Usage: StrCpy</code>，实际是解析错乱）。<strong>结论：<code>build/installer.nsh</code> 一律用 UTF-8 with BOM 保存。</strong></td></tr>
+    <tr><td>nsDialogs 坐标单位</td><td>实测<strong>像素</strong>；<code>u</code> 后缀在这版 nsDialogs 里无效（带 <code>u</code> 的控件直接不渲染）。位图按像素出图即可 1:1。</td></tr>
+    <tr><td>背景位图控件会盖住后建的控件</td><td>铺满整页的 STATIC 位图若不压 z 序，会覆盖后创建的标签/按钮/勾选框（EDIT 例外）。<strong>结论：创建完所有控件后 <code>SetWindowPos $Bg HWND_BOTTOM</code>。</strong></td></tr>
+    <tr><td>按钮贴图用错消息</td><td><code>STM_SETIMAGE(0x172)</code> 只对 STATIC 有效；BUTTON 必须用 <code>BM_SETIMAGE(0x00F7)</code>。另外运行期 <code>SetWindowLong</code> 追加 <code>BS_BITMAP</code> 在该版本无效 —— 按钮必须在<strong>创建时</strong>就带 <code>BS_BITMAP</code>（底部原生按钮走「隐藏原生 + 位图静态层转发点击」或保持原生）。</td></tr>
+    <tr><td>寄存器混用</td><td><code>System::Call</code> 的输出写进 <code>$1..$9</code>，与 <code>$R1..$R9</code> 不是一回事；本次窗口尺寸算错（646×469 变 1354×804）就是这个原因。</td></tr>
+    <tr><td><code>-WX</code> 下的变量规则</td><td>使用了未声明的变量、或声明了未引用的变量都会导致编译失败（6010/6001）。改造后用脚本核对「声明集合 = 引用集合」。</td></tr>
+  </table>
+
+  <h3>10.2 待办（下一批）</h3>
+  <ol>
+    <li><strong>卸载器品牌化</strong>：<code>customUnWelcomePage</code> / <code>customUninstallPage</code> / <code>customUnInit</code>（<code>page-uninstall.bmp</code> 已生成但还没接）。</li>
+    <li><strong>进度页细节</strong>：banner 已换渐变、进度条改品牌色；步骤日志与胶囊轨道待接。</li>
+    <li><strong>完成页统计</strong>：版本号/安装大小（<code>ESTIMATED_SIZE</code>）/耗时（<code>GetTickCount</code>）已算好，需与位图上的三格对齐验收。</li>
+    <li><strong>静默与自动更新回归</strong>：<code>/S</code> 与 <code>--updated /S --force-run</code> 两条路径需各跑一次确认。</li>
+    <li>可选：真·渐变进度条（自绘 + 定时器）、卸载器聚光。</li>
+  </ol>
+</div>
+</body>
+</html>

@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trim Fancy Installer 方案</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect width='24' height='24' rx='5' fill='%23171832'/><text x='12' y='17' font-size='13' font-family='Arial' font-weight='bold' fill='%238B8EE0' text-anchor='middle'>T</text></svg>">
+<style>
+:root{
+  --bg:#1a1a1a;--bg-raise:#222;--card:#282828;--card-2:#2e2e2e;
+  --stroke:rgba(255,255,255,.08);--stroke-strong:rgba(255,255,255,.14);
+  --txt:#eaeaea;--txt-2:#a5a5a5;--txt-3:#707070;
+  --accent:#8B8EE0;--accent-2:#A6A9F2;--accent-soft:rgba(139,142,224,.15);
+  --ok:#6ecb83;--warn:#e0b86e;--bad:#e07a7a;
+  --brand-dark:#171832;--brand-d2:#252650;--brand-d3:#2f3060;
+  --ra:10px;--mono:"Cascadia Code","Cascadia Mono",Consolas,"Courier New",monospace;
+  --sans:"Microsoft YaHei UI","Microsoft YaHei","Segoe UI",system-ui,sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--txt);font-family:var(--sans);font-size:15px;line-height:1.75;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+
+/* ===== 目录 ===== */
+.toc{position:fixed;left:0;top:0;bottom:0;width:248px;background:var(--bg-raise);border-right:1px solid var(--stroke);padding:22px 14px;overflow-y:auto;z-index:40}
+.toc .brand{display:flex;align-items:center;gap:10px;margin-bottom:6px;padding:0 6px}
+.toc .brand .logo{width:30px;height:30px;border-radius:7px;background:linear-gradient(135deg,var(--brand-dark),var(--brand-d3));display:flex;align-items:center;justify-content:center;color:var(--accent-2);font-weight:700;font-size:15px;font-family:var(--mono);border:1px solid var(--stroke-strong)}
+.toc .brand .name{font-weight:700;font-size:15px}
+.toc .brand .sub{font-size:11px;color:var(--txt-3);margin-top:1px}
+.toc .sec{font-size:11px;color:var(--txt-3);text-transform:uppercase;letter-spacing:1px;margin:18px 6px 6px}
+.toc a{display:block;color:var(--txt-2);font-size:13px;padding:6px 10px;border-radius:5px;border-left:2px solid transparent;margin:1px 0;line-height:1.4;transition:all .15s}
+.toc a:hover{color:var(--txt);background:rgba(255,255,255,.04);text-decoration:none}
+.toc a.active{color:var(--accent-2);background:var(--accent-soft);border-left-color:var(--accent)}
+
+/* ===== 主内容 ===== */
+.main{margin-left:248px;max-width:980px;padding:40px 48px 80px}
+.eyebrow{font-size:12px;color:var(--accent);letter-spacing:2px;text-transform:uppercase;font-family:var(--mono);margin-bottom:10px}
+h1{font-size:36px;font-weight:800;line-height:1.2;margin-bottom:14px;letter-spacing:-.5px}
+h1 .accent{color:var(--accent-2)}
+.lead{color:var(--txt-2);font-size:16px;line-height:1.8;margin-bottom:20px;max-width:740px}
+.meta-row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:36px}
+.tag{font-size:12px;padding:3px 11px;border-radius:100px;border:1px solid var(--stroke-strong);color:var(--txt-2);background:rgba(255,255,255,.03);display:inline-flex;align-items:center;gap:5px}
+.tag .dot{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+.tag.warn{border-color:rgba(224,184,110,.3);color:#e0b86e;background:rgba(224,184,110,.06)}
+
+section{margin-top:52px}
+.sec-title{display:flex;align-items:center;gap:12px;margin-bottom:8px}
+.sec-title .bar{width:4px;height:22px;background:linear-gradient(180deg,var(--accent),var(--brand-d3));border-radius:2px}
+.sec-title h2{font-size:22px;font-weight:700}
+.sec-desc{color:var(--txt-2);margin:0 0 20px 16px;font-size:14.5px}
+
+.card{background:var(--card);border:1px solid var(--stroke);border-radius:var(--ra);padding:18px}
+.card h3{font-size:15px;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.card p{color:var(--txt-2);font-size:13.5px;line-height:1.7}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.g3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+
+table{width:100%;border-collapse:collapse;font-size:13.5px;margin:10px 0}
+th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--stroke);vertical-align:top}
+th{color:var(--txt-2);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.5px;background:rgba(255,255,255,.02)}
+tr:last-child td{border-bottom:none}
+td code,th code{font-family:var(--mono);font-size:12px;background:rgba(255,255,255,.07);padding:1px 6px;border-radius:4px;color:var(--accent-2)}
+.rec{background:var(--accent-soft);border-left:3px solid var(--accent)}
+
+.codebar{display:flex;align-items:center;justify-content:space-between;padding:7px 14px;background:#1e1e1e;border-bottom:1px solid var(--stroke);border-radius:var(--ra) var(--ra) 0 0;font-size:11.5px;color:var(--txt-3);font-family:var(--mono)}
+.copy-btn{font-family:var(--sans);font-size:11.5px;color:var(--txt-2);background:rgba(255,255,255,.06);border:1px solid var(--stroke);border-radius:5px;padding:3px 10px;cursor:pointer;transition:all .15s}
+.copy-btn:hover{background:rgba(255,255,255,.12);color:var(--txt)}
+.copy-btn.ok{color:var(--ok);border-color:var(--ok)}
+pre{background:#191919;border:1px solid var(--stroke);border-top:none;border-radius:0 0 var(--ra) var(--ra);padding:16px 18px;overflow-x:auto;font-family:var(--mono);font-size:12.5px;line-height:1.7;color:#d4d4d4}
+pre .c{color:#6a9955}
+pre .k{color:#569cd6}
+pre .s{color:#ce9178}
+pre .n{color:#b5cea8}
+pre .o{color:#c586c0}
+pre .p{color:#d4d4d4}
+
+.note{display:flex;gap:12px;padding:14px 18px;border-radius:var(--ra);margin:16px 0;font-size:13.5px;line-height:1.7}
+.note.info{background:rgba(76,194,255,.07);border:1px solid rgba(76,194,255,.2);color:#b8dff5}
+.note.warn{background:rgba(224,184,110,.08);border:1px solid rgba(224,184,110,.25);color:#e8d5a8}
+.note .ico{flex-shrink:0;font-size:16px;line-height:1.5}
+.note b{color:var(--txt)}
+
+/* ===== Fancy 窗口模拟 ===== */
+.mock-section{margin:24px 0}
+.mock-label{font-size:13px;color:var(--txt-2);margin-bottom:10px;font-weight:600;display:flex;align-items:center;gap:8px}
+.mock-label .num{width:24px;height:24px;border-radius:6px;background:linear-gradient(135deg,var(--accent),var(--brand-d3));color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;font-family:var(--mono)}
+
+.fancy-win{width:640px;margin:0 auto;border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.06);background:var(--brand-dark);position:relative}
+/* 装饰背景 */
+.fancy-win .bg-deco{position:absolute;inset:0;overflow:hidden;pointer-events:none}
+.fancy-win .bg-deco::before{content:'';position:absolute;top:-80px;right:-60px;width:280px;height:280px;border-radius:50%;background:radial-gradient(circle,rgba(139,142,224,.25),transparent 70%)}
+.fancy-win .bg-deco::after{content:'';position:absolute;bottom:-100px;left:-40px;width:240px;height:240px;border-radius:50%;background:radial-gradient(circle,rgba(94,98,198,.18),transparent 70%)}
+.fancy-win .bg-grid{position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.02) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.02) 1px,transparent 1px);background-size:32px 32px}
+
+/* 标题栏 */
+.fancy-titlebar{height:38px;display:flex;align-items:center;padding:0 18px;position:relative;z-index:2;background:rgba(0,0,0,.2);border-bottom:1px solid rgba(255,255,255,.06)}
+.fancy-titlebar .t-logo{font-size:13px;font-weight:700;color:#fff;display:flex;align-items:center;gap:7px}
+.fancy-titlebar .t-logo .t-dot{width:8px;height:8px;border-radius:50%;background:var(--accent)}
+.fancy-titlebar .t-title{font-size:12px;color:rgba(255,255,255,.5);margin-left:10px}
+.fancy-titlebar .t-ctrl{margin-left:auto;display:flex;gap:7px}
+.fancy-titlebar .t-ctrl span{width:11px;height:11px;border-radius:50%;display:inline-block}
+
+/* 内容区 */
+.fancy-body{padding:32px 40px 28px;position:relative;z-index:2;min-height:300px;display:flex;flex-direction:column}
+.fancy-body h4{font-size:22px;font-weight:800;color:#fff;margin-bottom:6px;letter-spacing:-.3px}
+.fancy-body h4 span{color:var(--accent-2)}
+.fancy-body .sub{font-size:13px;color:rgba(255,255,255,.55);margin-bottom:22px;line-height:1.6}
+
+/* 欢迎页特色 */
+.welcome-features{display:flex;gap:16px;margin-bottom:24px}
+.wf-item{flex:1;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:12px 14px}
+.wf-item .wf-ico{font-size:18px;margin-bottom:5px}
+.wf-item .wf-name{font-size:12px;font-weight:600;color:#fff;margin-bottom:2px}
+.wf-item .wf-desc{font-size:10.5px;color:rgba(255,255,255,.45);line-height:1.4}
+
+/* 按钮组 */
+.fancy-actions{display:flex;gap:10px;margin-top:auto;align-items:center}
+.fancy-btn{padding:10px 24px;border-radius:7px;font-size:13px;cursor:pointer;border:none;font-weight:600;transition:all .15s;font-family:var(--sans)}
+.fancy-btn.primary{background:linear-gradient(135deg,var(--accent),#6f72d4);color:#fff;box-shadow:0 4px 16px rgba(139,142,224,.35)}
+.fancy-btn.primary:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(139,142,224,.45)}
+.fancy-btn.ghost{background:rgba(255,255,255,.06);color:rgba(255,255,255,.7);border:1px solid rgba(255,255,255,.1)}
+.fancy-btn.ghost:hover{background:rgba(255,255,255,.1);color:#fff}
+.fancy-btn:disabled{opacity:.35;cursor:not-allowed;transform:none!important}
+.fancy-link{font-size:12px;color:rgba(255,255,255,.4);cursor:pointer;margin-left:auto}
+.fancy-link:hover{color:rgba(255,255,255,.7)}
+
+/* 表单 */
+.fancy-field{margin-bottom:16px}
+.fancy-field label{display:block;font-size:12px;color:rgba(255,255,255,.6);margin-bottom:6px;font-weight:600}
+.fancy-input-row{display:flex;gap:8px}
+.fancy-input{flex:1;padding:10px 14px;border-radius:7px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.05);color:#fff;font-size:12.5px;font-family:var(--mono);outline:none;transition:all .15s}
+.fancy-input:focus{border-color:var(--accent);background:rgba(255,255,255,.08);box-shadow:0 0 0 3px rgba(139,142,224,.15)}
+.fancy-mini-btn{padding:10px 16px;border-radius:7px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.05);color:rgba(255,255,255,.7);font-size:12px;cursor:pointer}
+.fancy-mini-btn:hover{background:rgba(255,255,255,.1)}
+
+.fancy-check{display:flex;align-items:center;gap:8px;font-size:12.5px;color:rgba(255,255,255,.7);margin-bottom:8px;cursor:pointer}
+.fancy-check input{width:15px;height:15px;accent-color:var(--accent)}
+
+/* 进度页 */
+.progress-wrap{margin:20px 0}
+.progress-bar{width:100%;height:8px;background:rgba(255,255,255,.08);border-radius:4px;overflow:hidden}
+.progress-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent-2));border-radius:4px;transition:width .3s}
+.progress-info{display:flex;justify-content:space-between;margin-top:10px;font-size:12px}
+.progress-info .pi-label{color:rgba(255,255,255,.6)}
+.progress-info .pi-pct{color:var(--accent-2);font-weight:700;font-family:var(--mono)}
+.progress-log{margin-top:16px;background:rgba(0,0,0,.25);border-radius:7px;padding:12px 14px;font-family:var(--mono);font-size:11px;color:rgba(255,255,255,.5);line-height:1.8;height:80px;overflow:hidden}
+.progress-log .ok-line{color:var(--ok)}
+
+/* 完成页 */
+.done-circle{width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,rgba(110,203,131,.2),rgba(110,203,131,.05));border:2px solid rgba(110,203,131,.4);display:flex;align-items:center;justify-content:center;margin-bottom:18px;color:var(--ok);font-size:28px}
+.done-stats{display:flex;gap:24px;margin:18px 0 24px}
+.ds-item{text-align:center}
+.ds-item .ds-val{font-size:20px;font-weight:800;color:#fff;font-family:var(--mono)}
+.ds-item .ds-label{font-size:10.5px;color:rgba(255,255,255,.45);margin-top:2px}
+
+/* 步骤 */
+.step{background:var(--card);border:1px solid var(--stroke);border-radius:var(--ra);padding:16px 18px;display:flex;gap:14px;align-items:flex-start;margin-bottom:10px}
+.step .stepnum{width:28px;height:28px;border-radius:7px;background:linear-gradient(135deg,var(--accent-soft),var(--brand-d3));color:var(--accent-2);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex-shrink:0;font-family:var(--mono)}
+.step .step-body h4{font-size:14px;margin-bottom:4px;color:var(--txt)}
+.step .step-body p{font-size:13px;color:var(--txt-2);line-height:1.65}
+
+.footer{margin-top:60px;padding-top:24px;border-top:1px solid var(--stroke);color:var(--txt-3);font-size:12px;line-height:1.8}
+</style>
+</head>
+<body>
+
+<nav class="toc">
+  <div class="brand">
+    <div class="logo">T</div>
+    <div><div class="name">Trim Fancy Installer</div><div class="sub">安装器重构方案 v2</div></div>
+  </div>
+  <div class="sec">目录</div>
+  <a href="#s1" class="active">01 为什么重构</a>
+  <a href="#s2">02 两条技术路线</a>
+  <a href="#s3">03 推荐：NSIS 自定义脚本</a>
+  <a href="#s4">04 Fancy 界面设计稿</a>
+  <a href="#s5">05 核心脚本与资源</a>
+  <a href="#s6">06 实施步骤与风险</a>
+</nav>
+
+<div class="main">
+
+<div class="eyebrow">FANCY INSTALLER · REFACTOR · 2026-09-12</div>
+<h1>Trim 安装器<span class="accent">Fancy 重构方案</span></h1>
+<p class="lead">上一版用 MUI2 默认框架 + 侧边图/横幅做了品牌化，但窗口仍是 NSIS 老派灰白向导。这一版彻底放弃 MUI2 默认布局，用 <code>nsis.script</code> 完全自定义脚本 + 品牌沉浸背景 + 现代控件，打造类似 Discord / VS Code 风格的深色安装体验。</p>
+<div class="meta-row">
+  <span class="tag"><span class="dot"></span>nsis.script 完全自定义</span>
+  <span class="tag">深色品牌沉浸</span>
+  <span class="tag">640×400 大窗口</span>
+  <span class="tag">零新增 npm 依赖</span>
+  <span class="tag warn">⚠ 开发成本较高</span>
+</div>
+
+<!-- ===== 01 ===== -->
+<section id="s1">
+  <div class="sec-title"><div class="bar"></div><h2>为什么需要重构</h2></div>
+  <p class="sec-desc">上一版（MUI2 + 侧边图）的天花板在哪里。</p>
+  <div class="g2">
+    <div class="card">
+      <h3>MUI2 框架的硬限制</h3>
+      <p>① 窗口尺寸固定约 498×366，无法放大；② 主区永远是白色/浅灰，深色全覆盖需改 MUI_UI 资源；③ 按钮是系统默认样式，无法做渐变/阴影；④ 进度条是经典灰色，无法品牌化；⑤ 页面布局固定（左图右文 / 上横幅下文），无法做沉浸式设计。</p>
+    </div>
+    <div class="card">
+      <h3>Fancy 重构的目标</h3>
+      <p>① 窗口放大到 640×400，信息密度更舒适；② 全窗口深色品牌背景（渐变 + 装饰光晕 + 网格）；③ 自定义按钮（渐变 + 阴影 + hover 微动）；④ 品牌色进度条 + 实时日志；⑤ 欢迎页展示功能亮点卡片；⑥ 完成页展示安装统计；⑦ 与 Trim 应用内深色 Fluent 语言完全一致。</p>
+    </div>
+  </div>
+  <div class="note warn">
+    <div class="ico">⚠️</div>
+    <div><b>前提说明</b>：npm/GitHub 上没有确切叫 "fancy-installer" 的包。本方案按"fancy 风格安装器"的概念，用 NSIS 原生能力（自定义脚本 + MUI_UI 资源 + 自定义页面）实现。如果你指的是某个具体包（如 @painda/wizard），发我链接，我按实际用法调整。</div>
+  </div>
+</section>
+
+<!-- ===== 02 ===== -->
+<section id="s2">
+  <div class="sec-title"><div class="bar"></div><h2>两条技术路线对比</h2></div>
+  <p class="sec-desc">彻底摆脱 MUI2 有两条路，各有取舍。</p>
+  <table>
+    <thead><tr><th style="width:16%">路线</th><th style="width:24%">做法</th><th style="width:20%">优点</th><th style="width:20%">缺点</th><th style="width:20%">与现有链路兼容性</th></tr></thead>
+    <tbody>
+      <tr class="rec">
+        <td><b>A · nsis.script 完全自定义</b> ⭐推荐</td>
+        <td>electron-builder <code>nsis.script</code> 指向自定义 .nsi，完全接管安装流程；用 nsDialogs 做自定义页面，MUI_UI 替换控件模板</td>
+        <td>零新增依赖；与 electron-builder/electron-updater 完全兼容；差量更新不受影响；NSIS 原生稳定</td>
+        <td>NSIS 脚本开发成本高；nsDialogs 控件能力有限（无真正圆角/透明/动画）；调试靠反复构建</td>
+        <td>✅ 完全兼容，differentialPackage 正常</td>
+      </tr>
+      <tr>
+        <td><b>B · @painda/wizard 现代安装器</b></td>
+        <td>安装 <code>@painda/wizard</code>，用 TypeScript 配置定义安装流程；它包装 electron-builder 输出，生成基于 Web 技术的自包含安装器 .exe</td>
+        <td>UI 能力极强（HTML/CSS/JS，可做动画/透明/任意布局）；配置简单；现代感拉满</td>
+        <td>新增 npm 依赖（需你同意）；与 electron-updater 差量更新的兼容性需验证；包较新（2026.6），生态不成熟；安装器体积可能增大</td>
+        <td>⚠ 需验证差量更新链路</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="note info">
+    <div class="ico">💡</div>
+    <div><b>推荐路线 A 的理由</b>：项目红线"不新增 npm 依赖须先同意"，且 electron-updater 差量更新是已落地的核心功能，不能冒险。路线 A 用 NSIS 原生能力做到 80% 的 fancy 效果，风险可控。如果后续验证路线 B 与差量更新兼容良好，可再迁移。</div>
+  </div>
+</section>
+
+<!-- ===== 03 ===== -->
+<section id="s3">
+  <div class="sec-title"><div class="bar"></div><h2>推荐方案：NSIS 自定义脚本架构</h2></div>
+  <p class="sec-desc">用 nsis.script 完全接管，四个自定义页面 + 品牌资源。</p>
+
+  <div class="g3">
+    <div class="card">
+      <h3>📄 自定义脚本</h3>
+      <p><code>build/installer.nsi</code> — 完全自定义的 NSIS 脚本，定义四个页面（欢迎/目录/进度/完成），不使用 MUI_PAGE_* 宏。</p>
+    </div>
+    <div class="card">
+      <h3>🎨 界面资源</h3>
+      <p><code>build/</code> 下放背景图（640×400 BMP）、按钮图、图标。背景图用深色渐变 + 装饰光晕预渲染，避免 NSIS 运行时绘制。</p>
+    </div>
+    <div class="card">
+      <h3>🔧 electron-builder 配置</h3>
+      <p>package.json 的 <code>nsis.script</code> 指向自定义 .nsi；保留 <code>differentialPackage:true</code>、<code>perMachine:false</code>、<code>artifactName</code> 等功能字段。</p>
+    </div>
+  </div>
+
+  <div class="codebar" style="margin-top:20px"><span>json · package.json → build.nsis（核心变更）</span><button class="copy-btn" onclick="copyCode(this)">复制</button></div>
+<pre><span class="k">"nsis"</span><span class="p">: {</span>
+  <span class="c">// 功能字段保留不变</span>
+  <span class="k">"oneClick"</span><span class="p">:</span> <span class="s">false</span><span class="p">,</span>
+  <span class="k">"perMachine"</span><span class="p">:</span> <span class="s">false</span><span class="p">,</span>
+  <span class="k">"allowElevation"</span><span class="p">:</span> <span class="s">true</span><span class="p">,</span>
+  <span class="k">"allowToChangeInstallationDirectory"</span><span class="p">:</span> <span class="s">true</span><span class="p">,</span>
+  <span class="k">"differentialPackage"</span><span class="p">:</span> <span class="s">true</span><span class="p">,</span>
+  <span class="k">"deleteAppDataOnUninstall"</span><span class="p">:</span> <span class="s">true</span><span class="p">,</span>
+  <span class="k">"shortcutName"</span><span class="p">:</span> <span class="s">"Trim"</span><span class="p">,</span>
+  <span class="k">"artifactName"</span><span class="p">:</span> <span class="s">"${productName}-Setup-${version}.${ext}"</span><span class="p">,</span>
+
+  <span class="c">// ===== 关键：完全自定义脚本 =====</span>
+  <span class="k">"script"</span><span class="p">:</span> <span class="s">"build/installer.nsi"</span><span class="p">,</span>
+
+  <span class="c">// 图标复用</span>
+  <span class="k">"installerIcon"</span><span class="p">:</span> <span class="s">"src/assets/ico/Trim.ico"</span><span class="p">,</span>
+  <span class="k">"uninstallerIcon"</span><span class="p">:</span> <span class="s">"src/assets/ico/Trim.ico"</span>
+<span class="p">}</span></pre>
+
+  <div class="note warn">
+    <div class="ico">⚠️</div>
+    <div><b>注意</b>：使用 <code>nsis.script</code> 后，electron-builder 默认的 assistedInstaller.nsh（含欢迎页/目录页/完成页/快捷方式创建/卸载注册逻辑）<b>全部不生效</b>，需要在自定义脚本里重新实现。这是最大的工作量，也是风险点。建议先基于 electron-builder 默认模板 <code>assistedInstaller.nsh</code> 改造，而非从零写。</div>
+  </div>
+</section>
+
+<!-- ===== 04 设计稿 ===== -->
+<section id="s4">
+  <div class="sec-title"><div class="bar"></div><h2>Fancy 界面设计稿</h2></div>
+  <p class="sec-desc">四个页面，640×400 大窗口，全深色品牌沉浸。以下为高保真模拟，实际 NSIS 脚本还原度约 85%（nsDialogs 控件无真正圆角/透明，用图片预渲染弥补）。</p>
+
+  <!-- 欢迎页 -->
+  <div class="mock-section">
+    <div class="mock-label"><span class="num">1</span>欢迎页 — 品牌沉浸 + 功能亮点</div>
+    <div class="fancy-win">
+      <div class="bg-deco"></div>
+      <div class="bg-grid"></div>
+      <div class="fancy-titlebar">
+        <div class="t-logo"><span class="t-dot"></span>Trim</div>
+        <div class="t-title">安装向导</div>
+        <div class="t-ctrl"><span style="background:rgba(255,255,255,.2)"></span><span style="background:rgba(255,255,255,.2)"></span><span style="background:#e07a7a"></span></div>
+      </div>
+      <div class="fancy-body">
+        <h4>欢迎使用 <span>Trim</span></h4>
+        <div class="sub">Windows 11 清理优化工具 · 深度清理 · 性能优化 · 系统维护 · 右键管理</div>
+        <div class="welcome-features">
+          <div class="wf-item">
+            <div class="wf-ico">🧹</div>
+            <div class="wf-name">深度清理</div>
+            <div class="wf-desc">系统垃圾 / 注册表 / 缓存一键扫描清理</div>
+          </div>
+          <div class="wf-item">
+            <div class="wf-ico">⚡</div>
+            <div class="wf-name">性能优化</div>
+            <div class="wf-desc">启动项管理 / 服务优化 / 内存整理</div>
+          </div>
+          <div class="wf-item">
+            <div class="wf-ico">🔧</div>
+            <div class="wf-name">系统维护</div>
+            <div class="wf-desc">右键菜单管理 / 系统信息 / 修复工具</div>
+          </div>
+        </div>
+        <div class="fancy-check"><input type="checkbox" checked id="lic2"><label for="lic2">我已阅读并接受许可协议中的条款</label></div>
+        <div class="fancy-actions">
+          <button class="fancy-btn ghost" disabled>上一步</button>
+          <button class="fancy-btn primary">下一步 →</button>
+          <span class="fancy-link">v2.5.1</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 安装目录页 -->
+  <div class="mock-section">
+    <div class="mock-label"><span class="num">2</span>安装目录页 — 现代表单</div>
+    <div class="fancy-win">
+      <div class="bg-deco"></div>
+      <div class="bg-grid"></div>
+      <div class="fancy-titlebar">
+        <div class="t-logo"><span class="t-dot"></span>Trim</div>
+        <div class="t-title">选择安装位置</div>
+        <div class="t-ctrl"><span style="background:rgba(255,255,255,.2)"></span><span style="background:rgba(255,255,255,.2)"></span><span style="background:#e07a7a"></span></div>
+      </div>
+      <div class="fancy-body">
+        <h4>选择安装位置</h4>
+        <div class="sub">Trim 将安装到以下文件夹。至少需要 250 MB 可用磁盘空间。</div>
+        <div class="fancy-field">
+          <label>目标文件夹</label>
+          <div class="fancy-input-row">
+            <input class="fancy-input" value="%LOCALAPPDATA%\Programs\Trim" readonly>
+            <button class="fancy-mini-btn">浏览...</button>
+          </div>
+        </div>
+        <div class="fancy-check"><input type="checkbox" checked id="desk2"><label for="desk2">创建桌面快捷方式</label></div>
+        <div class="fancy-check"><input type="checkbox" checked id="start2"><label for="start2">创建开始菜单快捷方式</label></div>
+        <div class="fancy-check"><input type="checkbox" id="ctx"><label for="ctx">添加右键菜单"用 Trim 清理"</label></div>
+        <div class="fancy-actions">
+          <button class="fancy-btn ghost">← 上一步</button>
+          <button class="fancy-btn primary">安装</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 进度页 -->
+  <div class="mock-section">
+    <div class="mock-label"><span class="num">3</span>安装进度页 — 品牌进度条 + 实时日志</div>
+    <div class="fancy-win">
+      <div class="bg-deco"></div>
+      <div class="bg-grid"></div>
+      <div class="fancy-titlebar">
+        <div class="t-logo"><span class="t-dot"></span>Trim</div>
+        <div class="t-title">正在安装</div>
+        <div class="t-ctrl"><span style="background:rgba(255,255,255,.2)"></span><span style="background:rgba(255,255,255,.2)"></span><span style="background:#e07a7a"></span></div>
+      </div>
+      <div class="fancy-body">
+        <h4>正在安装 <span>Trim</span></h4>
+        <div class="sub">请稍候，正在将文件复制到您的计算机...</div>
+        <div class="progress-wrap">
+          <div class="progress-bar"><div class="progress-fill" style="width:68%"></div></div>
+          <div class="progress-info">
+            <span class="pi-label">正在解压应用资源...</span>
+            <span class="pi-pct">68%</span>
+          </div>
+        </div>
+        <div class="progress-log">
+          <div>[1/4] 检查系统环境... <span class="ok-line">完成</span></div>
+          <div>[2/4] 创建安装目录... <span class="ok-line">完成</span></div>
+          <div>[3/4] 解压应用资源 (app.asar)...</div>
+          <div>[4/4] 注册快捷方式与卸载信息...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 完成页 -->
+  <div class="mock-section">
+    <div class="mock-label"><span class="num">4</span>完成页 — 成功状态 + 安装统计</div>
+    <div class="fancy-win">
+      <div class="bg-deco"></div>
+      <div class="bg-grid"></div>
+      <div class="fancy-titlebar">
+        <div class="t-logo"><span class="t-dot"></span>Trim</div>
+        <div class="t-title">安装完成</div>
+        <div class="t-ctrl"><span style="background:rgba(255,255,255,.2)"></span><span style="background:rgba(255,255,255,.2)"></span><span style="background:#e07a7a"></span></div>
+      </div>
+      <div class="fancy-body">
+        <div class="done-circle">✓</div>
+        <h4>安装完成！</h4>
+        <div class="sub">Trim 已成功安装到您的计算机。可以通过桌面快捷方式或开始菜单启动。</div>
+        <div class="done-stats">
+          <div class="ds-item"><div class="ds-val">1,247</div><div class="ds-label">文件数</div></div>
+          <div class="ds-item"><div class="ds-val">186MB</div><div class="ds-label">安装大小</div></div>
+          <div class="ds-item"><div class="ds-val">12s</div><div class="ds-label">安装耗时</div></div>
+        </div>
+        <div class="fancy-check"><input type="checkbox" checked id="run2"><label for="run2">立即启动 Trim</label></div>
+        <div class="fancy-check"><input type="checkbox" id="rel"><label for="rel">查看更新日志</label></div>
+        <div class="fancy-actions">
+          <button class="fancy-btn primary">完成</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="note info">
+    <div class="ico">🎨</div>
+    <div><b>设计要点</b>：① 全窗口深色背景（#171832 基底 + 渐变光晕 + 网格纹理），与 Trim 应用内深色主题一致；② 640×400 大窗口比默认 NSIS 大 30%，信息更舒展；③ 主按钮用 accent 渐变 + 投影，hover 上浮 1px；④ 进度条品牌色 + 实时日志（NSIS 原生 detail 打印）；⑤ 完成页用安装统计（文件数/大小/耗时）替代干巴巴的"安装成功"。</div>
+  </div>
+</section>
+
+<!-- ===== 05 核心脚本 ===== -->
+<section id="s5">
+  <div class="sec-title"><div class="bar"></div><h2>核心脚本骨架与资源清单</h2></div>
+  <p class="sec-desc">自定义 .nsi 的关键结构，以及 build/ 目录需要的资源文件。</p>
+
+  <div class="codebar"><span>nsi · build/installer.nsi（骨架，基于 electron-builder 模板改造）</span><button class="copy-btn" onclick="copyCode(this)">复制</button></div>
+<pre><span class="c">; ===== Trim Fancy Installer 自定义脚本 =====</span>
+<span class="c">; 基于 electron-builder assistedInstaller.nsh 改造，保留其安装/卸载核心逻辑</span>
+<span class="c">; 仅替换 UI 层：用 nsDialogs 自定义四个页面，背景用图片预渲染</span>
+
+<span class="o">!include</span> <span class="s">"MUI2.nsh"</span>
+<span class="o">!include</span> <span class="s">"nsDialogs.nsh"</span>
+<span class="o">!include</span> <span class="s">"LogicLib.nsh"</span>
+
+<span class="c">; ===== 品牌常量 =====</span>
+<span class="o">!define</span> <span class="n">APP_NAME</span> <span class="s">"Trim"</span>
+<span class="o">!define</span> <span class="n">APP_VERSION</span> <span class="s">"2.5.1"</span>
+<span class="o">!define</span> <span class="n">BG_IMAGE</span> <span class="s">"buildbg.bmp"</span>  <span class="c">; 640x400 深色品牌背景</span>
+
+<span class="c">; ===== 窗口设置：640x400，居中，无默认侧边图 =====</span>
+<span class="o">!define</span> <span class="n">MUI_UI</span> <span class="s">"trim-ui.exe"</span>  <span class="c">; 自定义 UI 资源（可选，替换默认对话框模板）</span>
+<span class="n">InstallDir</span> <span class="s">"$LOCALAPPDATA\Programs\Trim"</span>
+<span class="n">RequestExecutionLevel</span> <span class="n">user</span>  <span class="c">; perMachine:false 免 UAC</span>
+
+<span class="c">; ===== 自定义页面：欢迎 =====</span>
+<span class="k">Page</span> <span class="n">custom</span> <span class="n">CreateWelcomePage</span> <span class="n">LeaveWelcomePage</span>
+<span class="c">; ===== 自定义页面：安装目录 =====</span>
+<span class="k">Page</span> <span class="n">custom</span> <span class="n">CreateDirPage</span> <span class="n">LeaveDirPage</span>
+<span class="c">; ===== 安装进度（NSIS 原生 InstFiles）=====</span>
+<span class="k">Page</span> <span class="n">instfiles</span>
+<span class="c">; ===== 自定义页面：完成 =====</span>
+<span class="k">Page</span> <span class="n">custom</span> <span class="n">CreateFinishPage</span>
+
+<span class="c">; ===== 欢迎页创建（nsDialogs）=====</span>
+<span class="k">Function</span> <span class="n">CreateWelcomePage</span>
+  <span class="n">nsDialogs::Create</span> <span class="s">1018</span>
+  <span class="n">Pop</span> <span class="o">$0</span>
+  <span class="c">; 背景图（铺满整个客户区）</span>
+  <span class="n">${NSD_CreateBitmap}</span> <span class="m">0</span> <span class="m">0</span> <span class="m">100%</span> <span class="m">100%</span> <span class="s">""</span>
+  <span class="n">Pop</span> <span class="o">$1</span>
+  <span class="n">SetBitmap</span> <span class="o">$1</span> <span class="s">"${BG_IMAGE}"</span>
+  <span class="c">; 标题文字（白色，大号）</span>
+  <span class="n">${NSD_CreateLabel}</span> <span class="m">40</span> <span class="m">50</span> <span class="m">400</span> <span class="m">30</span> <span class="s">"欢迎使用 Trim"</span>
+  <span class="c">; 功能亮点卡片（三个位图按钮或自绘）</span>
+  <span class="c">; ... 省略具体控件创建 ...</span>
+  <span class="n">nsDialogs::Show</span>
+<span class="k">FunctionEnd</span>
+
+<span class="c">; ===== 安装段（复用 electron-builder 默认逻辑）=====</span>
+<span class="k">Section</span> <span class="s">"Main"</span>
+  <span class="n">SetOutPath</span> <span class="s">"$INSTDIR"</span>
+  <span class="n">File</span> <span class="s">/r</span> <span class="s">"app\*.*"</span>  <span class="c">; electron-builder 注入的应用文件</span>
+  <span class="n">CreateShortCut</span> <span class="s">"$DESKTOP\Trim.lnk"</span> <span class="s">"$INSTDIR\Trim.exe"</span>
+  <span class="n">WriteUninstaller</span> <span class="s">"$INSTDIR\uninstall.exe"</span>
+<span class="k">SectionEnd</span>
+
+<span class="c">; ===== 卸载段 =====</span>
+<span class="k">Section</span> <span class="s">"Uninstall"</span>
+  <span class="n">Delete</span> <span class="s">"$DESKTOP\Trim.lnk"</span>
+  <span class="n">RMDir</span> <span class="s">/r</span> <span class="s">"$INSTDIR"</span>
+<span class="k">SectionEnd</span></pre>
+
+  <div class="g3" style="margin-top:20px">
+    <div class="card">
+      <h3>📁 build/ 资源清单</h3>
+      <p>① <code>installer.nsi</code> — 自定义脚本（主文件）<br>② <code>buildbg.bmp</code> — 640×400 深色品牌背景图<br>③ <code>btn-primary.bmp</code> — 主按钮图（三态：正常/hover/禁用）<br>④ <code>trim-ui.exe</code> — 自定义 UI 资源（可选，用 Resource Hacker 改）</p>
+    </div>
+    <div class="card">
+      <h3>🔧 开发工具</h3>
+      <p>① <code>makensis</code> — NSIS 编译器（electron-builder 内置）<br>② <code>nsDialogs</code> — 自定义页面插件（NSIS 自带）<br>③ Resource Hacker — 编辑 MUI_UI 资源（改控件颜色/字体）<br>④ 本页 canvas 生成器 — 导出背景 BMP</p>
+    </div>
+    <div class="card">
+      <h3>📊 工作量估算</h3>
+      <p>① 背景图/按钮图制作：0.5 天<br>② .nsi 脚本四页面开发：2-3 天<br>③ MUI_UI 资源定制：0.5 天<br>④ 联调+真机验收：1 天<br><b>合计约 4-5 天</b>（上一版 MUI2 方案仅需 0.5 天）</p>
+    </div>
+  </div>
+</section>
+
+<!-- ===== 06 实施步骤 ===== -->
+<section id="s6">
+  <div class="sec-title"><div class="bar"></div><h2>实施步骤与风险控制</h2></div>
+  <p class="sec-desc">建议分阶段落地，每阶段可独立验证，避免一次性大改导致构建链断裂。</p>
+
+  <div class="step">
+    <div class="stepnum">1</div>
+    <div class="step-body">
+      <h4>阶段一：提取默认模板（0.5 天）</h4>
+      <p>从 electron-builder 安装目录找到 <code>app-builder-lib/templates/nsis/assistedInstaller.nsh</code>，复制到 <code>build/installer.nsi</code> 作为基础。先确认用 <code>nsis.script</code> 指向这个复制版能正常构建（功能完全不变），再开始改 UI。</p>
+    </div>
+  </div>
+  <div class="step">
+    <div class="stepnum">2</div>
+    <div class="step-body">
+      <h4>阶段二：制作品牌资源（0.5 天）</h4>
+      <p>用设计工具（或本页后续提供的 canvas 生成器）制作 640×400 深色背景 BMP、主按钮三态图。背景图预渲染渐变+光晕+网格，避免 NSIS 运行时绘制。放入 <code>build/</code> 目录。</p>
+    </div>
+  </div>
+  <div class="step">
+    <div class="stepnum">3</div>
+    <div class="step-body">
+      <h4>阶段三：替换欢迎页+完成页（1-2 天）</h4>
+      <p>先用 nsDialogs 重写欢迎页和完成页（这两页不涉及安装逻辑，风险最低），验证背景图、文字、按钮、复选框正常。目录页和进度页暂时还用默认 MUI，确保构建链不崩。</p>
+    </div>
+  </div>
+  <div class="step">
+    <div class="stepnum">4</div>
+    <div class="step-body">
+      <h4>阶段四：替换目录页+进度页（1-2 天）</h4>
+      <p>重写目录页（安装路径输入+浏览+快捷方式勾选）和进度页（品牌进度条+实时日志）。进度页用 NSIS 原生 InstFiles + 自定义回调更新进度条文字。验证安装逻辑（文件复制、快捷方式、卸载注册）完全正常。</p>
+    </div>
+  </div>
+  <div class="step">
+    <div class="stepnum">5</div>
+    <div class="step-body">
+      <h4>阶段五：MUI_UI 资源微调（0.5 天）</h4>
+      <p>用 Resource Hacker 编辑 MUI_UI 资源，把剩余系统控件（如消息框、浏览对话框）的字体/颜色对齐品牌色。这一步可选，不做也不影响核心体验。</p>
+    </div>
+  </div>
+  <div class="step">
+    <div class="stepnum">6</div>
+    <div class="step-body">
+      <h4>阶段六：全链路验收（1 天）</h4>
+      <p>① 真机安装/卸载全流程走通；② 验证 electron-updater 差量更新（从旧版升级到新版，安装器 UI 是否正常）；③ 验证 perMachine:false 免 UAC；④ 验证快捷方式创建/删除；⑤ 验证 deleteAppDataOnUninstall。全部通过后提交发布。</p>
+    </div>
+  </div>
+
+  <div class="note warn" style="margin-top:20px">
+    <div class="ico">⚠️</div>
+    <div><b>核心风险</b>：① <code>nsis.script</code> 完全替换后，electron-builder 的 <code>differentialPackage</code> 差量更新依赖默认模板的特定结构，自定义脚本可能破坏差量包生成——<b>必须在阶段一就验证差量包是否正常</b>；② nsDialogs 控件无圆角/透明，视觉还原度依赖图片预渲染；③ NSIS 脚本调试只能靠反复构建（每次 2-3 分钟），开发效率低。<b>建议：先做阶段一验证差量更新，若差量包异常则回退到上一版 MUI2 方案。</b></div>
+  </div>
+
+  <div class="note info">
+    <div class="ico">💡</div>
+    <div><b>决策建议</b>：如果你的核心诉求是"安装器好看"，上一版 MUI2 + 侧边图方案（0.5 天工作量，风险极低）已经能达到 70 分。这一版 Fancy 方案（4-5 天，差量更新有风险）能达到 90 分，但投入产出比需要权衡。<b>建议先落地上一版，后续有时间再迭代这一版。</b></div>
+  </div>
+</section>
+
+<div class="footer">
+  Trim Fancy Installer 重构方案 · 2026-09-12 · 基于 NSIS 自定义脚本 + nsDialogs<br>
+  品牌色：碳墨 #171832 × 薰衣草 #8B8EE0 · 与 Trim 应用内深色 Fluent 语言对齐<br>
+  相关文档：<a href="../nsis-installer美化方案/index.html">MUI2 品牌化方案（v1）</a> · <a href="../electron-updater自动更新方案/index.html">自动更新接入方案</a> · 项目仓库 <code>D:\KaiFa\Trim</code>
+</div>
+
+</div>
+
+<script>
+const tocLinks=document.querySelectorAll('.toc a');
+const sections=document.querySelectorAll('section[id]');
+const io=new IntersectionObserver(entries=>{
+  entries.forEach(e=>{
+    if(e.isIntersecting){
+      tocLinks.forEach(a=>a.classList.remove('active'));
+      const link=document.querySelector(`.toc a[href="#${e.target.id}"]`);
+      if(link)link.classList.add('active');
+    }
+  });
+},{rootMargin:'-20% 0px -70% 0px'});
+sections.forEach(s=>io.observe(s));
+
+function copyCode(btn){
+  const pre=btn.closest('.codebar').nextElementSibling;
+  const text=pre.innerText;
+  if(navigator.clipboard){navigator.clipboard.writeText(text).then(()=>{btn.textContent='已复制';btn.classList.add('ok');setTimeout(()=>{btn.textContent='复制';btn.classList.remove('ok');},1500);});}
+  else{const ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);btn.textContent='已复制';btn.classList.add('ok');setTimeout(()=>{btn.textContent='复制';btn.classList.remove('ok');},1500);}
+}
+</script>
+</body>
+</html>

@@ -2,23 +2,23 @@
 
 > 本文是 Trim（包名 `trim`，productName `Trim`，appId `com.xiaoxu.trim`）的项目架构、规范与回归陷阱全量参考，由 AGENTS.md 拆出（2026-09 目录梳理）。
 > **文档分工**：`readme.md` = 用户使用说明（人话版，同时是应用内「使用说明」弹窗唯一数据源）；`AGENTS.md` = 智能体协作约束（精简）；本文 = 架构事实与陷阱库。
-> 版本 2.0 · Windows 11 22H2+（27H2 Build 29648 验证）· 需要 PowerShell 7。
-> **路径约定**：文内路径以仓库实际位置为准——仓库 `D:\KaiFa\Trim`，文档目录 `docs规范/`，安装器工程在兄弟目录 `Trim goujian/`。
+> 版本 2.6 · Windows 11 22H2+（27H2 Build 29648 验证）· 需要 PowerShell 7。
+> **路径约定**：文内路径以仓库实际位置为准——仓库 `D:\KaiFa\Trim`，文档目录 `docs规范/`，构建产物输出 `build-release/`（v2.6.0 起 package.json `build.directories.output` 指向仓库根 `build-release`，相对路径；旧 `Trim goujian/` Tauri 工程已退役）。
 
 ## 一、技术形态与仓库
 
 - **零前端框架**：原生 HTML/CSS/JS 单窗口 SPA（`src/index.html` 每页一个 `.page` div）。禁止引入 React/Vue/组件库运行时；组件视觉参考 shadcn/ui，交互逻辑参考 antd。
-- 仓库 `D:\KaiFa\Trim`；Tauri 安装器工程在兄弟目录 `Trim goujian\trim-installer`。原生组件 `native-scanner/`（Rust）编译出 `finder.exe`（重复/大文件/空项查找器），由 electron-builder 作为 extraResources 进包。
-- 运行时 npm 依赖 **0 个**（dependencies 为空；AI 简介联网拉取用内置 fetch），**默认不新增依赖**，确需新增先征得同意。electron ^44.1.1（`setBackgroundMaterial` 依赖 Electron 30+）。
+- 仓库 `D:\KaiFa\Trim`。原生组件 `native-scanner/`（Rust）编译出 `finder.exe`（重复/大文件/空项查找器），由 electron-builder 作为 extraResources 进包。安装器为 electron-builder NSIS（commit 5adbe47 起，Tauri 工程退役）。
+- 运行时 npm 依赖 **1 个**（`electron-updater`；AI 简介联网拉取用内置 fetch），**默认不新增依赖**，确需新增先征得同意。electron ^44.1.1（`setBackgroundMaterial` 依赖 Electron 30+）。
 - 目录总图（2026-09 梳理后）：
   - 根目录：`main.js` / `preload.js`（Electron 入口）、`package.json`、`test-features.js`、`readme.md`、`AGENTS.md`、`LICENSE.md`
   - `src/assets/ico/`：**唯一图标目录**（品牌源、打包、运行时都用它；生成器是 `scripts/fix_icons.py`）
-  - `scripts/`：开发工具（gen-fallback / sign-rules / fix_icons）
-  - `docs规范/`：架构文档（本文）与历史更新资料（`docs规范/update/...` 为历史快照，不改写）
-  - `src/main/`：主进程共享 Node 模块（`diag.js` / `security.js` / `rules-signature.js` / `ps-rule-path-eval.js`（规则路径受限求值器 PS 片段单一来源）/ `ps-protect-path.js`（受保护路径清单 JS+PS 双实现单一来源），被 main.js、脚本生成模块、test-features.js、sign-rules.js require）
-  - `src/`：5 个窗口 HTML；`scripts/`（渲染层）、`scripts-powershell/`（主进程 PS 脚本模块）、`styles/`、`data/`、`assets/`（ico 图标、fonts 等）
+  - `scripts/`：开发工具（gen-fallback / sign-rules / fix_icons / build-fastsize / gen-installer-assets）
+  - `docs规范/`：架构文档（本文）、ds API 文档（`design-system/README.md`）与历史更新资料（`docs规范/update/...` 为历史快照，不改写）
+  - `src/main/`：主进程共享 Node 模块（`diag.js` / `security.js` / `rules-signature.js` / `ps-rule-path-eval.js`（规则路径受限求值器 PS 片段单一来源）/ `ps-protect-path.js`（受保护路径清单 JS+PS 双实现单一来源）/ `optimization-state.js`（v2.6.0 优化项已应用状态记账）/ `version-migrations.js`（v2.6.0 退役优化项迁移）/ `updater.js`（v2.6.0 多线路自动更新）），被 main.js、脚本生成模块、test-features.js、sign-rules.js require
+  - `src/`：5 个窗口 HTML；`scripts/`（渲染层）、`scripts-powershell/`（主进程 PS 脚本模块）、`styles/`、`data/`（cleanup-rules.json、item-intro.json、retired-optimizations.json）、`assets/`（ico 图标、fonts 等）
   - `native-scanner/`：Rust 子工程，`target/` 是构建缓存（已 gitignore，不入库；本地保留，打包要用 release/finder.exe）
-  - `design-system/`：设计系统参考（`README.md` 是 ds API 文档）
+  - `build-release/`：electron-builder 构建产物输出（gitignore，不入库；GitHub Releases 发布用）
 
 ## 二、进程与窗口
 
@@ -60,6 +60,10 @@
 | 位置 | 键 / 字段 | 说明 |
 |---|---|---|
 | `%APPDATA%\Trim\appearance.json` | material / materialEnabled / windowState | 主进程持久化（`SECURITY.atomicWriteJson`） |
+| `%APPDATA%\Trim\optimizer-backups.json` | optionId → { at, values[] } | 优化项执行前注册表原值备份（fail-closed：备份写失败则中止执行） |
+| `%APPDATA%\Trim\optimization-state.json` | items[optionId] = { title, appliedAt, kinds(reg/cmd/service), status(pending/applied), lastVerify(pass/partial/unknown) } | **v2.6.0（P0-1）已应用状态记账**：执行前先写 pending（写不进去就不改，fail-closed 不变式①）；执行成功转 applied + 回读验证；还原成功才销账（不变式②：还原失败保留等下次）。损坏先隔离再降级 |
+| `%APPDATA%\Trim\update-mirror.json` | { mirror } | **v2.6.0（P2-8）更新镜像偏好**（auto/github/gh-proxy/ghfast），设置页下拉写入 |
+| `%APPDATA%\Trim\system-info.json` | { timestamp, data } | 硬件信息扫描缓存（overview:hardware） |
 | localStorage `winclean-appearance` | accent / bgPath / bgOpacity / **bgBlur** / presetBg | 渲染层镜像，与 appearance.json 的分工：`material`/`materialEnabled`/`windowState` 归 **appearance.json 单一真源**（主进程持久化），localStorage 不再写 material；bgOpacity 与 bgBlur 均存百分数（0-100）。UI 标签「透明度」已更名「雾化度」（存储键 bgOpacity 不变，「设置页整合4」后续调整） |
 | localStorage 其他 | `winclean-active-page` / `winclean-cleanup-view` / `winclean-liquid-motion` / `winclean-systeminfo-open` / `winclean-theme` | 页面记忆 / 五合一视图 / 液态玻璃档位 / 折叠态 / 主题 |
 | `%APPDATA%\Trim\backgrounds\bg_*.png` / `tmp\` / `icons\` | — | 背景图 / 临时脚本（安全要求）/ 内置图标释放目录 |
@@ -82,7 +86,7 @@
 | `python scripts/fix_icons.py` | 由 `src/assets/ico/source.png` 重新裁切生成全套 png/ico，并同步 Tauri 安装器图标（ROOT 取脚本上级目录；勿就地覆盖 source.png） |
 | `.\node_modules\electron\dist\electron.exe . --remote-debugging-port=9333` | 带 CDP 启动（见 AGENTS 验收流程） |
 
-发布链路：`npm run build` → `trim-installer` 执行 `npm run sync:resources`（robocopy `/MIR` 同步 win-unpacked → `src-tauri/resources/app`，退出码 <8 视为成功）→ Tauri 构建。打包 files 清单见 package.json `build.files`（含 `readme.md`、`src/assets/ico/*.ico`；应用内使用说明弹窗读的就是这个 readme.md）。版本号以 package.json 为准；窗口/交互规范变更同步本文档相关章节。**工作树常态保留大量未提交改动：不主动 commit / push，也不得为实施新改动回滚既有未提交工作。**
+发布链路（v2.6.0 起，NSIS + electron-updater）：`npm run build`（NSIS 安装包 + Portable，prebuild 钩子先跑 gen-fallback）→ 产物在 `build-release/`（`Trim-Setup-<ver>.exe` / `Trim-Portable-<ver>.exe` + `latest.yml` + `*.blockmap`）→ 发布到 GitHub Releases（repo `xiaoxu1642/Trim`，electron-updater 按 latest.yml + sha512 校验增量更新）。**发布到 Releases 的文件 = Setup/Portable exe + latest.yml + blockmap，缺一不可**（blockmap 是差分更新的依据）。`build.directories.output` 是相对路径 `build-release`（v2.6.0 从绝对路径 `Trim goujian\build-release` 迁移，目录名带空格的坑一并消除）。打包 files 清单见 package.json `build.files`（含 `readme.md`、`src/assets/ico/*.ico`；应用内使用说明弹窗读的就是这个 readme.md）。版本号以 package.json 为准；窗口/交互规范变更同步本文档相关章节。**工作树常态保留大量未提交改动：不主动 commit / push，也不得为实施新改动回滚既有未提交工作。**
 
 ## 七、代码组织约定
 
@@ -125,3 +129,8 @@
 - **清理正确性口径（v2.2 第 1 批立规，动 `cleanup-scripts.js` 前必读）**：① `freed` 只能是删除前后**实测快照差值**（`Resolve-RemoveOutcome` 里 `$before.size - $after.size`），`after.size>0 -or after.nfiles>0` 判 `partial`，**严禁**直接取删除前全量 size 冒领；② `residual` 复用删除后快照的 `nfiles`，不得另起 `-Depth 6` 复查（旧实现恒 0）；③ size 是**三态**：`Get-PathStats` 返回 `{ok,missing,size,nfiles}`，统计失败上报 `$null` → 渲染层渲染 `—`，与「真的是 0 字节」区分，新增消费点一律按 `?.size || 0` 汇总、显式判 null 展示；④ 全局 `SilentlyContinue` 下 `Write-Error` **不写 stderr**，致命错误必须 `[Console]::Error.WriteLine` + `exit 2`（主进程 `code!==0` 时把 stderr 当 message 透出），SCAN/EXECUTE 头部各有 `$null -eq` 致命守卫——注意 `'[]' | ConvertFrom-Json` 落变量即为 `$null`（`'{}'` 不是），空清单与解析失败无从区分，守卫只能合并，`@($items).Count -eq 0` 属不可达死代码（test-features 有反向断言拦截）；⑤ `EnumerateFileSystemEntries` 无 `MoveNext`、ACL 异常惰性发生在首次 `MoveNext()`，探针必须 `.GetEnumerator()`；`Test-Path` 对「存在但无列举权限」返回 True，**存在 ≠ 可统计**；⑥ 函数体内禁止 `Write-Output` 类诊断（`Write-TFDiag` 会污染返回值破行协议），诊断一律在调用处输出；⑦ 主进程入口已强校验（`cleanup:scan` 要求 `categories.length>=1`、`validateSnapshotItems` 对空清单 `return null`），**勿在 main.js 补空清单早退死代码**。已知遗留：`special='dism'` 分支硬编码 `size = 0`（应为 `—`），牵动汇总口径未随本批改。
 - **路径表达式与保护清单口径（v2.2 第 2 批立规，动 `ps-rule-path-eval.js` / `ps-protect-path.js` / EXECUTE 删除分支前必读）**：① **.NET `Path.GetFullPath` 会展开磁盘上存在的 8.3 短名，Node `path.resolve` 不会** → 短名与裸盘符两类 fail-closed 判定必须放在**解析之前**、JS/PS 同位置（`resolve` 还会拼 CWD、折叠 `..`，只查解析结果会漏判 `C:\a~1\..\Windows`）；② 清单只能从环境变量取根，**禁止** `SystemDrive + 硬编码目录名`（多语言/自定义安装静默失效）；`USERPROFILE`/`APPDATA`/`LOCALAPPDATA` **永不进 subtree**；③ PS 片段写在 JS 模板里时**注释不得含反斜杠、严禁反引号**，分隔符用 `$bs=[string][char]92`，路径匹配一律 `Substring`/`StartsWith` 字面量比较（正则要穿三层转义必错）；④ **PS 子作用域 `+=` 不回传父作用域**，fileKeys 保护过滤改用「计数 + 任一命中整条拒绝」（同 id 拆两行 details 会破坏渲染层行协议）；⑤ 归一化清单元素存**已归一化小写绝对路径**，PS 侧只比字符串，故语义不可能漂；⑥ `C:\$Recycle.Bin` **刻意不在清单**（内置 `recycleBin` 规则目标即它），test-features 有反向 tripwire 断言，改判须连规则一起改；⑦ EXECUTE 侧现有 **5** 处 `Test-PathProtected`（函数入口 / fileKeys / 回收站分支 / Prune-EmptyDirs / contents 逐子项；断言下限仍是 4），新增删除面先问「这条路径有没有经过 `Remove-PathSafely`」，没有就单独挂闸并同步断言下限；⑧ **JS 模板字符串吞反斜杠同样作用于代码里的路径字面量**——`'Trim\cleanup-reg-backup'` 的 `\b` 会被吞成退格符，路径一律嵌套 `Join-Path` 无斜杠写法（v2.2 第 3 批 D4 实战）；⑨ **regKeys 删除前备份「先全备份、后统一删除」fail-closed**（备份目录 `%APPDATA%\Trim\cleanup-reg-backup\`，`Convert-RegPathForExport` 剥 `Registry::` 前缀 + 全名缩写，与 `Convert-RegPath` 互为反向，改一处须同步另一处；备份不看 `recycle`——注册表两种模式都是直接删）；⑩ **`deleteMode:"contents"` 的 37/34/3 分布被断言锁死**，备份类误标 contents 会留空壳、非备份类漏标会退回「整目录删 + 路径猜测重建」，改规则 JSON 后必跑 `gen-fallback.js`。
 - finder.exe 查找顺序（main.js）：打包后 `process.resourcesPath/finder/finder.exe` → 开发态 `native-scanner/target/release/finder.exe` → `resources/finder/finder.exe`；改 Rust 后必须 `cargo build --release` 刷新，electron-builder 从 target/release 取件进包。
+- **优化中心记账三不变式（v2.6.0，动 `optimizer:run` / `restore-reg` / `optimization-state.js` 前必读）**：① **执行前先记账**（`OPT_STATE.recordPending` pending），记账写失败必须中止执行返回失败（fail-closed，不能降级放行）；② **还原成功才销账**（`restore-reg` 成功路径 / `optimizer:run` restore 模式成功路径调 `OPT_STATE.remove`），失败一律保留记录；③ 执行失败/异常路径转 `applied + lastVerify:'unknown'` 保留记录（前序步骤可能已生效），由启动扫描核对——不要在失败路径上删记录。`checkOptimizedInternal` 是 `optimizer:check-optimized` IPC 与执行后回读共用的单一实现，改检测逻辑两处同时生效；`verifyOptionApplied` 对无逐键比对手段的 cmd 类步骤只能返回 `'unknown'`，**禁止伪造 pass/partial**。退役迁移（`version-migrations.js`，whenReady 后台跑）：备份文件里「不在当前 OPTIONS」的 id 按原值还原，还原失败保留原记录下次重试；退役清单 `src/data/retired-optimizations.json` 只提供元数据（title/note），缺省也能还原。渲染层 stale 横幅（optimizer.js `loadStateOverview`）：stale = pending 记录 + 已应用但逐键检测不符；动态项（svc_mem_gb）不参与 stale 判定（遗留 pending 记录在 state-overview 里直接清理）。
+- **优化项 effect 字段（v2.6.0 P2-7）**：`EFFECT_MAP` 在 optimizer-scripts.js 末尾统一注入（不改 125 个对象字面量），未登记的 id 一律默认 `'未验证'`（诚实兜底）；渲染层 EFFECT_BADGE/弹窗说明与档位字符串强耦合，增删档位需同步 test-features 的 effect 断言与 readme 描述。
+- **系统体检脚本（v2.6.0 P1-6，`overview-scripts.js checkup()`）**：写在此 JS 模板字符串里的 PS 代码**禁反引号、禁 `${`**（模板插值冲突，test-features 有断言）；`Add-Check` 用 `$script:checks +=`（脚本经 `-File` 执行，script 作用域成立，改成 `-Command` 会静默丢数据）；全部只读 + 证据等级（本机实测/机制明确/未验证），检测不出标 `'unknown'` 不伪造结论；主进程 5 分钟缓存 + 在途去重（`overview:checkup`），`refresh=true` 才强制重跑。
+- **updater 多线路（v2.6.0 P2-8）**：electron-updater 单实例无法并发竞速，容灾是 `orderedFeeds()` 顺序回退（用户指定镜像优先 → GitHub 兜底）；每次尝试都 `setFeedURL` 显式重设（github provider 与 generic provider 混用），新增镜像只改 `MIRRORS` 常量 + 渲染层 `getMirror` 返回的 options（下拉按主进程清单动态渲染，HTML 不硬编码）。**信任锚是 latest.yml 内 sha512**（electron-updater 下载后强校验），镜像域名不需要也不应再加白名单——这与规则库更新「源只是通道、内容自证可信」同一模型。镜像偏好持久化在数据目录 `update-mirror.json`（tmp+rename 原子替换）。
+- **便携模式（v2.6.0 P2-9）**：`IS_PORTABLE`（程序目录 `Trim.portable` 标记，仅打包后生效）在模块顶层、`app ready` 之前 `setPath('userData', exeDir\data)`；`APP_DATA_DIR` IIFE 必须先判 `PORTABLE_DATA_DIR`——userData 基名此时是 `data` 不是 `trim`，走 C1 分支会静默回落 `%APPDATA%\Trim` 便携失效。开发环境恒为标准模式（`!app.isPackaged` 短路）。

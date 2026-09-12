@@ -22,6 +22,9 @@ contextBridge.exposeInMainWorld('api', {
     download: () => ipcRenderer.invoke('updater:download'),
     cancelDownload: () => ipcRenderer.invoke('updater:cancel-download'),
     install: () => ipcRenderer.invoke('updater:install'),
+    // v2.6.0（P2-8）：更新镜像偏好（auto = GitHub 优先失败自动回退）
+    setMirror: (mirror) => ipcRenderer.invoke('updater:set-mirror', { mirror }),
+    getMirror: () => ipcRenderer.invoke('updater:get-mirror'),
     onState: (callback) => {
       const handler = (_, state) => callback(state);
       ipcRenderer.on('updater:state-changed', handler);
@@ -34,7 +37,9 @@ contextBridge.exposeInMainWorld('api', {
   },
   overview: {
     metrics: () => ipcRenderer.invoke('overview:metrics'),
-    hardware: (options = {}) => ipcRenderer.invoke('overview:hardware', options)
+    hardware: (options = {}) => ipcRenderer.invoke('overview:hardware', options),
+    // v2.6.0（P1-6）：系统体检（只读诊断，返回 {checks:[{id,title,status,value,detail,evidence}]}）
+    checkup: (options = {}) => ipcRenderer.invoke('overview:checkup', options)
   },
 
   // 窗口控制（原生 titleBarOverlay 提供 min/max/close，此处保留兼容）
@@ -355,6 +360,8 @@ contextBridge.exposeInMainWorld('api', {
     backupReg: (optionId, steps) => ipcRenderer.invoke('optimizer:backup-reg', { optionId, steps }),
     // 按备份还原注册表键值（无备份返回 missing:true）
     restoreReg: (optionId) => ipcRenderer.invoke('optimizer:restore-reg', { optionId }),
+    // v2.6.0（P0-1）：已应用状态总览（启动扫描核对 + stale 清单 + 退役迁移结果）
+    stateOverview: () => ipcRenderer.invoke('optimizer:state-overview'),
     onProgress: (callback) => {
       const handler = (_, data) => callback(data);
       ipcRenderer.on('optimizer:progress', handler);

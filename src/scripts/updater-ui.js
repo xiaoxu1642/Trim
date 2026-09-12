@@ -235,7 +235,7 @@
     const cur = state.currentVersion ? 'v' + state.currentVersion : '';
     switch (state.phase) {
       case 'checking':
-        setRow('正在检查…', true, '正在向 GitHub 检查新版本…');
+        setRow('正在检查…', true, '正在多线路检查新版本（GitHub 直连 + 镜像）…');
         break;
       case 'available':
         setRow('检查更新', false, '发现新版本 v' + (state.version || '') + '，可在弹窗中下载');
@@ -331,6 +331,39 @@
     rowBtn = document.getElementById('btnCheckUpdate');
     rowHint = document.getElementById('updaterCheckHint');
     if (!rowBtn || !window.api || !window.api.updater) return; // 优雅降级
+
+    // v2.6.0（P2-8）：更新镜像偏好下拉（主进程返回可选项与当前值，持久化在数据目录）
+    const mirrorSelect = document.getElementById('updaterMirrorSelect');
+    const mirrorHint = document.getElementById('updaterMirrorHint');
+    if (mirrorSelect && window.api.updater.getMirror) {
+      window.api.updater.getMirror().then(cfg => {
+        if (!cfg || !Array.isArray(cfg.options)) return;
+        // 主进程线路清单为准（新增镜像只改 updater.js 与此处渲染，无需改 HTML）
+        mirrorSelect.innerHTML = '';
+        cfg.options.forEach(opt => {
+          const el = document.createElement('option');
+          el.value = opt.id;
+          el.textContent = opt.label;
+          mirrorSelect.appendChild(el);
+        });
+        mirrorSelect.value = cfg.mirror || 'auto';
+      }).catch(() => {});
+      mirrorSelect.addEventListener('change', () => {
+        const id = mirrorSelect.value || 'auto';
+        try {
+          window.api.updater.setMirror(id).then(r => {
+            if (r && r.ok) {
+              if (mirrorHint) mirrorHint.textContent = id === 'auto'
+                ? 'GitHub 直连失败时自动回退镜像线路（下载内容经哈希校验）'
+                : '已固定线路；下载内容仍经 latest.yml 哈希强校验，镜像只是传输通道';
+              toast('success', '更新镜像偏好已保存');
+            } else {
+              toast('error', '镜像偏好保存失败');
+            }
+          }).catch(() => toast('error', '镜像偏好保存失败'));
+        } catch (_) { /* 预览模式无 API */ }
+      });
+    }
 
     unbind = window.api.updater.onState(s => {
       if (!s || !s.phase) return;

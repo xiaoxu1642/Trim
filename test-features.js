@@ -32,14 +32,18 @@ const SYNTAX_FILES = [
   'main.js',
   'preload.js',
   'src/main/diag.js',
+  'src/main/optimization-state.js',
   'src/main/ps-rule-path-eval.js',
   'src/main/ps-protect-path.js',
+  'src/main/version-migrations.js',
   'src/scripts-powershell/cleanup-scripts.js',
   'src/scripts-powershell/maintenance-scripts.js',
   'src/scripts/app.js',
   'src/scripts/cleanup.js',
   'src/scripts/cleanup-fallback.generated.js',
   'src/scripts/ds.js',
+  'src/scripts/optimizer.js',
+  'src/scripts/overview.js',
   'src/scripts/pathbinding.js',
   'src/scripts/modal.js',
   'src/scripts/logger.js',
@@ -48,6 +52,7 @@ const SYNTAX_FILES = [
   'src/scripts/netspeed-detector.js',
   'src/scripts/netspeed.js',
   'src/scripts/theme.js',
+  'src/scripts/updater-ui.js',
   'src/scripts/xtable.js',
   'src/scripts/preview-window.js',
   'src/scripts/contextmenu.js',
@@ -1136,6 +1141,139 @@ check('index.html 包含 maintenance 页面与脚本引用', () => {
   for (const gone of ['page-bigfile', 'scripts/bigfile.js', 'disk-health', 'diskHealth']) {
     if (html.includes(gone)) throw new Error('已删除功能仍残留 ' + gone);
   }
+});
+
+// ==================== 6. v2.6.0 批次（优化中心安全增强 / 系统体检 / 多线路更新 / 便携模式） ====================
+console.log('[6/6] v2.6.0 批次检查');
+
+check('optimization-state 记账 fail-closed 语义', () => {
+  const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'trim-optstate-'));
+  const OPT_STATE = require(abs('src/main/optimization-state'));
+  try {
+    OPT_STATE.initDataDir(dir, () => {});
+    if (!OPT_STATE.ready()) throw new Error('initDataDir 后应 ready');
+    if (OPT_STATE.get('x')) throw new Error('初始应无记录');
+    if (!OPT_STATE.recordPending('x', { title: '测试项', kinds: ['reg', 'cmd'] })) throw new Error('recordPending 应成功');
+    // 记账成功后才允许执行——写不进去就不改
+    const rec = OPT_STATE.get('x');
+    if (!rec || rec.status !== 'pending' || rec.kinds.join() !== 'reg,cmd') throw new Error('pending 记录形状不符');
+    if (!OPT_STATE.markApplied('x', 'partial')) throw new Error('markApplied 应成功');
+    if (OPT_STATE.get('x').status !== 'applied' || OPT_STATE.get('x').lastVerify !== 'partial') throw new Error('applied 转正不符');
+    if (!OPT_STATE.remove('x')) throw new Error('remove 应成功');
+    if (OPT_STATE.get('x')) throw new Error('销账后应无记录');
+    // 损坏隔离：写入垃圾后 load 应自愈为空且不抛异常
+    fs.writeFileSync(path.join(dir, 'optimization-state.json'), '{broken', 'utf8');
+    const state = JSON.parse(JSON.stringify(OPT_STATE.all()));
+    if (Object.keys(state).length !== 0) throw new Error('损坏文件应隔离并返回空清单');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+check('version-migrations 退役迁移语义（成功销账 / 失败保留 / 目录内不碰）', () => {
+  // runRetiredMigrations 是异步实现，子进程里跑桩断言（非零退出 = 失败）
+  const child = [
+    "const MIGRATIONS=require(" + JSON.stringify(abs('src/main/version-migrations.js')) + ");",
+    "const backups={retired_one:{values:[{hive:'HKEY_CURRENT_USER',sub:'Software\\\\TrimTest',key:'A',exists:true}]},still_listed:{values:[]},broken_one:{values:[{hive:'HKEY_CURRENT_USER',sub:'Software\\\\TrimTest',key:'B',exists:false}]}};",
+    "const removed=[];const saved=[];",
+    "MIGRATIONS.runRetiredMigrations({",
+    "  knownIds:new Set(['still_listed']),",
+    "  loadBackups:()=>({...backups}),",
+    "  saveBackups:(m)=>{saved.push(Object.keys(m).sort());},",
+    "  restoreEntry:async(id)=>(id==='broken_one'?{ok:false,reason:'模拟失败'}:{ok:true}),",
+    "  removeState:(id)=>{removed.push(id);},",
+    "  writeLog:()=>{}",
+    "}).then(s=>{",
+    "  if(s.restored.length!==1||s.restored[0].id!=='retired_one') throw new Error('应恰好还原 retired_one');",
+    "  if(s.failed.length!==1||s.failed[0].id!=='broken_one') throw new Error('应恰好失败 broken_one');",
+    "  if(removed.join()!=='retired_one') throw new Error('仅成功项销账');",
+    "  if(JSON.stringify(saved)!==JSON.stringify([['broken_one','still_listed']])) throw new Error('失败项与目录内项都应原样保留');",
+    "  console.log('OK');",
+    "}).catch(e=>{console.error(e.message);process.exit(1);});"
+  ].join('\n');
+  const out = execFileSync(process.execPath, ['-e', child], { encoding: 'utf8', timeout: 20000 });
+  if (!out.includes('OK')) throw new Error('迁移断言未通过: ' + out);
+});
+
+check('retired-optimizations.json 结构合法', () => {
+  const m = JSON.parse(fs.readFileSync(abs('src/data/retired-optimizations.json'), 'utf8'));
+  if (m.version !== 1 || !Array.isArray(m.items)) throw new Error('顶层结构应为 {version:1, items:[]}');
+  for (const it of m.items) {
+    if (!it || typeof it.id !== 'string' || !it.id) throw new Error('items 条目缺少 id');
+  }
+});
+
+check('优化项 effect 预期效果字段全覆盖（P2-7）', () => {
+  const optimizer = require(abs('src/scripts-powershell/optimizer-scripts.js'));
+  const valid = new Set(['明显', '一般', '微小', '未验证']);
+  const missing = optimizer.OPTIONS.filter(o => !valid.has(o.effect));
+  if (missing.length) throw new Error('effect 缺失或非法: ' + missing.map(o => o.id).join(', '));
+  // 渲染层徽章映射须覆盖全部四个档位
+  const optSrc = fs.readFileSync(abs('src/scripts/optimizer.js'), 'utf8');
+  for (const lv of valid) {
+    if (!optSrc.includes("'" + lv + "'")) throw new Error('optimizer.js EFFECT_BADGE 缺少档位 ' + lv);
+  }
+});
+
+check('系统体检脚本 PS 语法（P1-6）', () => {
+  const OVERVIEW = require(abs('src/scripts-powershell/overview-scripts.js'));
+  psParseCheck('overview.checkup', OVERVIEW.checkup());
+  const script = OVERVIEW.checkup();
+  if (script.includes('`')) throw new Error('体检脚本含反引号（模板字符串冲突风险）');
+  if (/\$\{/.test(script)) throw new Error('体检脚本含 ${ 序列（JS 模板插值冲突风险）');
+  for (const need of ['ConvertTo-Json', 'Add-Check', 'Get-PhysicalDisk', 'Get-MpComputerStatus']) {
+    if (!script.includes(need)) throw new Error('体检脚本缺少 ' + need);
+  }
+});
+
+check('updater 多线路容灾与镜像持久化（P2-8）', () => {
+  // updater.js 依赖 electron 运行时（electron-updater 在普通 node 下 require 即失败），
+  // 这里做源码级断言；运行时行为由 CDP 真机验证兜底。
+  const src = fs.readFileSync(abs('src/main/updater.js'), 'utf8');
+  const mirrorIds = ['gh-proxy', 'ghfast'];
+  for (const id of mirrorIds) {
+    if (!src.includes(`id: '${id}'`)) throw new Error('缺少镜像线路 ' + id);
+  }
+  // 镜像 base 必须是 https 且指向 releases/latest/download/（latest.yml 与安装包同目录）
+  const bases = [...src.matchAll(/base:\s*'([^']+)'/g)].map(m => m[1]);
+  if (bases.length < 2) throw new Error('镜像线路不足两条');
+  for (const b of bases) {
+    if (!/^https:\/\//.test(b) || !b.endsWith('/')) throw new Error('镜像 base 必须是 https 且以 / 结尾: ' + b);
+    if (!b.includes('releases/latest/download/')) throw new Error('镜像 base 应指向 releases/latest/download: ' + b);
+  }
+  for (const fn of ['setMirror', 'getMirror', 'loadMirrorPref', 'saveMirrorPref', 'orderedFeeds']) {
+    if (!src.includes('function ' + fn)) throw new Error('updater.js 缺少 ' + fn);
+  }
+  if (!src.includes('module.exports = { initUpdater, safeCheck, startDownload, cancelDownload, installUpdate, setMirror, getMirror, MIRRORS }')) {
+    throw new Error('module.exports 未导出 setMirror/getMirror/MIRRORS');
+  }
+});
+
+check('v2.6.0 新增 IPC 通道 main/preload 双侧对齐', () => {
+  const mainSrc = fs.readFileSync(abs('main.js'), 'utf8');
+  const preloadSrc = fs.readFileSync(abs('preload.js'), 'utf8');
+  const channels = [
+    'optimizer:state-overview',
+    'overview:checkup',
+    'updater:set-mirror',
+    'updater:get-mirror'
+  ];
+  for (const ch of channels) {
+    if (!mainSrc.includes(`'${ch}'`)) throw new Error('main.js 缺少通道 ' + ch);
+    if (!preloadSrc.includes(`'${ch}'`)) throw new Error('preload.js 缺少通道 ' + ch);
+  }
+  // 只读白名单登记（体检/镜像读取）
+  if (!mainSrc.includes("'overview:checkup',                                          // 系统体检")) {
+    throw new Error('SIDE_EFFECT_FREE 白名单未登记 overview:checkup');
+  }
+});
+
+check('便携模式标记检测与数据目录切换（P2-9）', () => {
+  const mainSrc = fs.readFileSync(abs('main.js'), 'utf8');
+  for (const needle of ['Trim.portable', 'IS_PORTABLE', "app.setPath('userData'"]) {
+    if (!mainSrc.includes(needle)) throw new Error('main.js 缺少便携模式关键代码: ' + needle);
+  }
+  if (!mainSrc.includes('portable: IS_PORTABLE')) throw new Error('app:get-info 未返回 portable 字段');
 });
 
 // ==================== 汇总 ====================

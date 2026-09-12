@@ -12,6 +12,8 @@
   };
 
   function text(value) { return String(value ?? '').trim() || '--'; }
+  // 💭1：硬件/固件字符串来自 WMI，虽非用户输入，仍按项目惯例转义后再进 innerHTML，保持一致与纵深。
+  function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
   function render(data) {
     const rows = [
       ['系统', data.system], ['处理器', data.processor], ['显卡', data.graphics],
@@ -19,7 +21,7 @@
     ];
     const el = document.getElementById('deviceInfoRows');
     if (!el) return;
-    el.innerHTML = rows.map(([label, value]) => `<div class="device-info-row"><span class="device-info-label">${label}</span><span class="device-info-value">${text(value)}</span></div>`).join('');
+    el.innerHTML = rows.map(([label, value]) => `<div class="device-info-row"><span class="device-info-label">${label}</span><span class="device-info-value">${esc(text(value))}</span></div>`).join('');
     const status = document.getElementById('deviceInfoStatus');
     if (status) status.textContent = data.preview ? '已加载' : `已扫描 · ${new Date().toLocaleTimeString()}`;
   }

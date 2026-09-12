@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trim NSIS 安装器美化方案</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect width='24' height='24' rx='5' fill='%23171832'/><text x='12' y='17' font-size='13' font-family='Arial' font-weight='bold' fill='%238B8EE0' text-anchor='middle'>T</text></svg>">
+<style>
+:root{
+  --bg:#1f1f1f;--bg-raise:#262626;--card:#2b2b2b;--card-2:#303030;
+  --stroke:rgba(255,255,255,.08);--stroke-strong:rgba(255,255,255,.14);
+  --txt:#e8e8e8;--txt-2:#a0a0a0;--txt-3:#6e6e6e;
+  --accent:#8B8EE0;--accent-2:#A6A9F2;--accent-soft:rgba(139,142,224,.14);
+  --ok:#6ecb83;--warn:#e0b86e;--bad:#e07a7a;
+  --brand-dark:#171832;--brand-d2:#2a2b4a;
+  --ra:8px;--mono:"Cascadia Code","Cascadia Mono",Consolas,"Courier New",monospace;
+  --sans:"Microsoft YaHei UI","Microsoft YaHei","Segoe UI",system-ui,sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--txt);font-family:var(--sans);font-size:15px;line-height:1.75;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+a{color:var(--accent-2);text-decoration:none}
+a:hover{text-decoration:underline}
+
+/* ===== 左侧目录 ===== */
+.toc{position:fixed;left:0;top:0;bottom:0;width:248px;background:var(--bg-raise);border-right:1px solid var(--stroke);padding:22px 14px;overflow-y:auto;z-index:40}
+.toc .brand{display:flex;align-items:center;gap:10px;margin-bottom:6px;padding:0 6px}
+.toc .brand .logo{width:30px;height:30px;border-radius:7px;background:var(--brand-dark);display:flex;align-items:center;justify-content:center;color:var(--accent);font-weight:700;font-size:15px;font-family:var(--mono);border:1px solid var(--stroke-strong)}
+.toc .brand .name{font-weight:700;font-size:15px}
+.toc .brand .sub{font-size:11px;color:var(--txt-3);margin-top:1px}
+.toc .sec{font-size:11px;color:var(--txt-3);text-transform:uppercase;letter-spacing:1px;margin:18px 6px 6px}
+.toc a{display:block;color:var(--txt-2);font-size:13px;padding:6px 10px;border-radius:5px;border-left:2px solid transparent;margin:1px 0;line-height:1.4;transition:all .15s}
+.toc a:hover{color:var(--txt);background:rgba(255,255,255,.04);text-decoration:none}
+.toc a.active{color:var(--accent-2);background:var(--accent-soft);border-left-color:var(--accent)}
+
+/* ===== 主内容 ===== */
+.main{margin-left:248px;max-width:960px;padding:40px 48px 80px}
+.eyebrow{font-size:12px;color:var(--accent);letter-spacing:2px;text-transform:uppercase;font-family:var(--mono);margin-bottom:10px}
+h1{font-size:34px;font-weight:800;line-height:1.25;margin-bottom:14px;letter-spacing:-.5px}
+h1 .accent{color:var(--accent-2)}
+.lead{color:var(--txt-2);font-size:16px;line-height:1.8;margin-bottom:20px;max-width:720px}
+.meta-row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:36px}
+.tag{font-size:12px;padding:3px 11px;border-radius:100px;border:1px solid var(--stroke-strong);color:var(--txt-2);background:rgba(255,255,255,.03);display:inline-flex;align-items:center;gap:5px}
+.tag .dot{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+
+section{margin-top:52px}
+.sec-title{display:flex;align-items:center;gap:12px;margin-bottom:8px}
+.sec-title .bar{width:4px;height:22px;background:var(--accent);border-radius:2px}
+.sec-title h2{font-size:22px;font-weight:700}
+.sec-desc{color:var(--txt-2);margin:0 0 20px 16px;font-size:14.5px}
+
+/* ===== 卡片 ===== */
+.card{background:var(--card);border:1px solid var(--stroke);border-radius:var(--ra);padding:18px 18px 16px}
+.card h3{font-size:15px;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.card p{color:var(--txt-2);font-size:13.5px;line-height:1.7}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.g3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+
+/* ===== 对比表 ===== */
+table{width:100%;border-collapse:collapse;font-size:13.5px;margin:10px 0}
+th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--stroke);vertical-align:top}
+th{color:var(--txt-2);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.5px;background:rgba(255,255,255,.02)}
+tr:last-child td{border-bottom:none}
+td code,th code{font-family:var(--mono);font-size:12px;background:rgba(255,255,255,.07);padding:1px 6px;border-radius:4px;color:var(--accent-2)}
+.rec{background:var(--accent-soft);border-left:3px solid var(--accent)}
+
+/* ===== 代码块 ===== */
+.codebar{display:flex;align-items:center;justify-content:space-between;padding:7px 14px;background:#222;border-bottom:1px solid var(--stroke);border-radius:var(--ra) var(--ra) 0 0;font-size:11.5px;color:var(--txt-3);font-family:var(--mono)}
+.copy-btn{font-family:var(--sans);font-size:11.5px;color:var(--txt-2);background:rgba(255,255,255,.06);border:1px solid var(--stroke);border-radius:5px;padding:3px 10px;cursor:pointer;transition:all .15s}
+.copy-btn:hover{background:rgba(255,255,255,.12);color:var(--txt)}
+.copy-btn.ok{color:var(--ok);border-color:var(--ok)}
+pre{background:#1e1e1e;border:1px solid var(--stroke);border-top:none;border-radius:0 0 var(--ra) var(--ra);padding:16px 18px;overflow-x:auto;font-family:var(--mono);font-size:12.5px;line-height:1.7;color:#d4d4d4}
+pre .c{color:#6a9955}
+pre .k{color:#569cd6}
+pre .s{color:#ce9178}
+pre .n{color:#b5cea8}
+pre .p{color:#d4d4d4}
+
+/* ===== 提示条 ===== */
+.note{display:flex;gap:12px;padding:14px 18px;border-radius:var(--ra);margin:16px 0;font-size:13.5px;line-height:1.7}
+.note.info{background:rgba(76,194,255,.07);border:1px solid rgba(76,194,255,.2);color:#b8dff5}
+.note.warn{background:rgba(224,184,110,.08);border:1px solid rgba(224,184,110,.25);color:#e8d5a8}
+.note .ico{flex-shrink:0;font-size:16px;line-height:1.5}
+.note b{color:var(--txt)}
+
+/* ===== 规格卡 ===== */
+.spec{background:var(--card);border:1px solid var(--stroke);border-radius:var(--ra);padding:16px;display:flex;flex-direction:column;gap:10px}
+.spec .spec-head{display:flex;align-items:center;justify-content:space-between}
+.spec .spec-name{font-weight:700;font-size:14px}
+.spec .spec-size{font-family:var(--mono);font-size:12px;color:var(--accent-2);background:var(--accent-soft);padding:2px 8px;border-radius:4px}
+.spec .spec-desc{font-size:12.5px;color:var(--txt-2);line-height:1.6}
+.spec canvas{width:100%;border-radius:4px;border:1px solid var(--stroke-strong);display:block;background:#000}
+.spec .dl-btn{width:100%;padding:8px;background:var(--accent-soft);border:1px solid var(--accent);color:var(--accent-2);border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;transition:all .15s;font-family:var(--sans)}
+.spec .dl-btn:hover{background:var(--accent);color:#fff}
+
+/* ===== 安装器窗口模拟 ===== */
+.mock-wrap{display:flex;flex-direction:column;gap:28px;margin:20px 0}
+.mock-label{font-size:13px;color:var(--txt-2);margin-bottom:8px;font-weight:600;display:flex;align-items:center;gap:8px}
+.mock-label .num{width:22px;height:22px;border-radius:5px;background:var(--accent);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;font-family:var(--mono)}
+.nsis-win{width:520px;border-radius:8px;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.1);background:#fff;color:#1a1a1a;font-family:"Segoe UI","Microsoft YaHei UI",sans-serif;margin:0 auto}
+.nsis-titlebar{height:30px;background:linear-gradient(180deg,#3a3a3a,#2a2a2a);display:flex;align-items:center;padding:0 12px;color:#ddd;font-size:12px;font-weight:600}
+.nsis-titlebar .win-ctrls{margin-left:auto;display:flex;gap:6px}
+.nsis-titlebar .win-ctrls span{width:12px;height:12px;border-radius:50%;display:inline-block}
+.nsis-body{display:flex;height:280px}
+/* 欢迎页/完成页：左侧品牌图 */
+.nsis-sidebar{width:164px;flex-shrink:0;position:relative;overflow:hidden}
+.nsis-sidebar .sb-content{position:absolute;inset:0;display:flex;flex-direction:column;padding:24px 16px;color:#fff}
+.nsis-sidebar .sb-logo{font-size:26px;font-weight:800;letter-spacing:-.5px;margin-bottom:4px}
+.nsis-sidebar .sb-logo span{color:#8B8EE0}
+.nsis-sidebar .sb-line{width:28px;height:3px;background:#8B8EE0;border-radius:2px;margin:8px 0 14px}
+.nsis-sidebar .sb-slogan{font-size:11px;line-height:1.6;color:rgba(255,255,255,.7)}
+.nsis-sidebar .sb-ver{margin-top:auto;font-size:10px;color:rgba(255,255,255,.45);font-family:Consolas,monospace}
+.nsis-content{flex:1;padding:22px 24px;display:flex;flex-direction:column;background:#fafafa}
+.nsis-content h4{font-size:16px;font-weight:700;color:#171832;margin-bottom:10px}
+.nsis-content p{font-size:12.5px;color:#444;line-height:1.7;margin-bottom:8px}
+.nsis-content .license{margin-top:auto;display:flex;align-items:flex-start;gap:6px;font-size:11.5px;color:#555}
+.nsis-content .license input{margin-top:2px}
+/* 内部页：顶部横幅 */
+.nsis-header{height:57px;flex-shrink:0;display:flex;align-items:center;padding:0 18px;background:linear-gradient(90deg,#171832,#2a2b4a);color:#fff;border-bottom:1px solid rgba(255,255,255,.1)}
+.nsis-header .h-logo{font-size:16px;font-weight:700}
+.nsis-header .h-logo span{color:#8B8EE0}
+.nsis-header .h-sub{margin-left:auto;font-size:11px;color:rgba(255,255,255,.5)}
+.nsis-inner{flex:1;padding:20px 24px;display:flex;flex-direction:column;background:#fafafa}
+.nsis-inner h4{font-size:14px;font-weight:700;color:#171832;margin-bottom:12px}
+.nsis-field{margin-bottom:14px}
+.nsis-field label{display:block;font-size:12px;color:#555;margin-bottom:5px;font-weight:600}
+.nsis-field .input-row{display:flex;gap:6px}
+.nsis-field input[type=text]{flex:1;padding:6px 10px;border:1px solid #ccc;border-radius:4px;font-size:12px;font-family:Consolas,monospace;background:#fff}
+.nsis-field button{padding:6px 12px;border:1px solid #ccc;border-radius:4px;background:#f0f0f0;font-size:12px;cursor:pointer}
+.nsis-check{display:flex;align-items:center;gap:6px;font-size:12px;color:#444;margin-bottom:6px}
+/* 底部按钮栏 */
+.nsis-footer{height:44px;background:#f0f0f0;border-top:1px solid #ddd;display:flex;align-items:center;justify-content:flex-end;padding:0 14px;gap:8px}
+.nsis-btn{padding:6px 18px;border-radius:4px;font-size:12px;cursor:pointer;border:1px solid #ccc;background:#fff;color:#333;font-weight:500}
+.nsis-btn.primary{background:linear-gradient(180deg,#8B8EE0,#7174CC);border-color:#5E62C6;color:#fff;font-weight:600}
+.nsis-btn.primary:hover{background:linear-gradient(180deg,#9a9dea,#7d80d6)}
+.nsis-btn:disabled{opacity:.4;cursor:not-allowed}
+/* 完成页特殊 */
+.nsis-done-icon{width:48px;height:48px;border-radius:50%;background:#e8f5e9;display:flex;align-items:center;justify-content:center;margin-bottom:14px;color:#4caf50;font-size:24px}
+
+/* ===== 步骤 ===== */
+.step{background:var(--card);border:1px solid var(--stroke);border-radius:var(--ra);padding:16px 18px;display:flex;gap:14px;align-items:flex-start;margin-bottom:10px}
+.step .stepnum{width:28px;height:28px;border-radius:7px;background:var(--accent-soft);color:var(--accent-2);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex-shrink:0;font-family:var(--mono)}
+.step .step-body h4{font-size:14px;margin-bottom:4px}
+.step .step-body p{font-size:13px;color:var(--txt-2);line-height:1.65}
+
+/* ===== 底部 ===== */
+.footer{margin-top:60px;padding-top:24px;border-top:1px solid var(--stroke);color:var(--txt-3);font-size:12px;line-height:1.8}
+</style>
+</head>
+<body>
+
+<!-- ===== 左侧目录 ===== -->
+<nav class="toc">
+  <div class="brand">
+    <div class="logo">T</div>
+    <div><div class="name">Trim 安装器</div><div class="sub">NSIS 美化方案</div></div>
+  </div>
+  <div class="sec">目录</div>
+  <a href="#s1" class="active">01 现状与目标</a>
+  <a href="#s2">02 三种方案对比</a>
+  <a href="#s3">03 推荐方案配置</a>
+  <a href="#s4">04 品牌图片素材</a>
+  <a href="#s5">05 界面设计稿</a>
+  <a href="#s6">06 进阶：自定义配色</a>
+  <a href="#s7">07 实施步骤与验收</a>
+</nav>
+
+<!-- ===== 主内容 ===== -->
+<div class="main">
+
+<div class="eyebrow">NSIS INSTALLER · REDESIGN · 2026-09-12</div>
+<h1>Trim NSIS 安装器<span class="accent">美化方案</span></h1>
+<p class="lead">当前 electron-builder 产出的 NSIS 安装包走 MUI2 默认界面——蓝色横幅、灰白配色、无品牌识别。本方案在保留向导式功能（选目录 / 快捷方式 / 免 UAC）的前提下，通过品牌侧边图 + 顶部横幅 + 配色定制，把安装器对齐 Trim 的碳墨×薰衣草视觉语言。</p>
+<div class="meta-row">
+  <span class="tag"><span class="dot"></span>electron-builder 26.15</span>
+  <span class="tag">NSIS MUI2</span>
+  <span class="tag">品牌色 #171832 / #8B8EE0</span>
+  <span class="tag">零新增依赖</span>
+  <span class="tag">向导式保留</span>
+</div>
+
+<!-- ===== 01 现状 ===== -->
+<section id="s1">
+  <div class="sec-title"><div class="bar"></div><h2>现状与目标</h2></div>
+  <p class="sec-desc">当前 package.json 的 nsis 配置只声明了功能参数，没有任何视觉定制。</p>
+  <div class="g2">
+    <div class="card">
+      <h3>当前界面问题</h3>
+      <p>① MUI2 默认蓝色顶部横幅（#0066CC 系），与 Trim 品牌色无关；② 欢迎页左侧 164px 区域纯白空白，浪费品牌展示位；③ 按钮是系统默认灰色，无主按钮强调；④ 整体观感像 2005 年的共享软件安装器，与 Trim 应用内的 Fluent Design 深色语言割裂。</p>
+    </div>
+    <div class="card">
+      <h3>美化目标</h3>
+      <p>① 欢迎页/完成页左侧放<strong>品牌侧边图</strong>（深色 + Trim logo + slogan）；② 内部页顶部放<strong>品牌横幅</strong>（深色 + Trim 字样）；③ 主按钮用 accent 色 #8B8EE0；④ 界面文字全中文；⑤ 不改变安装逻辑、不影响 electron-updater 差量更新、不新增 npm 依赖。</p>
+    </div>
+  </div>
+  <div class="note info">
+    <div class="ico">ℹ️</div>
+    <div><b>关键约束</b>：electron-builder 的 NSIS 目标使用 MUI2（Modern UI 2），图片素材必须是 BMP 格式（electron-builder 内部会自动转换，但直接给 BMP 最稳妥）。侧边图标准尺寸 164×314，顶部横幅标准尺寸 150×57。</div>
+  </div>
+</section>
+
+<!-- ===== 02 方案对比 ===== -->
+<section id="s2">
+  <div class="sec-title"><div class="bar"></div><h2>三种方案对比</h2></div>
+  <p class="sec-desc">从「极简」到「完全定制」，三种路线各有取舍。</p>
+  <table>
+    <thead><tr><th style="width:18%">方案</th><th style="width:24%">做法</th><th style="width:20%">优点</th><th style="width:20%">缺点</th><th style="width:18%">参考应用</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><b>A · oneClick 一键安装</b></td>
+        <td><code>oneClick:true</code>，只有一个小进度窗口（约 400×180），无向导页</td>
+        <td>极简、现代感最强、用户体验最流畅</td>
+        <td>失去自定义安装目录、快捷方式选择、perMachine 选择</td>
+        <td>VS Code、Discord、Figma</td>
+      </tr>
+      <tr class="rec">
+        <td><b>B · 向导式 + 品牌视觉</b> ⭐推荐</td>
+        <td>保留 <code>oneClick:false</code> 向导，加 <code>installerSidebar</code> / <code>installerHeader</code> / <code>language</code>，可选自定义 .nsh 改配色</td>
+        <td>保留全部功能控制 + 品牌视觉提升明显 + 成本低（2 张图 + 配置）</td>
+        <td>主区仍是浅色（MUI2 限制），深色全覆盖需 .nsh</td>
+        <td>Slack、Obsidian、Typora</td>
+      </tr>
+      <tr>
+        <td><b>C · 深度自定义 MUI</b></td>
+        <td>写完整自定义 .nsi/.nsh 脚本，用 MUI_UI 自定义界面资源、改所有颜色/字体/按钮</td>
+        <td>完全定制，可做深色全覆盖</td>
+        <td>开发成本高、NSIS 脚本调试麻烦、electron-builder 升级可能不兼容</td>
+        <td>部分商业软件</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="note warn">
+    <div class="ico">⚠️</div>
+    <div><b>为什么不选 A（oneClick）</b>：Trim 的 <code>perMachine:false</code> + <code>asInvoker</code> 免 UAC 设计依赖用户确认安装到 <code>%LOCALAPPDATA%\Programs</code>；且用户可能需要改安装目录、选择是否创建桌面快捷方式。oneClick 会把这些全部跳过，与现有设计冲突。方案 B 在保留向导的同时提升视觉，是性价比最高的路线。</div>
+  </div>
+</section>
+
+<!-- ===== 03 推荐配置 ===== -->
+<section id="s3">
+  <div class="sec-title"><div class="bar"></div><h2>推荐方案配置</h2></div>
+  <p class="sec-desc">修改 package.json 的 build.nsis 段，新增 5 个字段。图片素材放 <code>build/</code> 目录（buildResources 默认路径）。</p>
+
+  <div class="codebar"><span>json · package.json → build.nsis（替换现有 nsis 段）</span><button class="copy-btn" onclick="copyCode(this)">复制</button></div>
+<pre><span class="k">"nsis"</span><span class="p">: {</span>
+  <span class="k">"oneClick"</span><span class="p">:</span> <span class="s">false</span><span class="p">,</span>
+  <span class="k">"perMachine"</span><span class="p">:</span> <span class="s">false</span><span class="p">,</span>
+  <span class="k">"allowElevation"</span><span class="p">:</span> <span class="s">true</span><span class="p">,</span>
+  <span class="k">"allowToChangeInstallationDirectory"</span><span class="p">:</span> <span class="s">true</span><span class="p">,</span>
+  <span class="k">"createDesktopShortcut"</span><span class="p">:</span> <span class="s">true</span><span class="p">,</span>
+  <span class="k">"createStartMenuShortcut"</span><span class="p">:</span> <span class="s">true</span><span class="p">,</span>
+  <span class="k">"shortcutName"</span><span class="p">:</span> <span class="s">"Trim"</span><span class="p">,</span>
+  <span class="k">"differentialPackage"</span><span class="p">:</span> <span class="s">true</span><span class="p">,</span>
+  <span class="k">"deleteAppDataOnUninstall"</span><span class="p">:</span> <span class="s">true</span><span class="p">,</span>
+  <span class="k">"artifactName"</span><span class="p">:</span> <span class="s">"${productName}-Setup-${version}.${ext}"</span><span class="p">,</span>
+
+  <span class="c">// ===== 新增：品牌视觉 =====</span>
+  <span class="k">"installerSidebar"</span><span class="p">:</span> <span class="s">"build/installerSidebar.bmp"</span><span class="p">,</span>
+  <span class="k">"uninstallerSidebar"</span><span class="p">:</span> <span class="s">"build/uninstallerSidebar.bmp"</span><span class="p">,</span>
+  <span class="k">"installerHeader"</span><span class="p">:</span> <span class="s">"build/installerHeader.bmp"</span><span class="p">,</span>
+  <span class="k">"installerIcon"</span><span class="p">:</span> <span class="s">"src/assets/ico/Trim.ico"</span><span class="p">,</span>
+  <span class="k">"uninstallerIcon"</span><span class="p">:</span> <span class="s">"src/assets/ico/Trim.ico"</span><span class="p">,</span>
+  <span class="k">"language"</span><span class="p">:</span> <span class="s">"2052"</span>
+<span class="p">}</span></pre>
+
+  <div class="g3" style="margin-top:18px">
+    <div class="card">
+      <h3>installerSidebar</h3>
+      <p>欢迎页 + 完成页左侧品牌图，<b>164×314</b> BMP。深色背景 + Trim logo + slogan + 版本号。</p>
+    </div>
+    <div class="card">
+      <h3>installerHeader</h3>
+      <p>内部页（许可/目录/进度）顶部横幅，<b>150×57</b> BMP。深色渐变 + Trim 字样。</p>
+    </div>
+    <div class="card">
+      <h3>language: "2052"</h3>
+      <p>NSIS 语言代码 2052 = 简体中文。界面所有按钮/标题/提示全中文，不再是英文 MUI 默认。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ===== 04 品牌图片素材 ===== -->
+<section id="s4">
+  <div class="sec-title"><div class="bar"></div><h2>品牌图片素材</h2></div>
+  <p class="sec-desc">下方 canvas 实时渲染品牌图，点击「下载 BMP」即可获取可直接放入 build/ 目录的素材。配色对齐 Trim 品牌色。</p>
+
+  <div class="g2">
+    <div class="spec">
+      <div class="spec-head">
+        <span class="spec-name">installerSidebar.bmp</span>
+        <span class="spec-size">164 × 314</span>
+      </div>
+      <p class="spec-desc">欢迎页/完成页左侧品牌图。深色渐变背景，左侧 accent 竖条，Trim logo + slogan + 版本号。</p>
+      <canvas id="cv-sidebar" width="164" height="314"></canvas>
+      <button class="dl-btn" onclick="downloadBMP('cv-sidebar','installerSidebar.bmp')">下载 installerSidebar.bmp</button>
+    </div>
+    <div class="spec">
+      <div class="spec-head">
+        <span class="spec-name">installerHeader.bmp</span>
+        <span class="spec-size">150 × 57</span>
+      </div>
+      <p class="spec-desc">内部页顶部横幅。深色渐变背景，左侧 Trim 字样，右侧 accent 细竖线，底部细线。</p>
+      <canvas id="cv-header" width="150" height="57"></canvas>
+      <button class="dl-btn" onclick="downloadBMP('cv-header','installerHeader.bmp')">下载 installerHeader.bmp</button>
+    </div>
+  </div>
+
+  <div class="note info" style="margin-top:18px">
+    <div class="ico">💡</div>
+    <div><b>uninstallerSidebar.bmp</b>：可直接复制 installerSidebar.bmp 重命名为 uninstallerSidebar.bmp（卸载页侧边图与安装页一致即可）。如需区分，可在 slogan 处改为"卸载 Trim"。下载上方侧边图后手动重命名即可。</div>
+  </div>
+</section>
+
+<!-- ===== 05 界面设计稿 ===== -->
+<section id="s5">
+  <div class="sec-title"><div class="bar"></div><h2>界面设计稿</h2></div>
+  <p class="sec-desc">以下为加了品牌侧边图 / 顶部横幅 / accent 主按钮后的 NSIS 安装器界面模拟。实际构建后效果一致（MUI2 标准布局）。</p>
+
+  <div class="mock-wrap">
+
+    <!-- 欢迎页 -->
+    <div>
+      <div class="mock-label"><span class="num">1</span>欢迎页（Welcome Page）</div>
+      <div class="nsis-win">
+        <div class="nsis-titlebar">
+          <span>Trim 安装程序</span>
+          <div class="win-ctrls"><span style="background:#555"></span><span style="background:#555"></span><span style="background:#e07a7a"></span></div>
+        </div>
+        <div class="nsis-body">
+          <div class="nsis-sidebar">
+            <div class="sb-content" style="background:linear-gradient(180deg,#171832,#2a2b4a)">
+              <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:#8B8EE0"></div>
+              <div class="sb-logo">Tri<span>m</span></div>
+              <div class="sb-line"></div>
+              <div class="sb-slogan">Windows 清理优化工具<br>深度清理 · 性能优化<br>系统维护 · 右键管理</div>
+              <div class="sb-ver">v2.5.1<br>© 2026 xiaoxu</div>
+            </div>
+          </div>
+          <div class="nsis-content">
+            <h4>欢迎使用 Trim 安装向导</h4>
+            <p>本向导将引导您完成 Trim 的安装。</p>
+            <p>Trim 是一款 Windows 11 清理优化工具，提供磁盘清理、性能优化、系统维护、右键菜单管理等功能。</p>
+            <p style="color:#888;font-size:11.5px">建议在继续之前关闭其他应用程序。</p>
+            <div class="license"><input type="checkbox" checked id="lic"><label for="lic">我已阅读并接受许可协议中的条款</label></div>
+          </div>
+        </div>
+        <div class="nsis-footer">
+          <button class="nsis-btn" disabled>上一步</button>
+          <button class="nsis-btn primary">下一步(N)</button>
+          <button class="nsis-btn">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 内部页：安装目录 -->
+    <div>
+      <div class="mock-label"><span class="num">2</span>内部页 — 选择安装位置（Internal Page）</div>
+      <div class="nsis-win">
+        <div class="nsis-titlebar">
+          <span>Trim 安装程序</span>
+          <div class="win-ctrls"><span style="background:#555"></span><span style="background:#555"></span><span style="background:#e07a7a"></span></div>
+        </div>
+        <div class="nsis-header">
+          <div class="h-logo">Tri<span>m</span></div>
+          <div class="h-sub">安装选项</div>
+        </div>
+        <div class="nsis-inner" style="height:223px">
+          <h4>选择安装位置</h4>
+          <div class="nsis-field">
+            <label>目标文件夹：</label>
+            <div class="input-row">
+              <input type="text" value="%LOCALAPPDATA%\Programs\Trim" readonly>
+              <button>浏览(R)...</button>
+            </div>
+          </div>
+          <div class="nsis-field">
+            <label>至少需要 250 MB 可用磁盘空间。</label>
+          </div>
+          <div class="nsis-check"><input type="checkbox" checked id="desk"><label for="desk">创建桌面快捷方式</label></div>
+          <div class="nsis-check"><input type="checkbox" checked id="start"><label for="start">创建开始菜单快捷方式</label></div>
+        </div>
+        <div class="nsis-footer">
+          <button class="nsis-btn">上一步(B)</button>
+          <button class="nsis-btn primary">安装(I)</button>
+          <button class="nsis-btn">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 完成页 -->
+    <div>
+      <div class="mock-label"><span class="num">3</span>完成页（Finish Page）</div>
+      <div class="nsis-win">
+        <div class="nsis-titlebar">
+          <span>Trim 安装程序</span>
+          <div class="win-ctrls"><span style="background:#555"></span><span style="background:#555"></span><span style="background:#e07a7a"></span></div>
+        </div>
+        <div class="nsis-body">
+          <div class="nsis-sidebar">
+            <div class="sb-content" style="background:linear-gradient(180deg,#171832,#2a2b4a)">
+              <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:#8B8EE0"></div>
+              <div class="sb-logo">Tri<span>m</span></div>
+              <div class="sb-line"></div>
+              <div class="sb-slogan">Windows 清理优化工具<br>深度清理 · 性能优化<br>系统维护 · 右键管理</div>
+              <div class="sb-ver">v2.5.1<br>安装完成</div>
+            </div>
+          </div>
+          <div class="nsis-content">
+            <div class="nsis-done-icon">✓</div>
+            <h4>Trim 安装完成</h4>
+            <p>向导已成功在您的计算机上安装 Trim。</p>
+            <p>您可以通过桌面快捷方式或开始菜单启动 Trim。</p>
+            <p style="color:#888;font-size:11.5px">首次启动后将自动检查更新。</p>
+            <div class="license" style="margin-top:auto"><input type="checkbox" checked id="run"><label for="run">立即启动 Trim</label></div>
+          </div>
+        </div>
+        <div class="nsis-footer">
+          <button class="nsis-btn primary">完成(F)</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="note info">
+    <div class="ico">🎨</div>
+    <div><b>视觉要点</b>：① 左侧 164px 深色品牌区与右侧浅色内容区形成强烈对比，品牌识别度高；② 主按钮「下一步/安装/完成」用 accent 渐变 #8B8EE0→#7174CC，与 Trim 应用内按钮一致；③ 顶部横幅深色渐变 + Trim 字样，内部页不再是默认蓝色；④ 全中文界面（language:2052）。</div>
+  </div>
+</section>
+
+<!-- ===== 06 进阶自定义 ===== -->
+<section id="s6">
+  <div class="sec-title"><div class="bar"></div><h2>进阶：自定义 MUI 配色（可选）</h2></div>
+  <p class="sec-desc">如果希望主按钮和界面文字色更彻底地对齐品牌色，可以通过 electron-builder 的 <code>nsis.include</code> 注入自定义 .nsh 脚本。以下为可选增强，不加也能达到上方设计稿效果。</p>
+
+  <div class="codebar"><span>nsh · build/trim-mui.nsh（新建文件）</span><button class="copy-btn" onclick="copyCode(this)">复制</button></div>
+<pre><span class="c">; Trim 品牌色 MUI 定制</span>
+<span class="c">; 通过 electron-builder nsis.include 注入，在 MUI2 初始化前生效</span>
+
+<span class="c">; 主按钮背景色（accent 深 #8B8EE0）</span>
+<span class="o">!define</span> <span class="n">MUI_INSTALLBUTTONCOLOR</span> <span class="s">"0x00E08B8B"</span>
+
+<span class="c">; 向导页标题文字色（品牌前景 #171832，BGR 倒序）</span>
+<span class="o">!define</span> <span class="n">MUI_INSTALLWELCOME_TITLECOLOR</span> <span class="s">"0x00321817"</span>
+
+<span class="c">; 欢迎页副标题色</span>
+<span class="o">!define</span> <span class="n">MUI_INSTALLWELCOME_SUBTITLECOLOR</span> <span class="s">"0x00555555"</span>
+
+<span class="c">; 完成页标题色</span>
+<span class="o">!define</span> <span class="n">MUI_FINISHPAGE_TITLECOLOR</span> <span class="s">"0x00321817"</span>
+
+<span class="c">; 进度条颜色（accent）</span>
+<span class="o">!define</span> <span class="n">MUI_INSTFILESPAGE_PROGRESSBAR_COLOR</span> <span class="s">"0x00E08B8B"</span></pre>
+
+  <div class="codebar" style="margin-top:16px"><span>json · package.json → build.nsis 追加一行</span><button class="copy-btn" onclick="copyCode(this)">复制</button></div>
+<pre><span class="k">"include"</span><span class="p">:</span> <span class="s">"build/trim-mui.nsh"</span></pre>
+
+  <div class="note warn">
+    <div class="ico">⚠️</div>
+    <div><b>NSIS 颜色是 BGR 倒序</b>：HTML 的 #RRGGBB 在 NSIS 里要写成 0x00BBGGRR（例如 #8B8EE0 → 0x00E08B8B）。.nsh 脚本调试成本较高，建议先不加 include，只用图片素材 + language 即可达到设计稿 90% 的效果；确认需要更深度定制时再加。</div>
+  </div>
+</section>
+
+<!-- ===== 07 实施步骤 ===== -->
+<section id="s7">
+  <div class="sec-title"><div class="bar"></div><h2>实施步骤与验收</h2></div>
+  <p class="sec-desc">从零到构建出美化后的安装包，共 6 步。</p>
+
+  <div class="step">
+    <div class="stepnum">1</div>
+    <div class="step-body">
+      <h4>创建 build 目录并放入图片素材</h4>
+      <p>在项目根目录新建 <code>build/</code> 文件夹（electron-builder 默认 buildResources 路径）。从本页「品牌图片素材」节下载 installerSidebar.bmp 和 installerHeader.bmp 放入；复制 installerSidebar.bmp 重命名为 uninstallerSidebar.bmp。</p>
+    </div>
+  </div>
+  <div class="step">
+    <div class="stepnum">2</div>
+    <div class="step-body">
+      <h4>修改 package.json 的 nsis 配置</h4>
+      <p>按本页第 3 节的配置替换 build.nsis 段，新增 installerSidebar / uninstallerSidebar / installerHeader / installerIcon / uninstallerIcon / language 六个字段。可选：第 6 节的 include + trim-mui.nsh。</p>
+    </div>
+  </div>
+  <div class="step">
+    <div class="stepnum">3</div>
+    <div class="step-body">
+      <h4>构建安装包</h4>
+      <p>运行 <code>npm run build:setup</code>，electron-builder 会自动读取 build/ 目录的图片素材并嵌入 NSIS 安装包。构建产物在 <code>Trim goujian/build-release/Trim-Setup-x.y.z.exe</code>。</p>
+    </div>
+  </div>
+  <div class="step">
+    <div class="stepnum">4</div>
+    <div class="step-body">
+      <h4>真机安装验收</h4>
+      <p>双击运行 Trim-Setup-x.y.z.exe，逐项检查：① 欢迎页左侧品牌图是否正常显示（非纯白）；② 内部页顶部横幅是否深色品牌色（非默认蓝色）；③ 所有界面文字是否全中文；④ 主按钮是否 accent 色；⑤ 完成页品牌图正常；⑥ 卸载程序侧边图正常。</p>
+    </div>
+  </div>
+  <div class="step">
+    <div class="stepnum">5</div>
+    <div class="step-body">
+      <h4>验证自动更新不受影响</h4>
+      <p>美化只改了 nsis 视觉字段，differentialPackage:true 不变，.blockmap 和 latest.yml 正常生成。构建后确认产物目录同时存在 Setup.exe + .exe.blockmap + latest.yml 三件套。</p>
+    </div>
+  </div>
+  <div class="step">
+    <div class="stepnum">6</div>
+    <div class="step-body">
+      <h4>提交与发布</h4>
+      <p>验收通过后提交 package.json + build/ 目录（3 张 bmp）。发版时按第十一部分的 GitHub Releases SOP 上传三件套。注意：图片素材变更不影响版本号，但建议随下一个版本一起发布。</p>
+    </div>
+  </div>
+
+  <div class="note info" style="margin-top:20px">
+    <div class="ico">✅</div>
+    <div><b>验收清单</b>：① build/ 目录含 3 张 bmp；② package.json nsis 段含 6 个新字段；③ 构建无报错；④ 欢迎页/内部页/完成页品牌图正常；⑤ 全中文界面；⑥ 三件套产物齐全；⑦ 自动更新链路正常。</div>
+  </div>
+</section>
+
+<div class="footer">
+  Trim NSIS 安装器美化方案 · 2026-09-12 · 基于 electron-builder 26.15 + NSIS MUI2<br>
+  品牌色：碳墨 #171832 × 薰衣草 #8B8EE0 · 与 Trim 应用内 Fluent Design 语言对齐<br>
+  相关文档：<a href="../electron-updater自动更新方案/index.html">自动更新接入方案</a> · 项目仓库 <code>D:\KaiFa\Trim</code>
+</div>
+
+</div>
+
+<script>
+// ===== 目录高亮 =====
+const tocLinks=document.querySelectorAll('.toc a');
+const sections=document.querySelectorAll('section[id]');
+const io=new IntersectionObserver(entries=>{
+  entries.forEach(e=>{
+    if(e.isIntersecting){
+      tocLinks.forEach(a=>a.classList.remove('active'));
+      const link=document.querySelector(`.toc a[href="#${e.target.id}"]`);
+      if(link)link.classList.add('active');
+    }
+  });
+},{rootMargin:'-20% 0px -70% 0px'});
+sections.forEach(s=>io.observe(s));
+
+// ===== 复制代码 =====
+function copyCode(btn){
+  const pre=btn.closest('.codebar').nextElementSibling;
+  const text=pre.innerText;
+  if(navigator.clipboard){navigator.clipboard.writeText(text).then(()=>{btn.textContent='已复制';btn.classList.add('ok');setTimeout(()=>{btn.textContent='复制';btn.classList.remove('ok');},1500);});}
+  else{const ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);btn.textContent='已复制';btn.classList.add('ok');setTimeout(()=>{btn.textContent='复制';btn.classList.remove('ok');},1500);}
+}
+
+// ===== 绘制品牌图 =====
+function drawSidebar(){
+  const cv=document.getElementById('cv-sidebar');
+  const ctx=cv.getContext('2d');
+  const w=164,h=314;
+  // 深色渐变背景
+  const grad=ctx.createLinearGradient(0,0,0,h);
+  grad.addColorStop(0,'#171832');
+  grad.addColorStop(1,'#2a2b4a');
+  ctx.fillStyle=grad;ctx.fillRect(0,0,w,h);
+  // 左侧 accent 竖条
+  ctx.fillStyle='#8B8EE0';ctx.fillRect(0,0,3,h);
+  // 顶部装饰圆点
+  ctx.fillStyle='rgba(139,142,224,.3)';
+  ctx.beginPath();ctx.arc(130,30,40,0,Math.PI*2);ctx.fill();
+  // Trim logo
+  ctx.fillStyle='#ffffff';
+  ctx.font='bold 28px "Segoe UI",Arial,sans-serif';
+  ctx.textBaseline='top';
+  ctx.fillText('Trim',20,80);
+  // accent 下划线
+  ctx.fillStyle='#8B8EE0';
+  ctx.fillRect(20,116,36,3);
+  // slogan
+  ctx.fillStyle='rgba(255,255,255,.7)';
+  ctx.font='11px "Segoe UI","Microsoft YaHei UI",sans-serif';
+  ctx.fillText('Windows 清理优化工具',20,135);
+  ctx.fillStyle='rgba(255,255,255,.5)';
+  ctx.font='10px "Segoe UI","Microsoft YaHei UI",sans-serif';
+  ctx.fillText('深度清理 · 性能优化',20,153);
+  ctx.fillText('系统维护 · 右键管理',20,168);
+  // 底部版本
+  ctx.fillStyle='rgba(255,255,255,.4)';
+  ctx.font='10px Consolas,monospace';
+  ctx.fillText('v2.5.1',20,h-24);
+  ctx.fillText('© 2026 xiaoxu',20,h-12);
+}
+
+function drawHeader(){
+  const cv=document.getElementById('cv-header');
+  const ctx=cv.getContext('2d');
+  const w=150,h=57;
+  // 深色渐变
+  const grad=ctx.createLinearGradient(0,0,w,0);
+  grad.addColorStop(0,'#171832');
+  grad.addColorStop(1,'#2a2b4a');
+  ctx.fillStyle=grad;ctx.fillRect(0,0,w,h);
+  // 左侧 accent 竖条
+  ctx.fillStyle='#8B8EE0';ctx.fillRect(0,0,3,h);
+  // Trim 字样
+  ctx.fillStyle='#ffffff';
+  ctx.font='bold 16px "Segoe UI",Arial,sans-serif';
+  ctx.textBaseline='middle';
+  ctx.fillText('Trim',14,h/2);
+  // 右侧细竖线
+  ctx.fillStyle='rgba(139,142,224,.5)';
+  ctx.fillRect(w-16,16,1,h-32);
+  // 底部细线
+  ctx.fillStyle='rgba(139,142,224,.3)';
+  ctx.fillRect(0,h-1,w,1);
+}
+
+drawSidebar();
+drawHeader();
+
+// ===== canvas 转 BMP 下载 =====
+function canvasToBMP(canvas){
+  const ctx=canvas.getContext('2d');
+  const w=canvas.width,h=canvas.height;
+  const imgData=ctx.getImageData(0,0,w,h);
+  const rowSize=Math.floor((24*w+31)/32)*4;
+  const pixelSize=rowSize*h;
+  const fileSize=14+40+pixelSize;
+  const buf=new ArrayBuffer(fileSize);
+  const v=new DataView(buf);
+  v.setUint8(0,0x42);v.setUint8(1,0x4D);
+  v.setUint32(2,fileSize,true);v.setUint32(6,0,true);v.setUint32(10,54,true);
+  v.setUint32(14,40,true);v.setInt32(18,w,true);v.setInt32(22,h,true);
+  v.setUint16(26,1,true);v.setUint16(28,24,true);v.setUint32(30,0,true);
+  v.setUint32(34,pixelSize,true);v.setInt32(38,2835,true);v.setInt32(42,2835,true);
+  v.setUint32(46,0,true);v.setUint32(50,0,true);
+  let off=54;
+  for(let y=h-1;y>=0;y--){
+    for(let x=0;x<w;x++){
+      const i=(y*w+x)*4;
+      v.setUint8(off++,imgData.data[i+2]);
+      v.setUint8(off++,imgData.data[i+1]);
+      v.setUint8(off++,imgData.data[i]);
+    }
+    for(let p=w*3;p<rowSize;p++)v.setUint8(off++,0);
+  }
+  return new Blob([buf],{type:'image/bmp'});
+}
+
+function downloadBMP(canvasId,filename){
+  const cv=document.getElementById(canvasId);
+  const blob=canvasToBMP(cv);
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;a.download=filename;
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+</script>
+</body>
+</html>

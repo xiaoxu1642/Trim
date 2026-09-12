@@ -258,7 +258,8 @@
     appendOutput(`===== 批量执行结束：${summary} =====`);
     window.app?.toast?.(
       cancelled ? 'warning' : (batch.fail ? 'warning' : 'success'),
-      cancelled ? `批量执行已取消（${summary}）` : (batch.fail ? `批量执行完成：${summary}` : `批量执行全部完成：${summary}`)
+      cancelled ? `批量执行已取消（${summary}）` : (batch.fail ? `批量执行完成：${summary}` : `批量执行全部完成：${summary}`),
+      1000
     );
     batch = null;
     updateBatchbar();

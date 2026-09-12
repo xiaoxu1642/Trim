@@ -1,6 +1,6 @@
 // main.js - Electron 主进程
 // 负责窗口创建、管理员权限提升、IPC 通信、PowerShell 调用
-const { app, BrowserWindow, ipcMain, shell, dialog, screen, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, screen, safeStorage, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -148,6 +148,8 @@ const SIDE_EFFECT_FREE = new Set([
   'maintenance:tasks',                                         // 维护任务清单
   'memory:info', 'memory:processes',                           // 内存信息/进程列表
   'optimizer:list', 'overview:hardware', 'overview:metrics',   // 优化项清单/硬件信息/指标查询
+  'overview:checkup',                                          // 系统体检（v2.6.0 只读诊断）
+  'updater:get-mirror',                                        // 更新镜像偏好读取（v2.6.0）
   'paths:load', 'realtime:adapters', 'realtime:report-list'    // 路径配置/网络适配器/测速报告列表
 ]);
 
@@ -225,12 +227,29 @@ function validateSnapshotItems(items, snapshot) {
 const backendProcs = new Map(); // pid -> { pid, kind, cmdline }
 const isDev = !app.isPackaged;
 const APP_NAME = 'Trim';
+// v2.6.0（P2-9）：便携模式——程序目录存在 Trim.portable 标记文件时，数据目录改用
+// <程序目录>\data。userData 必须在 app ready 之前 setPath 才能对全部 Electron 子系统生效；
+// 开发环境恒为标准模式，避免误把仓库根目录当便携盘。
+const IS_PORTABLE = (() => {
+  try {
+    if (!app.isPackaged) return false;
+    return fs.existsSync(path.join(path.dirname(app.getPath('exe')), 'Trim.portable'));
+  } catch (_) { return false; }
+})();
+if (IS_PORTABLE) {
+  try { app.setPath('userData', path.join(path.dirname(app.getPath('exe')), 'data')); } catch (_) {}
+}
+
 // 应用数据根目录（统一品牌为 Trim）。旧版本曾使用 "CleanTool" 目录，
 // 启动时做一次性迁移，避免用户已有的配置 / 日志 / 缓存 / 备份数据丢失。
 // C1：优先 userData（productName=Trim 时即 %APPDATA%\Trim，兼容 USERPROFILE 重定向
 // 与 portable 形态）；dev 模式 userData 指向 Electron 默认目录，回退硬编码以共享
 // 安装版数据。LEGACY_DATA_DIR 仅保留给 CleanTool→Trim 的旧数据迁移兜底。
+// v2.6.0（P2-9）：便携模式下 userData 基名是 "data" 而非 "trim"，必须在此显式返回
+// 程序目录 data 子目录，否则会静默回落到 %APPDATA%\Trim 导致便携失效。
+const PORTABLE_DATA_DIR = IS_PORTABLE ? path.join(path.dirname(app.getPath('exe')), 'data') : null;
 const APP_DATA_DIR = (() => {
+  if (PORTABLE_DATA_DIR) return PORTABLE_DATA_DIR;
   try {
     if (app.isPackaged) {
       const ud = app.getPath('userData');
@@ -906,7 +925,10 @@ handleSafe('app:get-info', async () => {
     isAdmin: await isAdmin(),
     username: os.userInfo().username,
     homedir: os.homedir(),
-    powerShell: 'PowerShell 7'
+    powerShell: 'PowerShell 7',
+    // v2.6.0（P2-9）：数据目录形态（设置页「系统信息」展示）
+    portable: IS_PORTABLE,
+    dataDir: APP_DATA_DIR
   };
 });
 
@@ -927,6 +949,9 @@ handleSafe('updater:check', async () => UPDATER.safeCheck(false));
 handleSafe('updater:download', async () => UPDATER.startDownload());
 handleSafe('updater:cancel-download', () => UPDATER.cancelDownload());
 handleSafe('updater:install', () => UPDATER.installUpdate());
+// v2.6.0（P2-8）：更新镜像偏好（保存走写盘副作用，不进只读白名单；读取放白名单）
+handleSafe('updater:set-mirror', async (_, { mirror } = {}) => UPDATER.setMirror(typeof mirror === 'string' ? mirror : 'auto'));
+handleSafe('updater:get-mirror', async () => UPDATER.getMirror());
 
 // 系统主题
 handleSafe('app:get-theme', () => {
@@ -2082,6 +2107,20 @@ if (\$elevated) { Write-Output 'OK-ELEVATED' } else { Write-Output 'OK' }
 // ==================== 优化电脑 IPC ====================
 // 每个选项循序渐进执行，并把 "@@PROGRESS:n@@" 以流式进度推送到渲染层
 const OPTIMIZER = require('./src/scripts-powershell/optimizer-scripts');
+// v2.6.0（P0-1）：优化项「已应用状态」记账——先记账后执行（fail-closed），还原成功才销账
+const OPT_STATE = require('./src/main/optimization-state');
+
+// 步骤类型分类（供记账 kinds 字段）：reg=注册表 / service=服务启停 / cmd=bcdedit、fsutil、powercfg 等命令
+function classifyStepKinds(steps) {
+  const kinds = new Set();
+  for (const s of steps || []) {
+    if (!s) continue;
+    if (typeof s.reg === 'string') kinds.add('reg');
+    if (s.service) kinds.add('service');
+    if (s.cmd || s.pwsh) kinds.add('cmd');
+  }
+  return [...kinds];
+}
 
 handleSafe('optimizer:run', async (event, { optionId, params = {} } = {}) => {
   const opt = OPTIMIZER.OPTIONS.find(o => o.id === optionId);
@@ -2099,6 +2138,16 @@ handleSafe('optimizer:run', async (event, { optionId, params = {} } = {}) => {
     steps = params.restore && opt.restore ? opt.restore : opt.steps;
   }
   if (!steps || !steps.length) return { success: false, message: '选项无可执行步骤' };
+
+  // v2.6.0（P0-1）：执行前先记账（fail-closed 不变式①）——状态文件写不进去就不改系统。
+  // kinds 覆盖 reg / service / cmd（bcdedit、fsutil、powercfg 等此前无任何持久化痕迹的步骤）。
+  const isRestoreRun = !!(params.restore && opt.restore);
+  if (!isRestoreRun && OPT_STATE.ready()) {
+    if (!OPT_STATE.recordPending(optionId, { title: opt.title, kinds: classifyStepKinds(steps) })) {
+      writeLog('error', `优化状态记账失败，已按 fail-closed 中止执行: ${opt.title}`);
+      return { success: false, message: '优化状态记录写入失败，已中止执行（避免产生无法追溯的系统更改）' };
+    }
+  }
 
   const script = OPTIMIZER.buildScript(steps);
   const scriptPath = writeTempScript(script);
@@ -2128,9 +2177,28 @@ handleSafe('optimizer:run', async (event, { optionId, params = {} } = {}) => {
     const failedSteps = failedMatch ? Number(failedMatch[1]) : 0;
     const ok = code === 0 && String(stdout || output).includes('@@DONE@@') && failedSteps === 0;
     if (!ok) writeLog('warn', `优化电脑命令退出码 ${code}: ${opt.title}`);
+
+    // v2.6.0（P0-1/P0-2）：记账收尾与执行后回读验证
+    if (OPT_STATE.ready()) {
+      if (isRestoreRun) {
+        // 还原成功才销账；失败保留记录等下次重试（不变式②）
+        if (ok) OPT_STATE.remove(optionId);
+      } else if (ok) {
+        const verify = await verifyOptionApplied(optionId, opt, params);
+        if (verify === 'partial') writeLog('warn', `执行后回读校验不符（可能被组策略/安全软件覆盖）: ${opt.title}`);
+        OPT_STATE.markApplied(optionId, verify);
+        return { success: ok, message: ok ? '完成' : '部分步骤可能失败', verify };
+      } else {
+        // 执行失败：转正为 applied+unknown（前序步骤可能已部分生效），
+        // 后续由启动扫描对可检测项核对真实状态，还原入口始终可用
+        OPT_STATE.markApplied(optionId, 'unknown');
+      }
+    }
     return { success: ok, message: ok ? '完成' : '部分步骤可能失败' };
   } catch (e) {
     writeLog('error', `优化电脑执行异常: ${e.message}`);
+    // 异常路径同样保留记账记录（前序步骤可能已生效），由启动扫描核对
+    if (!isRestoreRun && OPT_STATE.ready()) { try { OPT_STATE.markApplied(optionId, 'unknown'); } catch (_) {} }
     return { success: false, message: e.message };
   } finally {
     try { fs.unlinkSync(scriptPath); } catch (e) {}
@@ -2163,106 +2231,182 @@ const REG_ROOT_MAP = {
   HKEY_CURRENT_CONFIG: 'HKCC:'
 };
 
-handleSafe('optimizer:check-optimized', async (event, { ids } = {}) => {
-  try {
-    const list = Array.isArray(ids) ? ids : (ids ? [ids] : []);
-    // 收集每个 id 的全部期望状态（reg 键值 + 服务禁用状态）
-    const byId = new Map(); // id -> [{ kind: 'reg'|'svc', ... }]
-    for (const id of list) {
-      const opt = OPTIMIZER.OPTIONS.find(o => o.id === id);
-      if (!opt) continue;
-      const checks = [];
-      for (const s of (opt.steps || [])) {
-        if (!s) continue;
-        // reg 块：逐键值解析期望值
-        if (typeof s.reg === 'string') {
-          const block = s.reg;
-          const secRe = /^\[([^\]\r\n]+)\]\r?\n([\s\S]*?)(?=\r?\n\[|$)/gm;
-          let m;
-          while ((m = secRe.exec(block)) !== null) {
-            const root = m[1].trim().split('\\')[0];
-            const psPath = (REG_ROOT_MAP[root] || '') + m[1].trim().slice(root.length);
-            if (!psPath) continue;
-            const lineRe = /"([^"]+)"=([^\r\n]+)/g;
-            let lm;
-            while ((lm = lineRe.exec(m[2])) !== null) {
-              const raw = lm[2].trim();
-              if (raw === '-') continue; // 还原占位（删除）不参与检测
-              const parsed = parseRegExpected(raw);
-              if (!parsed) continue;
-              checks.push({ kind: 'reg', psPath, key: lm[1], type: parsed.type, data: parsed.data });
-            }
+// v2.6.0（P0-2）：检测逻辑抽为内部函数，供 IPC 与「执行后回读验证」共用。
+// 返回 { id: boolean } 映射——true = 该项全部期望键值/服务状态均已生效。
+async function checkOptimizedInternal(ids) {
+  const list = Array.isArray(ids) ? ids : (ids ? [ids] : []);
+  // 收集每个 id 的全部期望状态（reg 键值 + 服务禁用状态）
+  const byId = new Map(); // id -> [{ kind: 'reg'|'svc', ... }]
+  for (const id of list) {
+    const opt = OPTIMIZER.OPTIONS.find(o => o.id === id);
+    if (!opt) continue;
+    const checks = [];
+    for (const s of (opt.steps || [])) {
+      if (!s) continue;
+      // reg 块：逐键值解析期望值
+      if (typeof s.reg === 'string') {
+        const block = s.reg;
+        const secRe = /^\[([^\]\r\n]+)\]\r?\n([\s\S]*?)(?=\r?\n\[|$)/gm;
+        let m;
+        while ((m = secRe.exec(block)) !== null) {
+          const root = m[1].trim().split('\\')[0];
+          const psPath = (REG_ROOT_MAP[root] || '') + m[1].trim().slice(root.length);
+          if (!psPath) continue;
+          const lineRe = /"([^"]+)"=([^\r\n]+)/g;
+          let lm;
+          while ((lm = lineRe.exec(m[2])) !== null) {
+            const raw = lm[2].trim();
+            if (raw === '-') continue; // 还原占位（删除）不参与检测
+            const parsed = parseRegExpected(raw);
+            if (!parsed) continue;
+            checks.push({ kind: 'reg', psPath, key: lm[1], type: parsed.type, data: parsed.data });
           }
         }
-        // 服务步骤：检测启动类型是否已为"禁用"
-        if (s.service && s.disable) {
-          checks.push({ kind: 'svc', name: s.service });
-        }
       }
-      if (checks.length) byId.set(id, checks);
+      // 服务步骤：检测启动类型是否已为"禁用"
+      if (s.service && s.disable) {
+        checks.push({ kind: 'svc', name: s.service });
+      }
     }
-    if (!byId.size) return { success: true, results: {} };
+    if (checks.length) byId.set(id, checks);
+  }
+  if (!byId.size) return {};
 
-    // 生成一个只读 PowerShell 脚本一次性检测全部项（避免并发拉起大量进程）
-    const esc = (s) => String(s).replace(/'/g, "''");
-    const L = [
-      '$ErrorActionPreference = "SilentlyContinue"',
-      'function Test-One([string]$p, [string]$k, [bool]$isDword, [string]$d) {',
-      '  $ip = Get-ItemProperty -Path $p -ErrorAction SilentlyContinue',
-      '  if (-not $ip) { return $false }',
-      '  $v = $ip.$k',
-      '  if ($null -eq $v) { return $false }',
-      '  if ($isDword) { try { return ([int]$v -eq [int]$d) } catch { return $false } }',
-      '  return ("$v" -eq $d)',
-      '}',
-      'function Test-Svc([string]$n) {',
-      '  $s = Get-Service -Name $n -ErrorAction SilentlyContinue',
-      '  return ($s -and $s.StartType -eq "Disabled")',
-      '}',
-      '$r = @{}'
-    ];
-    let gi = 0;
-    const groupOf = new Map(); // id -> group var
-    for (const [id, checks] of byId) {
-      const gv = `$g_${gi++}`;
-      groupOf.set(id, gv);
-      L.push(`${gv} = $true`);
-      for (const c of checks) {
-        if (c.kind === 'svc') {
-          L.push(`${gv} = ${gv} -and (Test-Svc '${esc(c.name)}')`);
-        } else {
-          L.push(`${gv} = ${gv} -and (Test-One '${esc(c.psPath)}' '${esc(c.key)}' ${c.type === 'dword' ? '$true' : '$false'} '${esc(c.data)}')`);
-        }
+  // 生成一个只读 PowerShell 脚本一次性检测全部项（避免并发拉起大量进程）
+  const esc = (s) => String(s).replace(/'/g, "''");
+  const L = [
+    '$ErrorActionPreference = "SilentlyContinue"',
+    'function Test-One([string]$p, [string]$k, [bool]$isDword, [string]$d) {',
+    '  $ip = Get-ItemProperty -Path $p -ErrorAction SilentlyContinue',
+    '  if (-not $ip) { return $false }',
+    '  $v = $ip.$k',
+    '  if ($null -eq $v) { return $false }',
+    '  if ($isDword) { try { return ([int]$v -eq [int]$d) } catch { return $false } }',
+    '  return ("$v" -eq $d)',
+    '}',
+    'function Test-Svc([string]$n) {',
+    '  $s = Get-Service -Name $n -ErrorAction SilentlyContinue',
+    '  return ($s -and $s.StartType -eq "Disabled")',
+    '}',
+    '$r = @{}'
+  ];
+  let gi = 0;
+  const groupOf = new Map(); // id -> group var
+  for (const [id, checks] of byId) {
+    const gv = `$g_${gi++}`;
+    groupOf.set(id, gv);
+    L.push(`${gv} = $true`);
+    for (const c of checks) {
+      if (c.kind === 'svc') {
+        L.push(`${gv} = ${gv} -and (Test-Svc '${esc(c.name)}')`);
+      } else {
+        L.push(`${gv} = ${gv} -and (Test-One '${esc(c.psPath)}' '${esc(c.key)}' ${c.type === 'dword' ? '$true' : '$false'} '${esc(c.data)}')`);
       }
     }
-    for (const [id, gv] of groupOf) {
-      L.push(`$r['${esc(id)}'] = (${gv} -eq $true)`);
+  }
+  for (const [id, gv] of groupOf) {
+    L.push(`$r['${esc(id)}'] = (${gv} -eq $true)`);
+  }
+  L.push('$r | ConvertTo-Json -Compress');
+  const scriptPath = writeTempScript(L.join('\n'));
+  try {
+    const { stdout } = await runPowerShellFile(scriptPath, { timeout: 120000 });
+    let parsed = {};
+    try { parsed = JSON.parse(stdout.trim() || '{}'); } catch (e) { parsed = {}; }
+    // 统一布尔类型（ConvertTo-Json 单条时可能非对象）
+    const results = {};
+    for (const id of groupOf.keys()) {
+      const v = typeof parsed === 'object' && parsed !== null ? parsed[id] : false;
+      results[id] = v === true;
     }
-    L.push('$r | ConvertTo-Json -Compress');
-    const scriptPath = writeTempScript(L.join('\n'));
-    try {
-      const { stdout } = await runPowerShellFile(scriptPath, { timeout: 120000 });
-      let parsed = {};
-      try { parsed = JSON.parse(stdout.trim() || '{}'); } catch (e) { parsed = {}; }
-      // 统一布尔类型（ConvertTo-Json 单条时可能非对象）
-      const results = {};
-      for (const id of groupOf.keys()) {
-        const v = typeof parsed === 'object' && parsed !== null ? parsed[id] : false;
-        results[id] = v === true;
-      }
-      return { success: true, results };
-    } finally {
-      try { fs.unlinkSync(scriptPath); } catch (e) {}
-    }
+    return results;
+  } finally {
+    try { fs.unlinkSync(scriptPath); } catch (e) {}
+  }
+}
+
+handleSafe('optimizer:check-optimized', async (event, { ids } = {}) => {
+  try {
+    const results = await checkOptimizedInternal(ids);
+    return { success: true, results };
   } catch (e) {
     writeLog('error', `安全托底检测异常: ${e.message}`);
     return { success: false, results: {}, message: e.message };
   }
 });
 
+// v2.6.0（P0-2）：执行后回读验证——成功 ≠ 生效，可能被组策略/安全软件即时覆盖。
+// 返回 'pass'（读回一致）/ 'partial'（已执行但读回不符）/ 'unknown'（无可检测手段）。
+async function verifyOptionApplied(optionId, opt, params) {
+  try {
+    if (optionId === 'svc_mem_gb') {
+      // 动态项：读当前阈值比对目标档位
+      const target = params && params.gb != null ? String(params.gb) : null;
+      if (target == null) return 'unknown';
+      const cur = await svcMemCurrentInternal();
+      if (!cur.success) return 'unknown';
+      return cur.gb != null && String(cur.gb) === target ? 'pass' : 'partial';
+    }
+    const checkable = (opt.steps || []).some(s => s && (typeof s.reg === 'string' || (s.service && s.disable)));
+    if (!checkable) return 'unknown'; // cmd 类步骤（bcdedit 等）无逐键比对手段，不伪造结论
+    const results = await checkOptimizedInternal([optionId]);
+    return results[optionId] === true ? 'pass' : 'partial';
+  } catch (e) {
+    writeLog('warn', `回读验证异常（按 unknown 处理）: ${optionId}: ${e.message}`);
+    return 'unknown';
+  }
+}
+
+// v2.6.0（P0-1）：启动扫描 + 状态总览——对记账条目核对真实状态并标出 stale。
+// stale 判定：
+//   · status=pending（执行中断/崩溃遗留）→ 一律 stale（含无法检测的 cmd 类）；
+//   · status=applied 且可逐键检测 → 检测结果为 false 即 stale；
+//   · status=applied 且不可检测（cmd 类）→ 不标 stale（无手段，不伪造结论）。
+// 动态项（svc_mem_gb）不参与 stale 判定：灰态由注册表实时档位单独决定。
+handleSafe('optimizer:state-overview', async () => {
+  try {
+    if (!OPT_STATE.ready()) return { success: true, items: [], staleIds: [], migration: lastMigrationSummary };
+    const raw = OPT_STATE.all();
+    const items = [];
+    const pendingIds = [];
+    const checkIds = [];
+    for (const [id, rec] of Object.entries(raw)) {
+      const opt = OPTIMIZER.OPTIONS.find(o => o.id === id);
+      if (opt && opt.dynamic) {
+        // 动态项遗留的 pending 记录无法可靠核对，直接清理避免误报
+        if (rec.status === 'pending') OPT_STATE.remove(id);
+        continue;
+      }
+      items.push({
+        id,
+        title: (opt && opt.title) || rec.title || id,
+        appliedAt: rec.appliedAt,
+        kinds: rec.kinds || [],
+        status: rec.status,
+        lastVerify: rec.lastVerify,
+        checkable: !!(opt && (opt.steps || []).some(s => s && (typeof s.reg === 'string' || (s.service && s.disable))))
+      });
+      if (rec.status === 'pending') pendingIds.push(id);
+      else if (items[items.length - 1].checkable) checkIds.push(id);
+    }
+    const staleIds = [...pendingIds];
+    if (checkIds.length) {
+      const results = await checkOptimizedInternal(checkIds);
+      for (const id of checkIds) {
+        if (results[id] === false) staleIds.push(id);
+      }
+    }
+    return { success: true, items, staleIds, migration: lastMigrationSummary };
+  } catch (e) {
+    writeLog('error', `优化状态总览异常: ${e.message}`);
+    return { success: false, items: [], staleIds: [], message: e.message, migration: lastMigrationSummary };
+  }
+});
+
 // 读取当前 SVCHost 拆分阈值（SvcHostSplitThresholdInKB）并映射为档位
 // 返回 { success, gb, kb }：gb 为命中 MEMORY_KB 的档位（'default' 或数字），null=注册表无值（系统默认）
-handleSafe('optimizer:svc-mem-current', async () => {
+// v2.6.0（P0-2）：抽为内部函数供 IPC 与动态项回读验证共用
+async function svcMemCurrentInternal() {
   const L = [
     '$ErrorActionPreference = "SilentlyContinue"',
     '$v = (Get-ItemProperty -Path "HKLM:\\SYSTEM\\ControlSet001\\Control" -Name SvcHostSplitThresholdInKB -ErrorAction SilentlyContinue).SvcHostSplitThresholdInKB',
@@ -2285,13 +2429,17 @@ handleSafe('optimizer:svc-mem-current', async () => {
   } finally {
     try { fs.unlinkSync(scriptPath); } catch (e) {}
   }
-});
+}
+
+handleSafe('optimizer:svc-mem-current', async () => svcMemCurrentInternal());
 
 // ==================== 优化项注册表备份与还原 ====================
 // 所有含注册表操作的优化项，在用户执行前先记录目标键值的当前真实值；
 // 「还原」时优先按记录值回写（执行前不存在的键值 → 删除），
 // 无备份记录时才回退到优化项预置的还原脚本。
 const OPT_BACKUP_FILE = path.join(APP_DATA_DIR, 'optimizer-backups.json');
+// v2.6.0（P0-3）：启动时退役优化项迁移的结果（供 optimizer:state-overview 回报渲染层一次性提示）
+let lastMigrationSummary = { restored: [], failed: [] };
 
 function loadOptBackups() {
   try {
@@ -2425,7 +2573,50 @@ handleSafe('optimizer:backup-reg', async (event, { optionId, steps } = {}) => {
   }
 });
 
-// 按备份还原：将执行前记录的键值回写（不存在的 → 删除）；成功后清除该备份
+// v2.6.0（P0-3）：按备份条目回写注册表原值（restore-reg 与退役迁移共用的还原实现）。
+// entry: { values: [{ hive, sub, key, exists, type, data }] }；返回 { ok, reason? }
+async function restoreBackupValues(entry) {
+  if (!entry || !Array.isArray(entry.values) || entry.values.length === 0) {
+    return { ok: false, reason: '备份记录为空' };
+  }
+  const L = ['$ErrorActionPreference = "SilentlyContinue"', '$failed = 0'];
+  // PowerShell 双引号字符串的转义符是反引号，`"` 直接闭合字符串；
+  // 嵌入双引号必须用 "" 成对转义（实测 \" 会把值截断并错位出多余参数）。
+  const quoteEsc = (s) => String(s).replace(/"/g, '""');
+  for (const v of entry.values) {
+    const prefix = OPT_REGEXE_MAP[v.hive] || 'HKLM';
+    const full = `${prefix}\\${v.sub}`;
+    const keyEsc = quoteEsc(v.key);
+    if (v.exists) {
+      let typeArg = '/t REG_SZ';
+      let dataArg = quoteEsc(v.data == null ? '' : v.data);
+      if (v.type === 'REG_DWORD' || v.type === 'REG_QWORD') {
+        typeArg = `/t ${v.type}`;
+      } else if (v.type === 'REG_BINARY') {
+        typeArg = '/t REG_BINARY';
+        dataArg = String(v.data || '').replace(/(..)/g, '$1,').replace(/,$/, '');
+      }
+      L.push(`reg add "${full}" /v "${keyEsc}" ${typeArg} /d "${dataArg}" /f | Out-Null; if ($LASTEXITCODE -ne 0) { $failed++ }`);
+    } else {
+      L.push(`reg delete "${full}" /v "${keyEsc}" /f 2>$null | Out-Null; if ($LASTEXITCODE -ne 0) { reg query "${full}" /v "${keyEsc}" 2>$null | Out-Null; if ($LASTEXITCODE -eq 0) { $failed++ } }`);
+    }
+  }
+  L.push('Write-Output ("RESTORE_DONE:" + $failed)');
+  const scriptPath = writeTempScript(L.join('\n'));
+  try {
+    const { stdout, code } = await runPowerShellFile(scriptPath, { timeout: 120000 });
+    if (code !== 0 || !(stdout || '').includes('RESTORE_DONE:0')) {
+      return { ok: false, reason: '还原脚本执行失败' };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, reason: e.message };
+  } finally {
+    try { fs.unlinkSync(scriptPath); } catch (e) {}
+  }
+}
+
+// 按备份还原：将执行前记录的键值回写（不存在的 → 删除）；成功后清除该备份与已应用记账
 handleSafe('optimizer:restore-reg', async (event, { optionId } = {}) => {
   try {
     if (!optionId || !OPTIMIZER.OPTIONS.some(option => option.id === optionId)) return { success: false, message: '未知的优化选项' };
@@ -2434,42 +2625,13 @@ handleSafe('optimizer:restore-reg', async (event, { optionId } = {}) => {
     if (!entry || !Array.isArray(entry.values) || entry.values.length === 0) {
       return { success: false, missing: true, message: '无备份记录' };
     }
-    const L = ['$ErrorActionPreference = "SilentlyContinue"', '$failed = 0'];
-    let restored = 0;
-    // PowerShell 双引号字符串的转义符是反引号，`"` 直接闭合字符串；
-    // 嵌入双引号必须用 "" 成对转义（实测 \" 会把值截断并错位出多余参数）。
-    const quoteEsc = (s) => String(s).replace(/"/g, '""');
-    for (const v of entry.values) {
-      const prefix = OPT_REGEXE_MAP[v.hive] || 'HKLM';
-      const full = `${prefix}\\${v.sub}`;
-      const keyEsc = quoteEsc(v.key);
-      if (v.exists) {
-        let typeArg = '/t REG_SZ';
-        let dataArg = quoteEsc(v.data == null ? '' : v.data);
-        if (v.type === 'REG_DWORD' || v.type === 'REG_QWORD') {
-          typeArg = `/t ${v.type}`;
-        } else if (v.type === 'REG_BINARY') {
-          typeArg = '/t REG_BINARY';
-          dataArg = String(v.data || '').replace(/(..)/g, '$1,').replace(/,$/, '');
-        }
-        L.push(`reg add "${full}" /v "${keyEsc}" ${typeArg} /d "${dataArg}" /f | Out-Null; if ($LASTEXITCODE -ne 0) { $failed++ }`);
-      } else {
-        L.push(`reg delete "${full}" /v "${keyEsc}" /f 2>$null | Out-Null; if ($LASTEXITCODE -ne 0) { reg query "${full}" /v "${keyEsc}" 2>$null | Out-Null; if ($LASTEXITCODE -eq 0) { $failed++ } }`);
-      }
-      restored++;
-    }
-    L.push('Write-Output ("RESTORE_DONE:" + $failed)');
-    const scriptPath = writeTempScript(L.join('\n'));
-    try {
-      const { stdout, code } = await runPowerShellFile(scriptPath, { timeout: 120000 });
-      if (code !== 0 || !(stdout || '').includes('RESTORE_DONE:0')) {
-        throw new Error('还原脚本执行失败');
-      }
-    } finally {
-      try { fs.unlinkSync(scriptPath); } catch (e) {}
-    }
+    const restored = entry.values.length;
+    const r = await restoreBackupValues(entry);
+    if (!r.ok) throw new Error(r.reason || '还原脚本执行失败');
     delete map[optionId];
     if (!saveOptBackups(map)) return { success: false, message: '还原完成但备份记录清理失败' };
+    // v2.6.0（P0-1）：还原成功 → 同步销账（不变式：还原成功才清记录）
+    if (OPT_STATE.ready()) OPT_STATE.remove(optionId);
     writeLog('info', `优化项注册表已按备份还原: ${optionId}（${restored} 项）`);
     return { success: true, restored };
   } catch (e) {
@@ -3704,6 +3866,39 @@ handleSafe('overview:metrics', async () => {
     return { success: true, data: overviewMetricsCache.data, cached: true };
   }
   return collectOverviewMetrics();
+});
+
+// ==================== 系统体检（v2.6.0 P1-6，只读诊断） ====================
+// 全部只读检测，不改任何系统设置；每条结论自带证据等级（本机实测/机制明确/未验证），
+// 检测不出时如实标「未验证」，不伪造结论。结果缓存 5 分钟，避免频繁拉起 PowerShell。
+let checkupCache = null; // { at, checks }
+let checkupInflight = null;
+async function collectSystemCheckup() {
+  if (checkupInflight) return checkupInflight;
+  checkupInflight = (async () => {
+    const scriptPath = writeTempScript(OVERVIEW_SCRIPT.checkup());
+    try {
+      const { stdout, stderr, code } = await runPowerShellFile(scriptPath, { timeout: 90000 });
+      if (code !== 0) throw new Error(stderr || '系统体检脚本执行失败');
+      const parsed = JSON.parse(stdout.trim());
+      const checks = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.checks) ? parsed.checks : []);
+      checkupCache = { at: Date.now(), checks };
+      return { success: true, data: { checks, at: checkupCache.at } };
+    } catch (e) {
+      return { success: false, message: e.message };
+    } finally {
+      try { fs.unlinkSync(scriptPath); } catch (e) {}
+      checkupInflight = null;
+    }
+  })();
+  return checkupInflight;
+}
+
+handleSafe('overview:checkup', async (event, { refresh = false } = {}) => {
+  if (!refresh && checkupCache && Date.now() - checkupCache.at < 5 * 60 * 1000) {
+    return { success: true, data: { checks: checkupCache.checks, at: checkupCache.at }, cached: true };
+  }
+  return collectSystemCheckup();
 });
 
 handleSafe('diskbench:run', async (event, options = {}) => {
@@ -5215,6 +5410,26 @@ app.whenReady().then(() => {
   migrateLegacyData();
   ensureLogDir();
   cleanupTempScripts();
+  // v2.6.0（P0-1）：优化状态记账模块初始化（数据目录确定后）
+  OPT_STATE.initDataDir(APP_DATA_DIR, writeLog);
+  // v2.6.0（P0-3）：退役优化项版本迁移——对已不在当前目录里的备份记录按原值还原。
+  // 不阻塞启动窗口：还原走子进程，后台执行，结果经 optimizer:state-overview 回报渲染层。
+  (() => {
+    const MIGRATIONS = require('./src/main/version-migrations');
+    MIGRATIONS.runRetiredMigrations({
+      knownIds: new Set(OPTIMIZER.OPTIONS.map(o => o.id)),
+      loadBackups: loadOptBackups,
+      saveBackups: saveOptBackups,
+      restoreEntry: (id, entry) => restoreBackupValues(entry),
+      removeState: (id) => OPT_STATE.remove(id),
+      writeLog
+    }).then(summary => {
+      if (summary.restored.length || summary.failed.length) {
+        lastMigrationSummary = summary;
+        writeLog('info', `退役优化项迁移完成: 还原 ${summary.restored.length} 项，失败 ${summary.failed.length} 项（失败项保留记录下次重试）`);
+      }
+    }).catch(e => writeLog('error', `退役优化项迁移异常: ${e.message}`));
+  })();
   // 审查 4-3：清理上次规则更新中断残留的 .downloading 孤儿（writeValidated 两步间崩溃遗留）
   try {
     const orphan = path.join(CLEANUP_SCRIPT.dataRulesDir(), 'rules.json.downloading');
@@ -5225,10 +5440,15 @@ app.whenReady().then(() => {
   } catch (e) {
     writeLog('error', e.message);
   }
+  // 💭4 加固：本地页面不申请任何系统级 web 权限；仅放行剪贴板复制（cleanup/quickcmds 的 writeText），其余一律拒绝。
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
+    callback(permission === 'clipboard-read' || permission === 'clipboard-sanitized-write' || permission === 'clipboard-write');
+  });
   createWindow();
 
   // 批次：自动更新接入——主窗口创建后挂载；内部自行判断 isPackaged，开发环境自动短路
-  UPDATER.initUpdater(mainWindow, writeLog);
+  // v2.6.0（P2-8）：传入数据目录用于镜像偏好持久化
+  UPDATER.initUpdater(mainWindow, writeLog, { dataDir: APP_DATA_DIR });
 
   // 系统指标启动预热：后台提前采集一轮填充缓存，
   // 用户进入/切回「系统概览」首页时首轮渲染即时出数据（无需等 pwsh 冷启动）

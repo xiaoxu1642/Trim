@@ -233,6 +233,15 @@
     return '';
   }
 
+  // v2.6.0（P2-7）：预期效果分级徽章（明显=accent / 一般=ok / 微小=neutral / 未验证=warn）
+  const EFFECT_BADGE = { '明显': 'accent', '一般': 'ok', '微小': 'neutral', '未验证': 'warn' };
+  function effectBadge(effect) {
+    const type = EFFECT_BADGE[effect] || 'warn';
+    return window.ds && window.ds.badgeHtml
+      ? window.ds.badgeHtml(type, '效果·' + effect, { small: true })
+      : `<span class="ds-badge ${type} sm">效果·${escapeHtml(effect || '未验证')}</span>`;
+  }
+
   function renderSteps(steps) {
     if (!steps || !steps.length) return '<div class="opt-detail-steps-empty">无</div>';
     return '<ol class="opt-detail-steps">' + steps.map((s, i) => {
@@ -431,6 +440,80 @@
     }).catch(() => { /* 检测失败不影响正常使用 */ });
   }
 
+  // 还原入口统一走这里：优先按执行前记录的注册表值恢复；
+  // 无备份记录时回退到优化项预置的还原脚本。
+  // v2.6.0（P0-1）：提升到模块级，供详情弹窗与「未完成还原」横幅一键还原共用。
+  async function restoreOption(opt) {
+    if (window.api?.optimizer?.restoreReg) {
+      let r = null;
+      try { r = await window.api.optimizer.restoreReg(opt.id); } catch (e) { /* 走回退 */ }
+      if (r && r.success) {
+        optimizedIds.delete(opt.id);
+        renderGroups(OPTIONS);
+        window.app?.toast('success', '已恢复：' + (opt.title || opt.id));
+        return true;
+      }
+      if (r && !r.missing) {
+        window.app?.log('warn', `按备份还原失败（回退预置脚本）: ${opt.title || opt.id}: ${r.message || ''}`);
+      }
+    }
+    const okRun = await runOptionActive({ restore: true }, opt);
+    if (okRun) {
+      optimizedIds.delete(opt.id);
+      renderGroups(OPTIONS);
+      window.app?.toast('success', '已恢复：' + (opt.title || opt.id));
+    }
+    return okRun;
+  }
+
+  // ==================== 未完成还原提醒（v2.6.0 P0-1 崩溃自愈） ====================
+  // 启动时主进程对记账条目核对真实状态：pending（执行中断遗留）或「已应用但逐键检测
+  // 不符」的项判定为 stale。顶部横幅展示 N 项，一键还原逐项按原值恢复（还原失败
+  // 的记录保留，下次启动继续提示——还原失败不清账）。
+  async function loadStateOverview() {
+    if (!window.api?.optimizer?.stateOverview) return;
+    try {
+      const resp = await window.api.optimizer.stateOverview();
+      if (!resp || !resp.success) return;
+      // 退役迁移（P0-3）结果一次性回报
+      const mig = resp.migration;
+      if (mig && Array.isArray(mig.restored) && mig.restored.length) {
+        window.app?.toast('success', `已自动还原 ${mig.restored.length} 项已退役优化的历史改动`);
+      }
+      if (mig && Array.isArray(mig.failed) && mig.failed.length) {
+        window.app?.log('warn', `${mig.failed.length} 项退役优化的历史改动还原失败（多为缺管理员权限），下次启动自动重试`);
+      }
+      const staleIds = (Array.isArray(resp.staleIds) ? resp.staleIds : []).filter(id => OPTIONS.some(o => o.id === id));
+      if (staleIds.length) showStaleBanner(staleIds);
+    } catch (e) { /* 状态总览失败不影响正常使用 */ }
+  }
+
+  function showStaleBanner(ids) {
+    const banner = document.getElementById('optimizerStaleBanner');
+    const text = document.getElementById('optimizerStaleText');
+    if (!banner || !text) return;
+    const names = ids.slice(0, 3).map(id => getOptionTitle(id)).join('、') + (ids.length > 3 ? ` 等 ${ids.length} 项` : '');
+    text.textContent = `检测到 ${ids.length} 项优化改动未完成还原（${names}）：可能因执行中断或被系统回写导致状态不明。`;
+    banner.style.display = 'flex';
+    const btn = document.getElementById('btnStaleRestore');
+    if (btn) {
+      btn.onclick = async () => {
+        btn.disabled = true;
+        btn.textContent = '还原中…';
+        let okCount = 0;
+        for (const id of ids) {
+          const opt = OPTIONS.find(o => o.id === id);
+          if (!opt) continue;
+          try { if (await restoreOption(opt)) okCount++; } catch (e) { /* 单项失败继续 */ }
+        }
+        banner.style.display = 'none';
+        renderGroups(OPTIONS);
+        window.app?.toast(okCount === ids.length ? 'success' : 'warning',
+          `一键还原完成：成功 ${okCount} 项，共 ${ids.length} 项`);
+      };
+    }
+  }
+
   // ==================== 详情弹窗 ====================
   let modalOverlay = null;
   let modalBox = null;
@@ -461,6 +544,7 @@
           <div class="opt-modal-body">
             <div class="opt-modal-notice" style="display:none"></div>
             <p class="opt-modal-desc"></p>
+            <p class="opt-modal-effect-hint"></p>
             <div class="opt-modal-grid">
               <div class="opt-modal-col pros">
                 <div class="opt-modal-col-label">优点</div>
@@ -512,8 +596,20 @@
     modalOverlay.querySelector('.opt-modal-icon').style.background = accent + '18';
     modalOverlay.querySelector('.opt-modal-icon').style.color = accent;
     modalOverlay.querySelector('.opt-modal-title').textContent = o.title || o.id;
-    modalOverlay.querySelector('.opt-modal-meta').innerHTML = riskBadge(o.risk) + `<span class="opt-modal-count">${stepCount} 步操作</span>`;
+    modalOverlay.querySelector('.opt-modal-meta').innerHTML =
+      riskBadge(o.risk) + effectBadge(o.effect) + `<span class="opt-modal-count">${stepCount} 步操作</span>`;
     modalOverlay.querySelector('.opt-modal-desc').textContent = o.desc || '（无描述）';
+    // v2.6.0（P2-7）：预期效果说明——诚实口径：经验分级，非本机实测数据
+    const EFFECT_HINT = {
+      '明显': '收益通常可直观感知或量化较大（如后台占用明显减少、空间大幅释放）。',
+      '一般': '机制明确，特定场景下有可测收益（如隐私面收敛、响应更干脆）。',
+      '微小': '收益存在但多数场景难以感知，属于锦上添花。',
+      '未验证': '缺乏可靠依据或收益因机型/负载而异，无法给出负责任的结论。'
+    };
+    const effEl = modalOverlay.querySelector('.opt-modal-effect-hint');
+    if (effEl) {
+      effEl.textContent = `预期效果（${o.effect || '未验证'}）：${EFFECT_HINT[o.effect] || EFFECT_HINT['未验证']}——此为经验分级，非本机实测数据。`;
+    }
     modalOverlay.querySelector('.opt-modal-col-pros').textContent = o.pros || '暂缺，可点击下方「AI 生成优缺点」重新生成。';
     modalOverlay.querySelector('.opt-modal-col-cons').textContent = o.cons || '暂缺，可点击下方「AI 生成优缺点」重新生成。';
     modalOverlay.querySelector('.opt-modal-steps').innerHTML = renderSteps(o.steps);
@@ -670,6 +766,11 @@
       if (resp && resp.success) {
         finishProgressToast(true, resp.message);
         window.app?.log('info', `优化电脑完成: ${optName}`);
+        // v2.6.0（P0-2）：执行后回读校验不符（主进程已逐键比对）——明确告知而非静默成功
+        if (resp.verify === 'partial') {
+          window.app?.log('warn', `回读校验不符（可能被组策略/安全软件覆盖）: ${optName}`);
+          window.app?.toast('warning', `「${optName}」已执行但读回校验不符，可能被组策略或安全软件覆盖`, 6000);
+        }
         // 安全托底：执行成功后立即标记为已优化（灰态）
         if (params && params.restore) {
           optimizedIds.delete(opt.id);
@@ -971,6 +1072,8 @@
           bindEvents();
           // 安全托底：异步批量检测注册表项是否已优化（不阻塞首屏，结果回来后增量灰化）
           startOptimizedCheck();
+          // v2.6.0（P0-1）：启动扫描已应用记账 + 未完成还原横幅 + 退役迁移结果回报
+          loadStateOverview();
         }
       }).catch(() => renderFallback());
       window.api.optimizer.onProgress(({ percent }) => {
@@ -1062,30 +1165,7 @@
 
     // 弹窗按钮：立即执行（未优化）/ 立即恢复（已优化灰项）/ 还原 / AI
     ensureModal();
-    // 还原入口统一走这里：优先按执行前记录的注册表值恢复；
-    // 无备份记录时回退到优化项预置的还原脚本。
-    async function restoreOption(opt) {
-      if (window.api?.optimizer?.restoreReg) {
-        let r = null;
-        try { r = await window.api.optimizer.restoreReg(opt.id); } catch (e) { /* 走回退 */ }
-        if (r && r.success) {
-          optimizedIds.delete(opt.id);
-          renderGroups(OPTIONS);
-          window.app?.toast('success', '已恢复：' + (opt.title || opt.id));
-          return true;
-        }
-        if (r && !r.missing) {
-          window.app?.log('warn', `按备份还原失败（回退预置脚本）: ${opt.title || opt.id}: ${r.message || ''}`);
-        }
-      }
-      const okRun = await runOptionActive({ restore: true }, opt);
-      if (okRun) {
-        optimizedIds.delete(opt.id);
-        renderGroups(OPTIONS);
-        window.app?.toast('success', '已恢复：' + (opt.title || opt.id));
-      }
-      return okRun;
-    }
+    // 还原入口 restoreOption 已提升到模块级（弹窗与 stale 横幅共用，见文件上方定义）
     modalOverlay.querySelector('.opt-modal-run').addEventListener('click', async () => {
       if (!activeOption) return;
       const opt = activeOption;
