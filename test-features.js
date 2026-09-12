@@ -45,6 +45,7 @@ const SYNTAX_FILES = [
   'src/scripts/optimizer.js',
   'src/scripts/overview.js',
   'src/scripts/pathbinding.js',
+  'src/scripts/splash.js',
   'src/scripts/modal.js',
   'src/scripts/logger.js',
   'src/scripts/intro.js',
@@ -236,7 +237,9 @@ check('主窗口最小尺寸与标题栏颜色固定', () => {
   if (!mainSource.includes('MAIN_WINDOW_MIN_WIDTH = 1294') || !mainSource.includes('MAIN_WINDOW_MIN_HEIGHT = 870')) {
     throw new Error('主窗口最小尺寸不是 1294x870');
   }
-  if (!mainSource.includes("color: '#F3F3F3'") || !mainSource.includes("symbolColor: '#1A1A1A'")) {
+  // v2.7.0：覆盖层颜色与 body.theme-light .titlebar 实际渲染色 #f7f8fb 对齐（用户修复：
+  // 历史 #F3F3F3 会被 main.css 的 #f7f8fb 覆盖导致右上角按钮出现独立浅灰条）
+  if (!mainSource.includes("color: '#f7f8fb'") || !mainSource.includes("symbolColor: '#1A1A1A'")) {
     throw new Error('原生标题栏覆盖层颜色未固定');
   }
   if (!css.includes('body.electron-mica.win-maximized .main-content {\n  background: transparent;')) {
@@ -1274,6 +1277,87 @@ check('便携模式标记检测与数据目录切换（P2-9）', () => {
     if (!mainSrc.includes(needle)) throw new Error('main.js 缺少便携模式关键代码: ' + needle);
   }
   if (!mainSrc.includes('portable: IS_PORTABLE')) throw new Error('app:get-info 未返回 portable 字段');
+});
+
+// ==================== 7. v2.7.0 批次（体检去处理/忽略 / 首启扫描持久化 / 启动页 / 关闭即隐） ====================
+console.log('[7/7] v2.7.0 批次检查');
+
+check('optimization-state detected 检测结果持久化（含重读）', () => {
+  const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'trim-optdetect-'));
+  const OPT_STATE = require(abs('src/main/optimization-state'));
+  try {
+    OPT_STATE.initDataDir(dir, () => {});
+    if (!OPT_STATE.recordPending('y', { title: '持久化测试', kinds: ['reg'] })) throw new Error('recordPending 应成功');
+    OPT_STATE.markApplied('y', 'pass');
+    if (!OPT_STATE.setDetectedEntry('y', true)) throw new Error('setDetectedEntry 应成功');
+    OPT_STATE.replaceDetected({ z: { optimized: false, at: '2026-09-13T00:00:00Z' } });
+    // replaceDetected = 全量替换语义：旧的 y 条目应被清掉，只保留传入的 z
+    let all = OPT_STATE.getDetectedAll();
+    if (all.y) throw new Error('replaceDetected 应清掉未传入的条目（全量替换）');
+    if (!all.z || all.z.optimized !== false) throw new Error('replaceDetected 应写入传入清单');
+    OPT_STATE.setDetectedEntry('z', true);
+    all = OPT_STATE.getDetectedAll();
+    if (!all.z || all.z.optimized !== true) throw new Error('setDetectedEntry 后应可读回');
+    // 重新 init（模拟下次启动）验证落盘持久
+    OPT_STATE.initDataDir(dir, () => {});
+    all = OPT_STATE.getDetectedAll();
+    if (!all.z || all.z.optimized !== true) throw new Error('detected 未持久化到磁盘');
+    if (!OPT_STATE.get('y')) throw new Error('items 记录应与 detected 同文件共存');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+check('体检「去处理/忽略」映射与忽略持久化键（任务1）', () => {
+  const ovSrc = fs.readFileSync(abs('src/scripts/overview.js'), 'utf8');
+  if (!ovSrc.includes("CHECKUP_IGNORE_KEY = 'winclean-checkup-ignored'")) throw new Error('缺少忽略持久化键');
+  // 跳转目标必须是 index.html 导航中真实存在的 data-page 键
+  const html = fs.readFileSync(abs('src/index.html'), 'utf8');
+  const pageKeys = new Set([...html.matchAll(/data-page="([^"]+)"/g)].map(m => m[1]));
+  const jumps = [...ovSrc.matchAll(/page:\s*'([a-z]+)'/g)].map(m => m[1]);
+  if (!jumps.length) throw new Error('CHECKUP_JUMP 映射为空');
+  for (const p of jumps) {
+    if (!pageKeys.has(p)) throw new Error('体检跳转目标不存在于导航: ' + p);
+  }
+  // bad/warn 行必须同时提供忽略按钮，去处理仅在映射命中时渲染
+  for (const needle of ["status === 'bad' || c.status === 'warn'", 'data-checkup-ignore', 'data-checkup-jump']) {
+    if (!ovSrc.includes(needle)) throw new Error('overview.js 缺少 ' + needle);
+  }
+});
+
+check('启动页结构与脚本引用（任务3）', () => {
+  const html = fs.readFileSync(abs('src/index.html'), 'utf8');
+  for (const id of ['id="splash"', 'id="splash-trim"', 'id="splash-canvas"', 'id="splash-enter"']) {
+    if (!html.includes(id)) throw new Error('index.html 缺少启动页结构 ' + id);
+  }
+  const splashIdx = html.indexOf('<script src="scripts/splash.js"></script>');
+  const trailIdx = html.indexOf('<script src="scripts/mouse-trail.js"></script>');
+  if (splashIdx === -1 || trailIdx === -1 || splashIdx > trailIdx) throw new Error('splash.js 必须在 body 末尾脚本中最先加载');
+  const js = fs.readFileSync(abs('src/scripts/splash.js'), 'utf8');
+  for (const needle of ['.titlebar-title', 'trim_splash_seen', 'prefers-reduced-motion', 'webgl2', 'transitionend']) {
+    if (!js.includes(needle)) throw new Error('splash.js 缺少 ' + needle);
+  }
+  // 落位期间隐藏真实标题栏品牌（CSS :has 规则）
+  const css = fs.readFileSync(abs('src/styles/main.css'), 'utf8');
+  if (!css.includes('body:has(.splash-overlay:not(.finished)) .titlebar-title')) {
+    throw new Error('main.css 缺少标题栏品牌隐藏规则');
+  }
+  // CSP 禁内联脚本：splash 结构块内不得出现裸 <script> 开标签（只允许 src 引用）
+  const splashBlock = html.slice(html.indexOf('id="splash"'), html.indexOf('id="splash"') + 1200);
+  if (/<script>(?!\s*<)/.test(splashBlock)) throw new Error('启动页结构含内联脚本（CSP 会静默拦截）');
+});
+
+check('关闭即隐：主进程静默收尾编排（任务4）', () => {
+  const mainSrc = fs.readFileSync(abs('main.js'), 'utf8');
+  for (const needle of ['activeCleanupRuns++', 'activeCleanupRuns--', 'requestSilentQuit', 'mainWindow.hide()']) {
+    if (!mainSrc.includes(needle)) throw new Error('main.js 缺少关闭即隐关键代码: ' + needle);
+  }
+  // 渲染层不再参与关闭编排：主进程不再发送 app:shutdown，app.js 不再监听
+  if (mainSrc.includes("webContents.send('app:shutdown')")) throw new Error('main.js 仍在发送 app:shutdown（应已移交静默后台）');
+  const appSrc = fs.readFileSync(abs('src/scripts/app.js'), 'utf8');
+  if (appSrc.includes('shutdown.onRequest')) throw new Error('app.js 仍在监听 shutdown.onRequest');
+  // 更新安装路径提前进入关闭态，防止 close 钩子卡住 quitAndInstall
+  if (!/updater:install[\s\S]{0,200}isShuttingDown = true/.test(mainSrc)) throw new Error('updater:install 未提前置关闭态');
 });
 
 // ==================== 汇总 ====================

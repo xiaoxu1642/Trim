@@ -432,8 +432,10 @@
     if (!checkIds.length) return;
     window.api.optimizer.checkOptimized(checkIds).then(resp => {
       if (resp && resp.success && resp.results) {
-        for (const [id, opt] of Object.entries(resp.results)) {
-          if (opt === true) optimizedIds.add(id);
+        // v2.7.0：实时检测结果为权威源——与持久化缓存不一致时以本轮为准（增删灰态都生效）
+        for (const id of checkIds) {
+          if (resp.results[id] === true) optimizedIds.add(id);
+          else optimizedIds.delete(id);
         }
         applyOptimizedStyles();
       }
@@ -475,6 +477,16 @@
     try {
       const resp = await window.api.optimizer.stateOverview();
       if (!resp || !resp.success) return;
+      // v2.7.0：主进程首启扫描的持久化结果先灰化（页面未到、扫描未跑完时也有即时反馈）；
+      // startOptimizedCheck 的实时检测稍后权威校正。动态项（svc_mem_gb）走注册表实时档位，不在此列。
+      const detected = resp.detected || {};
+      let prefill = 0;
+      for (const [id, d] of Object.entries(detected)) {
+        const opt = OPTIONS.find(o => o.id === id);
+        if (!opt || opt.dynamic) continue;
+        if (d && d.optimized === true && !optimizedIds.has(id)) { optimizedIds.add(id); prefill++; }
+      }
+      if (prefill) applyOptimizedStyles();
       // 退役迁移（P0-3）结果一次性回报
       const mig = resp.migration;
       if (mig && Array.isArray(mig.restored) && mig.restored.length) {

@@ -10,6 +10,23 @@
   <link rel="stylesheet" href="styles/ds.css" />
 </head>
 <body class="theme-light">
+  <!-- 启动页（v2.7.0，参考 hero-preview）：WebGL 流线背景 + Trim FLIP 平滑落位标题栏；
+       逻辑在 scripts/splash.js，首访完整体验 / 后续紧凑自动进入；reduced-motion 直接进主界面 -->
+  <div id="splash" class="splash-overlay">
+    <div class="splash-bg"></div>
+    <canvas id="splash-canvas" aria-hidden="true"></canvas>
+    <div class="splash-vignette"></div>
+    <div class="splash-stage">
+      <div id="splash-badge" class="splash-badge">Provided By Xiaoxu</div>
+      <div id="splash-trim" class="splash-trim">Trim</div>
+      <p id="splash-intro" class="splash-intro">轻量、纯净、高效的 Windows 11 清理优化工具</p>
+      <div id="splash-progress" class="splash-progress" role="progressbar" aria-label="加载进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <div class="splash-progress-track"><div id="splash-progress-fill" class="splash-progress-fill"></div></div>
+        <span id="splash-progress-text" class="splash-progress-text">正在加载 0%</span>
+      </div>
+      <button id="splash-enter" class="splash-enter" type="button" hidden>点击进入</button>
+    </div>
+  </div>
   <!-- 首帧前同步主题（外部文件：内联写法被 CSP script-src 'self' 拦截，引导从未生效） -->
   <script src="scripts/theme-boot.js"></script>
   <!-- 标题栏（原生 titleBarOverlay 提供右上角窗口控制按钮） -->
@@ -1246,6 +1263,8 @@
     </div>
   </div>
 
+  <!-- 启动页（v2.7.0）：独立无依赖，最先执行，盖住整窗直到 FLIP 落位完成 -->
+  <script src="scripts/splash.js"></script>
   <script src="scripts/mouse-trail.js"></script>
   <!-- 硬约束（审查 2-6）：ds.js（window.ds 设计系统运行时）必须先于一切 window.ds 使用方加载（theme/modal/xtable 等） -->
   <script src="scripts/ds.js"></script>

@@ -18,7 +18,7 @@
 
     // 标题栏是独立系统表面，固定浅色
     const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute('content', '#f3f3f3');
+    if (meta) meta.setAttribute('content', '#f7f8fb');
 
     ensureRingGradientDef();
   }

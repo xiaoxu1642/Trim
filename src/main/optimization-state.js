@@ -6,7 +6,10 @@
 // 为什么需要它：optimizer-backups.json 只记注册表原值，bcdedit / fsutil / 服务启停等
 // cmd、service 类步骤此前没有任何持久化痕迹；崩溃/重启后无从知道「改过什么」，
 // 退役项与半途而废的批量执行会变成永远说不清的历史包袱。
-// 数据文件：%APPDATA%\Trim\optimization-state.json（损坏隔离，与 optimizer-backups 同策略）
+// 数据文件：%APPDATA%\Trim\optimization-state.json（安装版；便携版为程序目录\data，同机制）
+// 损坏隔离，与 optimizer-backups 同策略。v2.7.0 起同时承载 detected 段：
+//   detected[id] = { optimized: bool, at: ISO } —— 启动全量扫描 + 执行/还原后的及时回写，
+//   让「哪些条目已做过优化」跨启动持久留痕（常态化记录），而非只存在渲染层内存里。
 const fs = require('fs');
 const path = require('path');
 const SECURITY = require('./security');
@@ -24,11 +27,15 @@ function ready() {
 }
 
 function load() {
-  if (!stateFile) return { version: 1, items: {} };
+  if (!stateFile) return { version: 1, items: {}, detected: {} };
   try {
     const m = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
     if (m && typeof m === 'object' && m.items && typeof m.items === 'object') {
-      return { version: 1, items: m.items };
+      return {
+        version: 1,
+        items: m.items,
+        detected: (m.detected && typeof m.detected === 'object') ? m.detected : {}
+      };
     }
     // 结构不符按损坏处理（与 loadOptBackups 的隔离策略一致）
     throw new Error('结构不符');
@@ -40,7 +47,7 @@ function load() {
         writeLog('warn', `优化状态文件损坏已隔离: ${bad}（${e.message}）`);
       } catch (_) { /* 隔离失败则后续 save 直接覆盖 */ }
     }
-    return { version: 1, items: {} };
+    return { version: 1, items: {}, detected: {} };
   }
 }
 
@@ -113,4 +120,26 @@ function all() {
   return load().items;
 }
 
-module.exports = { initDataDir, ready, get, recordPending, markApplied, markVerify, remove, all };
+// ==================== detected：已优化检测结果持久化（v2.7.0） ====================
+// 读取全部检测结果：{ [id]: { optimized, at } }
+function getDetectedAll() {
+  return load().detected;
+}
+
+// 全量替换检测结果（启动扫描完成后调用；只合并写入，不覆盖本函数未涉及的条目以外的段）
+function replaceDetected(map) {
+  if (!stateFile) return false;
+  const state = load();
+  state.detected = (map && typeof map === 'object') ? map : {};
+  return save(state);
+}
+
+// 及时回写单条（执行 pass/partial、还原成功后立即调用，不等下次启动扫描）
+function setDetectedEntry(id, optimized) {
+  if (!id) return false;
+  const state = load();
+  state.detected[id] = { optimized: optimized === true, at: new Date().toISOString() };
+  return save(state);
+}
+
+module.exports = { initDataDir, ready, get, recordPending, markApplied, markVerify, remove, all, getDetectedAll, replaceDetected, setDetectedEntry };

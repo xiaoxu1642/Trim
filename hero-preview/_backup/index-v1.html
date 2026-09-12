@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Animated Shader Hero — Preview</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23fdba74'/%3E%3Cstop offset='1' stop-color='%23f97316'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='14' fill='url(%23g)'/%3E%3Cpath d='M32 12l5.5 11 12 1.8-8.7 8.5 2 12-10.8-5.7L21 45.3l2-12-8.7-8.5 12-1.8z' fill='%23000'/%3E%3C/svg%3E">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #000;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ===== 容器与画布 ===== */
+  #hero { position: relative; width: 100%; height: 100vh; height: 100dvh; overflow: hidden; background: #000; }
+  #shader-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  /* WebGL 不可用时的静态兜底背景 */
+  #hero.fallback-bg {
+    background:
+      radial-gradient(60% 50% at 30% 30%, rgba(249, 115, 22, .18), transparent 70%),
+      radial-gradient(50% 45% at 75% 65%, rgba(234, 179, 8, .12), transparent 70%),
+      #000;
+  }
+
+  /* ===== 内容叠加层 ===== */
+  .overlay {
+    position: absolute; inset: 0; z-index: 10;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    color: #fff; text-align: center;
+  }
+  .trust-badge-wrap { margin-bottom: 2rem; }
+  .trust-badge {
+    display: inline-flex; align-items: center; gap: .5rem;
+    padding: .75rem 1.5rem;
+    background: rgba(249, 115, 22, .10);
+    border: 1px solid rgba(253, 186, 116, .30);
+    border-radius: 9999px;
+    font-size: .875rem; color: #ffedd5;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  }
+  .badge-icon { color: #fde047; }
+
+  .content { max-width: 64rem; margin: 0 auto; padding: 0 1rem; display: flex; flex-direction: column; gap: 1.5rem; }
+  .headings { display: flex; flex-direction: column; gap: .5rem; }
+  h1 {
+    font-size: 3rem; font-weight: 700; line-height: 1.1; letter-spacing: -.02em;
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .grad-1 { background-image: linear-gradient(90deg, #fdba74, #facc15, #fcd34d); }
+  .grad-2 { background-image: linear-gradient(90deg, #fde047, #fb923c, #f87171); }
+  @media (min-width: 768px) { h1 { font-size: 4.5rem; } }
+  @media (min-width: 1024px) { h1 { font-size: 6rem; } }
+
+  .subtitle {
+    max-width: 48rem; margin: 0 auto;
+    font-size: 1.125rem; line-height: 1.625; font-weight: 300;
+    color: rgba(255, 237, 213, .9);
+  }
+  @media (min-width: 768px) { .subtitle { font-size: 1.25rem; } }
+  @media (min-width: 1024px) { .subtitle { font-size: 1.5rem; } }
+
+  .buttons { display: flex; flex-direction: column; gap: 1rem; justify-content: center; margin-top: 2.5rem; }
+  @media (min-width: 640px) { .buttons { flex-direction: row; } }
+  .btn-primary, .btn-secondary {
+    padding: 1rem 2rem; border-radius: 9999px;
+    font-size: 1.125rem; font-weight: 600; font-family: inherit;
+    cursor: pointer; transition: transform .3s ease, box-shadow .3s ease, background-color .3s ease, border-color .3s ease;
+  }
+  .btn-primary {
+    background-image: linear-gradient(90deg, #f97316, #eab308); color: #000; border: none;
+  }
+  .btn-primary:hover { transform: scale(1.05); box-shadow: 0 20px 25px -5px rgba(249, 115, 22, .25), 0 8px 10px -6px rgba(249, 115, 22, .25); background-image: linear-gradient(90deg, #ea580c, #ca8a04); }
+  .btn-secondary {
+    background: rgba(249, 115, 22, .10); border: 1px solid rgba(253, 186, 116, .30); color: #ffedd5;
+    backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+  }
+  .btn-secondary:hover { transform: scale(1.05); background: rgba(249, 115, 22, .20); border-color: rgba(253, 186, 116, .50); }
+  :focus-visible { outline: 2px solid #fb923c; outline-offset: 3px; }
+
+  /* ===== 入场动画（与组件一致） ===== */
+  @keyframes fade-in-down { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes fade-in-up { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
+  .animate-fade-in-down { animation: fade-in-down .8s ease-out forwards; }
+  .animate-fade-in-up { animation: fade-in-up .8s ease-out forwards; opacity: 0; }
+  .delay-200 { animation-delay: .2s; }
+  .delay-400 { animation-delay: .4s; }
+  .delay-600 { animation-delay: .6s; }
+  .delay-800 { animation-delay: .8s; }
+  @media (prefers-reduced-motion: reduce) {
+    .animate-fade-in-down, .animate-fade-in-up { animation: none; opacity: 1; }
+  }
+
+  /* ===== 调试 / 反馈浮层 ===== */
+  .shader-error {
+    position: fixed; left: 16px; bottom: 16px; z-index: 99;
+    max-width: 80vw; white-space: pre-wrap; overflow-wrap: break-word;
+    padding: 10px 14px; border-radius: 8px;
+    background: rgba(0, 0, 0, .85); color: #fca5a5;
+    font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
+  }
+  .toast {
+    position: fixed; left: 50%; bottom: 32px; transform: translateX(-50%);
+    z-index: 99; padding: 10px 18px; border-radius: 9999px;
+    background: rgba(0, 0, 0, .8); color: #ffedd5; font-size: .875rem;
+    border: 1px solid rgba(253, 186, 116, .3);
+    animation: toast-in .25s ease-out;
+  }
+  @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
+</style>
+</head>
+<body>
+<div id="hero">
+  <canvas id="shader-canvas" aria-hidden="true"></canvas>
+
+  <!-- Hero 内容叠加层 -->
+  <div class="overlay">
+    <div class="trust-badge-wrap animate-fade-in-down">
+      <div class="trust-badge">
+        <span class="badge-icon" aria-hidden="true">✨</span>
+        <span>Trusted by forward-thinking teams.</span>
+      </div>
+    </div>
+    <div class="content">
+      <div class="headings">
+        <h1 class="grad-1 animate-fade-in-up delay-200">Launch Your</h1>
+        <h1 class="grad-2 animate-fade-in-up delay-400">Workflow Into Orbit</h1>
+      </div>
+      <p class="subtitle animate-fade-in-up delay-600">Supercharge productivity with AI-powered automation and integrations built for the next generation of teams — fast, seamless, and limitless.</p>
+      <div class="buttons animate-fade-in-up delay-800">
+        <button type="button" class="btn-primary" id="btn-primary">Get Started for Free</button>
+        <button type="button" class="btn-secondary" id="btn-secondary">Explore Features</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="shader-error" class="shader-error" hidden></div>
+  <div id="toast" class="toast" hidden></div>
+</div>
+
+<script>
+(function () {
+  var canvas = document.getElementById('shader-canvas');
+  var errorBox = document.getElementById('shader-error');
+  var toast = document.getElementById('toast');
+  var hero = document.getElementById('hero');
+  var reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function showError(msg) {
+    errorBox.hidden = false;
+    errorBox.textContent = msg;
+  }
+
+  var VERT = '#version 300 es\n' +
+    'precision highp float;\n' +
+    'in vec4 position;\n' +
+    'void main(){gl_Position=position;}';
+
+  var FRAG = '#version 300 es\n' +
+    '/*********\n' +
+    '* made by Matthias Hurrle (@atzedent)\n' +
+    '*\n' +
+    '*\tTo explore strange new worlds, to seek out new life\n' +
+    '*\tand new civilizations, to boldly go where no man has\n' +
+    '*\tgone before.\n' +
+    '*/\n' +
+    'precision highp float;\n' +
+    'out vec4 O;\n' +
+    'uniform vec2 resolution;\n' +
+    'uniform float time;\n' +
+    '#define FC gl_FragCoord.xy\n' +
+    '#define T time\n' +
+    '#define R resolution\n' +
+    '#define MN min(R.x,R.y)\n' +
+    '// Returns a pseudo random number for a given point (white noise)\n' +
+    'float rnd(vec2 p) {\n' +
+    '  p=fract(p*vec2(12.9898,78.233));\n' +
+    '  p+=dot(p,p+34.56);\n' +
+    '  return fract(p.x*p.y);\n' +
+    '}\n' +
+    '// Returns a pseudo random number for a given point (value noise)\n' +
+    'float noise(in vec2 p) {\n' +
+    '  vec2 i=floor(p), f=fract(p), u=f*f*(3.-2.*f);\n' +
+    '  float\n' +
+    '  a=rnd(i),\n' +
+    '  b=rnd(i+vec2(1,0)),\n' +
+    '  c=rnd(i+vec2(0,1)),\n' +
+    '  d=rnd(i+1.);\n' +
+    '  return mix(mix(a,b,u.x),mix(c,d,u.x),u.y);\n' +
+    '}\n' +
+    '// Returns a pseudo random number for a given point (fractal noise)\n' +
+    'float fbm(vec2 p) {\n' +
+    '  float t=.0, a=1.; mat2 m=mat2(1.,-.5,.2,1.2);\n' +
+    '  for (int i=0; i<5; i++) {\n' +
+    '    t+=a*noise(p);\n' +
+    '    p*=2.*m;\n' +
+    '    a*=.5;\n' +
+    '  }\n' +
+    '  return t;\n' +
+    '}\n' +
+    'float clouds(vec2 p) {\n' +
+    '\tfloat d=1., t=.0;\n' +
+    '\tfor (float i=.0; i<3.; i++) {\n' +
+    '\t\tfloat a=d*fbm(i*10.+p.x*.2+.2*(1.+i)*p.y+d+i*i+p);\n' +
+    '\t\tt=mix(t,d,a);\n' +
+    '\t\td=a;\n' +
+    '\t\tp*=2./(i+1.);\n' +
+    '\t}\n' +
+    '\treturn t;\n' +
+    '}\n' +
+    'void main(void) {\n' +
+    '\tvec2 uv=(FC-.5*R)/MN,st=uv*vec2(2,1);\n' +
+    '\tvec3 col=vec3(0);\n' +
+    '\tfloat bg=clouds(vec2(st.x+T*.5,-st.y));\n' +
+    '\tuv*=1.-.3*(sin(T*.2)*.5+.5);\n' +
+    '\tfor (float i=1.; i<12.; i++) {\n' +
+    '\t\tuv+=.1*cos(i*vec2(.1+.01*i, .8)+i*i+T*.5+.1*uv.x);\n' +
+    '\t\tvec2 p=uv;\n' +
+    '\t\tfloat d=length(p);\n' +
+    '\t\tcol+=.00125/d*(cos(sin(i)*vec3(1,2,3))+1.);\n' +
+    '\t\tfloat b=noise(i+p+bg*1.731);\n' +
+    '\t\tcol+=.002*b/length(max(p,vec2(b*p.x*.02,p.y)));\n' +
+    '\t\tcol=mix(col,vec3(bg*.25,bg*.137,bg*.05),d);\n' +
+    '\t}\n' +
+    '\tO=vec4(col,1);\n' +
+    '}';
+
+  var gl = canvas.getContext('webgl2');
+  if (!gl) {
+    hero.classList.add('fallback-bg');
+    showError('当前浏览器不支持 WebGL2，预览已切换为静态渐变背景。建议用最新版 Chrome / Edge 打开。');
+  } else {
+    function compileShader(type, src) {
+      var sh = gl.createShader(type);
+      gl.shaderSource(sh, src);
+      gl.compileShader(sh);
+      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+        showError('Shader 编译失败:\n' + gl.getShaderInfoLog(sh));
+        gl.deleteShader(sh);
+        return null;
+      }
+      return sh;
+    }
+
+    var vs = compileShader(gl.VERTEX_SHADER, VERT);
+    var fs = compileShader(gl.FRAGMENT_SHADER, FRAG);
+    if (vs && fs) {
+      var prog = gl.createProgram();
+      gl.attachShader(prog, vs);
+      gl.attachShader(prog, fs);
+      gl.linkProgram(prog);
+      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+        showError('Shader 链接失败:\n' + gl.getProgramInfoLog(prog));
+      } else {
+        gl.useProgram(prog);
+
+        var buf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, 1, -1, -1, 1, 1, 1, -1]), gl.STATIC_DRAW);
+        var posLoc = gl.getAttribLocation(prog, 'position');
+        gl.enableVertexAttribArray(posLoc);
+        gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+
+        var uRes = gl.getUniformLocation(prog, 'resolution');
+        var uTime = gl.getUniformLocation(prog, 'time');
+
+        function resize() {
+          var dpr = Math.max(1, 0.5 * (window.devicePixelRatio || 1));
+          canvas.width = Math.floor(window.innerWidth * dpr);
+          canvas.height = Math.floor(window.innerHeight * dpr);
+          gl.viewport(0, 0, canvas.width, canvas.height);
+        }
+        resize();
+        window.addEventListener('resize', resize);
+
+        function render(now) {
+          gl.clearColor(0, 0, 0, 1);
+          gl.clear(gl.COLOR_BUFFER_BIT);
+          gl.useProgram(prog);
+          gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+          gl.uniform2f(uRes, canvas.width, canvas.height);
+          gl.uniform1f(uTime, now * 1e-3);
+          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        }
+        function loop(now) {
+          render(now);
+          if (!reduceMotion) requestAnimationFrame(loop);
+        }
+        requestAnimationFrame(loop);
+      }
+    }
+  }
+
+  // 按钮反馈（预览用：console + 轻提示）
+  function showToast(text) {
+    toast.textContent = text;
+    toast.hidden = false;
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(function () { toast.hidden = true; }, 1800);
+  }
+  document.getElementById('btn-primary').addEventListener('click', function () {
+    console.log('Get Started clicked!');
+    showToast('演示按钮：Get Started for Free');
+  });
+  document.getElementById('btn-secondary').addEventListener('click', function () {
+    console.log('Explore Features clicked!');
+    showToast('演示按钮：Explore Features');
+  });
+})();
+</script>
+</body>
+</html>

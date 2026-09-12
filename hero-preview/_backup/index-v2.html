@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light">
+<title>Trim 启动页 — 预览</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%3E%3Crect%20width='64'%20height='64'%20rx='14'%20fill='%234F46E5'/%3E%3Ctext%20x='32'%20y='45'%20font-size='40'%20font-family='Arial,sans-serif'%20font-weight='800'%20fill='%23fff'%20text-anchor='middle'%3ET%3C/text%3E%3C/svg%3E">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #fff;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    -webkit-user-select: none; user-select: none;
+  }
+
+  #app { position: relative; width: 100%; height: 100vh; height: 100dvh; overflow: hidden; }
+
+  /* ===== 主界面示意（进入后显示） ===== */
+  .main-ui { position: absolute; inset: 0; z-index: 1; background: #fff; display: flex; flex-direction: column; }
+  .titlebar {
+    height: 40px; flex: 0 0 40px; display: flex; align-items: center;
+    padding: 0 12px; background: #FBFAFF; border-bottom: 1px solid #ECEAF7;
+  }
+  .title-trim { font-size: 1.15rem; font-weight: 800; color: #4F46E5; letter-spacing: .02em; margin-left: 4px; visibility: hidden; }
+  .win-controls { margin-left: auto; display: flex; gap: 2px; }
+  .win-controls span {
+    width: 40px; height: 32px; display: grid; place-items: center; border-radius: 6px; color: #8A87B8;
+  }
+  .app-body { flex: 1; display: flex; min-height: 0; }
+  .sidebar {
+    width: 196px; flex: 0 0 196px; background: #F7F6FD; border-right: 1px solid #ECEAF7;
+    padding: 14px 10px; overflow-y: auto;
+  }
+  .side-group { margin-bottom: 16px; }
+  .side-group-title { font-size: 11px; color: #9B97C4; letter-spacing: .1em; padding: 2px 10px 6px; }
+  .side-item { font-size: 13px; color: #55537F; padding: 7px 10px; border-radius: 8px; margin-bottom: 2px; }
+  .side-item.active { background: #E9E6FA; color: #4F46E5; font-weight: 600; }
+  .content { flex: 1; padding: 26px 30px; overflow: auto; }
+  .content h2 { font-size: 1.35rem; font-weight: 700; color: #2B2A4A; }
+  .content .hint { font-size: 12px; color: #9B97C4; margin-top: 6px; }
+  .cards { display: flex; gap: 16px; margin-top: 22px; }
+  .card {
+    flex: 1; height: 120px; background: #F4F3FB; border: 1px solid #ECEAF7;
+    border-radius: 12px; padding: 16px;
+  }
+  .card .bar { height: 10px; border-radius: 6px; background: #E4E0F5; margin-bottom: 10px; }
+  .card .bar.short { width: 45%; }
+
+  /* ===== 启动页 ===== */
+  .splash { position: absolute; inset: 0; z-index: 20; }
+  .splash-bg { position: absolute; inset: 0; background: linear-gradient(180deg, #EFEDFB 0%, #E3DFF7 100%); }
+  .splash-stage {
+    position: relative; height: 100%;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 24px; padding: 0 24px; text-align: center;
+  }
+  .splash-badge {
+    font-size: 13px; letter-spacing: .08em; color: #6E6A96;
+    background: rgba(255, 255, 255, .55); border: 1px solid #DCD8F2;
+    padding: 7px 18px; border-radius: 999px;
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    animation: fade-in .6s ease-out both;
+  }
+  .splash-trim {
+    font-size: clamp(4rem, 11vw, 7.5rem); font-weight: 800; line-height: 1;
+    color: #4F46E5; letter-spacing: .02em;
+    animation: trim-in .7s cubic-bezier(.22, 1, .36, 1) .08s both;
+  }
+  .splash-intro {
+    font-size: clamp(1rem, 2.2vw, 1.2rem); color: #5A5678; max-width: 30em;
+    animation: fade-in .6s ease-out .18s both;
+  }
+  .progress-wrap {
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
+    width: min(380px, 80vw);
+    animation: fade-in .6s ease-out .26s both;
+  }
+  .progress-track { width: 100%; height: 8px; border-radius: 999px; background: #E0DBF5; overflow: hidden; }
+  .progress-fill { height: 100%; width: 0%; border-radius: 999px; background: #4F46E5; }
+  .progress-text { font-size: 12px; color: #7A76A8; font-variant-numeric: tabular-nums; }
+  .enter-btn {
+    margin-top: 6px; padding: 13px 44px; font-family: inherit;
+    font-size: 1.05rem; font-weight: 600; color: #fff; background: #4F46E5;
+    border: none; border-radius: 999px; cursor: pointer; opacity: 0;
+    box-shadow: 0 12px 26px -10px rgba(79, 70, 229, .55);
+    transition: background-color .2s ease, transform .2s ease;
+  }
+  .enter-btn:hover { background: #4338CA; transform: translateY(-1px); }
+  .enter-btn:focus-visible { outline: 2px solid #8B5CF6; outline-offset: 3px; }
+
+  /* 后续进入：仅显示 Trim 与进度条 */
+  .splash.compact .splash-badge,
+  .splash.compact .splash-intro { display: none; }
+
+  @keyframes fade-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes trim-in { from { opacity: 0; transform: scale(.92); } to { opacity: 1; transform: scale(1); } }
+  @media (prefers-reduced-motion: reduce) {
+    .splash-badge, .splash-trim, .splash-intro, .progress-wrap { animation: none; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- 主界面示意 -->
+  <main class="main-ui" aria-label="主界面预览">
+    <header class="titlebar">
+      <span id="title-trim" class="title-trim">Trim</span>
+      <div class="win-controls" aria-hidden="true">
+        <span><svg width="10" height="10" viewBox="0 0 10 10"><path d="M0 5h10" stroke="currentColor" stroke-width="1.2"/></svg></span>
+        <span><svg width="10" height="10" viewBox="0 0 10 10"><rect x=".6" y=".6" width="8.8" height="8.8" fill="none" stroke="currentColor" stroke-width="1.2"/></svg></span>
+        <span><svg width="10" height="10" viewBox="0 0 10 10"><path d="M.8.8l8.4 8.4M9.2.8L.8 9.2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></span>
+      </div>
+    </header>
+    <div class="app-body">
+      <nav class="sidebar" aria-label="功能导航">
+        <div class="side-group">
+          <div class="side-group-title">清理</div>
+          <div class="side-item active">系统体检</div>
+          <div class="side-item">磁盘清理</div>
+          <div class="side-item">内存清理</div>
+          <div class="side-item">系统维护</div>
+        </div>
+        <div class="side-group">
+          <div class="side-group-title">优化</div>
+          <div class="side-item">电脑优化中心</div>
+          <div class="side-item">启动项管理</div>
+          <div class="side-item">右键管理</div>
+          <div class="side-item">测速</div>
+          <div class="side-item">快捷指令</div>
+        </div>
+        <div class="side-group">
+          <div class="side-group-title">记录</div>
+          <div class="side-item">日志</div>
+        </div>
+        <div class="side-group">
+          <div class="side-group-title">设置</div>
+          <div class="side-item">设置</div>
+        </div>
+      </nav>
+      <section class="content">
+        <h2>系统体检</h2>
+        <p class="hint">此处为主界面示意，实际界面以 Trim 软件为准。</p>
+        <div class="cards">
+          <div class="card"><div class="bar short"></div><div class="bar"></div></div>
+          <div class="card"><div class="bar short"></div><div class="bar"></div></div>
+          <div class="card"><div class="bar short"></div><div class="bar"></div></div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- 启动页 -->
+  <div id="splash" class="splash">
+    <div class="splash-bg"></div>
+    <div class="splash-stage">
+      <div id="splash-badge" class="splash-badge">Provide By Xiaoxu</div>
+      <div id="splash-trim" class="splash-trim">Trim</div>
+      <p id="splash-intro" class="splash-intro">轻量、纯净、高效的 Windows 11 清理优化工具</p>
+      <div id="splash-progress" class="progress-wrap" role="progressbar" aria-label="加载进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <div class="progress-track"><div id="progress-fill" class="progress-fill"></div></div>
+        <span id="progress-text" class="progress-text">正在加载 0%</span>
+      </div>
+      <button id="enter-btn" class="enter-btn" type="button" hidden>点击进入</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var KEY = 'trim_splash_seen';
+
+  // 预览调试模式（不影响真实逻辑）：
+  //   ?mode=first   强制按首次进入展示（进度快进，显示“点击进入”）
+  //   ?mode=compact 强制按再次进入展示（仅进度条，自动进入）
+  //   ?mode=enter   跳过启动页，直接展示主界面
+  var params = new URLSearchParams(location.search);
+  var mode = params.get('mode');
+  var reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  var splash = document.getElementById('splash');
+  var splashBg = splash.querySelector('.splash-bg');
+  var splashTrim = document.getElementById('splash-trim');
+  var splashBadge = document.getElementById('splash-badge');
+  var splashIntro = document.getElementById('splash-intro');
+  var progressWrap = document.getElementById('splash-progress');
+  var progressFill = document.getElementById('progress-fill');
+  var progressText = document.getElementById('progress-text');
+  var enterBtn = document.getElementById('enter-btn');
+  var titleTrim = document.getElementById('title-trim');
+
+  var seen = false;
+  try { seen = localStorage.getItem(KEY) === '1'; } catch (e) {}
+  var isFirstVisit = !seen;
+  if (mode === 'first') isFirstVisit = true;
+  if (mode === 'compact') isFirstVisit = false;
+  if (mode === 'enter') { isFirstVisit = false; seen = true; }
+
+  // 后续进入：仅显示 Trim 与进度条
+  if (!isFirstVisit) splash.classList.add('compact');
+
+  var PROGRESS_MS = (mode === 'first' || mode === 'compact') ? 160 : 3000;
+  var state = 'loading';
+
+  function showEnterButton() {
+    state = 'done';
+    progressText.textContent = '加载完成';
+    enterBtn.hidden = false;
+    requestAnimationFrame(function () {
+      enterBtn.style.transition = 'opacity .35s ease, transform .35s ease';
+      enterBtn.style.opacity = '1';
+    });
+  }
+
+  function enterApp() {
+    if (state === 'entered') return;
+    state = 'entered';
+    if (!mode) { try { localStorage.setItem(KEY, '1'); } catch (e) {} }
+
+    var fadeEls = [splashBadge, splashIntro, progressWrap, enterBtn];
+    fadeEls.forEach(function (el) {
+      if (!el || el.style.display === 'none') return;
+      el.style.transition = 'opacity .4s ease';
+      el.style.opacity = '0';
+    });
+
+    var finished = false;
+    var finish = function () {
+      if (finished) return;
+      finished = true;
+      splash.style.display = 'none';
+      titleTrim.style.visibility = 'visible';
+    };
+
+    if (reduceMotion || mode === 'enter') { finish(); return; }
+
+    // FLIP：Trim 平滑移动到标题栏位
+    var from = splashTrim.getBoundingClientRect();
+    var to = titleTrim.getBoundingClientRect();
+    var dx = (to.left + to.width / 2) - (from.left + from.width / 2);
+    var dy = (to.top + to.height / 2) - (from.top + from.height / 2);
+    var s = to.width / from.width;
+
+    splashTrim.style.transition = 'transform .85s cubic-bezier(.22, 1, .36, 1)';
+    splashTrim.style.transformOrigin = 'center';
+    splashTrim.style.transform = 'translate(' + dx + 'px, ' + dy + 'px) scale(' + s + ')';
+    splashBg.style.transition = 'opacity .6s ease';
+    splashBg.style.opacity = '0';
+
+    splashTrim.addEventListener('transitionend', function h(e) {
+      if (e.propertyName === 'transform') finish();
+    }, { once: true });
+    setTimeout(finish, 1200); // 兜底
+  }
+
+  // 进度条模拟
+  var start = performance.now();
+  function tick(now) {
+    var t = Math.min(1, (now - start) / PROGRESS_MS);
+    var pct = Math.round(t * 100);
+    progressFill.style.width = pct + '%';
+    progressText.textContent = '正在加载 ' + pct + '%';
+    progressWrap.setAttribute('aria-valuenow', pct);
+    if (t < 1) {
+      requestAnimationFrame(tick);
+    } else {
+      progressText.textContent = '加载完成';
+      if (isFirstVisit) {
+        showEnterButton();
+      } else {
+        setTimeout(enterApp, 450);
+      }
+    }
+  }
+  requestAnimationFrame(tick);
+
+  enterBtn.addEventListener('click', enterApp);
+
+  if (mode === 'enter') enterApp();
+})();
+</script>
+</body>
+</html>

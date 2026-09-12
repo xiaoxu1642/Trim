@@ -435,7 +435,7 @@
   async function loadAppInfo() {
     if (!window.api?.app) {
       // 浏览器预览模式
-      setInfo('infoVersion', '2.6.0');
+      setInfo('infoVersion', '2.7.0');
       setInfo('infoPortable', '标准安装');
       setInfo('infoElectron', 'N/A');
       setInfo('infoNode', 'N/A');
@@ -475,98 +475,10 @@
     if (el) el.textContent = value;
   }
 
-  // ==================== 优雅关闭流程 ====================
-  // 主进程拦截关闭后触发：展示"感谢使用"Toast，逐步关闭各服务，完成后真正退出
-  function startGracefulShutdown() {
-    // 审查 4-2：清理任务执行中（cleanup:execute 上限 10 分钟）暂缓优雅关闭，轮询等待完成
-    // 后再进入——已删除文件无法回滚，提前强退会丢失结果统计
-    if (window.cleanup?.isCleaning?.()) {
-      try { toast('warning', '清理任务正在执行，将在完成后自动退出…', 6000); } catch (_) {}
-      const waitCleanup = setInterval(() => {
-        if (!window.cleanup?.isCleaning?.()) {
-          clearInterval(waitCleanup);
-          startGracefulShutdown();
-        }
-      }, 1000);
-      return;
-    }
-    const container = document.getElementById('toastContainer');
-    if (!container) {
-      // 找不到容器直接完成关闭
-      window.api?.shutdown?.complete?.();
-      return;
-    }
-
-    // 创建常驻关闭 Toast（不自动消失）
-    const el = document.createElement('div');
-    el.className = 'toast info toast-guide toast-shutdown';
-    el.innerHTML = `
-      <div class="toast-icon"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg></div>
-      <div class="toast-message">
-        <div class="toast-title">感谢使用</div>
-        <div class="shutdown-steps" id="shutdownSteps">
-          <div class="shutdown-step active" data-step="1">正在断开网络连接…</div>
-          <div class="shutdown-step" data-step="2">正在停止后台任务…</div>
-          <div class="shutdown-step" data-step="3">正在清理临时文件…</div>
-          <div class="shutdown-step" data-step="4">正在保存配置与日志…</div>
-        </div>
-      </div>
-    `;
-    container.appendChild(el);
-
-    const markStep = (n, ok = true) => {
-      const step = el.querySelector(`[data-step="${n}"]`);
-      if (!step) return;
-      step.classList.remove('active');
-      step.classList.add(ok ? 'done' : 'failed');
-    };
-    const activateStep = (n) => {
-      el.querySelector(`[data-step="${n}"]`)?.classList.add('active');
-    };
-
-    const wait = ms => new Promise(r => setTimeout(r, ms));
-
-    (async () => {
-      try {
-        // 步骤1：断开网络连接（卸载外部测速 iframe）
-        activateStep(1);
-        try {
-          const frame = document.getElementById('externalTestFrame');
-          if (frame && frame.src !== 'about:blank') frame.src = 'about:blank';
-        } catch (e) {}
-        await wait(450);
-        markStep(1);
-
-        // 步骤2：停止后台任务（取消测速等）
-        activateStep(2);
-        try {
-          if (window.netspeed) window.netspeed.loaded = false;
-        } catch (e) {}
-        await wait(400);
-        markStep(2);
-
-        // 步骤3：清理临时文件（主进程执行，此处展示状态）
-        activateStep(3);
-        await wait(450);
-        markStep(3);
-
-        // 步骤4：保存配置与日志
-        activateStep(4);
-        try {
-          await log('info', '应用关闭：服务与端口已全部释放');
-        } catch (e) {}
-        await wait(400);
-        markStep(4);
-
-        // 全部完成，稍微停留后通知主进程关闭
-        await wait(500);
-        window.api?.shutdown?.complete?.();
-      } catch (e) {
-        // 异常兜底：确保最终能关闭
-        window.api?.shutdown?.complete?.();
-      }
-    })();
-  }
+  // ==================== 关闭流程（v2.7.0） ====================
+  // 关闭编排已全部移交主进程：点击 X → 窗口立即隐藏，断开连接/清理临时文件/保存日志
+  // 等收尾在后台静默进行后自动退出。渲染层不再展示「感谢使用」Toast，也不发送
+  // shutdown:complete（通道保留作扩展点，preload 白名单未动）。
 
   // 初始化
   function init() {
@@ -774,10 +686,7 @@
     // 初始化日志
     setTimeout(() => log('info', '应用启动'), 500);
 
-    // 监听主进程的优雅关闭请求（用户点击关闭按钮时触发）
-    if (window.api?.shutdown?.onRequest) {
-      window.api.shutdown.onRequest(startGracefulShutdown);
-    }
+    // v2.7.0：关闭编排移交主进程，渲染层不再监听 app:shutdown（见文件上方关闭流程说明）
 
     // B5：提权重启后未检测到新实例时，主进程会保持当前实例运行并通知到这里
     if (window.api?.elevate?.onNotice) {

@@ -77,7 +77,10 @@ let lastFinderSnapshot = new Map();
 const MAIN_WINDOW_MIN_WIDTH = 1294;
 const MAIN_WINDOW_MIN_HEIGHT = 870;
 const TITLEBAR_OVERLAY = Object.freeze({
-  color: '#F3F3F3',
+  // 原生按钮覆盖层背景必须与 body.theme-light .titlebar 实际渲染色（#f7f8fb）严格一致，
+  // 否则右上角 min/max/close 会形成独立浅灰条，与标题栏出现竖线分界。
+  // 历史值 #F3F3F3 被 main.css 7152 行的 #f7f8fb 覆盖后未同步。
+  color: '#f7f8fb',
   symbolColor: '#1A1A1A',
   height: 36
 });
@@ -948,7 +951,11 @@ handleSafe('app:open-external', async (_, url) => {
 handleSafe('updater:check', async () => UPDATER.safeCheck(false));
 handleSafe('updater:download', async () => UPDATER.startDownload());
 handleSafe('updater:cancel-download', () => UPDATER.cancelDownload());
-handleSafe('updater:install', () => UPDATER.installUpdate());
+handleSafe('updater:install', () => {
+  // v2.7.0：安装更新会触发窗口 close——提前进入关闭态，避免关闭钩子 preventDefault 卡住安装替换
+  isShuttingDown = true;
+  return UPDATER.installUpdate();
+});
 // v2.6.0（P2-8）：更新镜像偏好（保存走写盘副作用，不进只读白名单；读取放白名单）
 handleSafe('updater:set-mirror', async (_, { mirror } = {}) => UPDATER.setMirror(typeof mirror === 'string' ? mirror : 'auto'));
 handleSafe('updater:get-mirror', async () => UPDATER.getMirror());
@@ -1164,6 +1171,9 @@ handleSafe('cleanup:scan', async (event, { categories }) => {
 handleSafe('cleanup:execute', async (event, { items, force, toRecycle, autoRebuild }) => {
   const safeItems = validateSnapshotItems(items, cleanupSnapshots.get(event.sender.id) || new Map()); // 审查 2-3：取本窗口快照
   if (!safeItems) return { success: false, message: '清理项不是最近一次扫描结果，已拒绝执行' };
+  // v2.7.0：在途删除任务计数——关闭按钮触发后台静默退出时会等它归零再 quit，
+  // 保证清理结果统计完整落盘（窗口此刻已隐藏，用户无感）
+  activeCleanupRuns++;
   // v2.2 第2批（D18）：在生成脚本前把保护清单补全（含 Electron known folder），
   // execute() 会把同一份清单注入 PS，两侧判定才会完全一致。
   ensureProtectedConfigured();
@@ -1270,6 +1280,7 @@ handleSafe('cleanup:execute', async (event, { items, force, toRecycle, autoRebui
     writeLog('error', `清理异常: ${e.message}`);
     return { success: false, message: e.message };
   } finally {
+    activeCleanupRuns--; // v2.7.0：在途删除任务计数归位（后台静默退出等它归零）
     try { fs.unlinkSync(scriptPath); } catch (e) {}
   }
 });
@@ -2182,11 +2193,17 @@ handleSafe('optimizer:run', async (event, { optionId, params = {} } = {}) => {
     if (OPT_STATE.ready()) {
       if (isRestoreRun) {
         // 还原成功才销账；失败保留记录等下次重试（不变式②）
-        if (ok) OPT_STATE.remove(optionId);
+        if (ok) {
+          OPT_STATE.remove(optionId);
+          // v2.7.0：及时回写检测结果（还原成功 = 当前未生效；动态修正交由启动扫描）
+          OPT_STATE.setDetectedEntry(optionId, false);
+        }
       } else if (ok) {
         const verify = await verifyOptionApplied(optionId, opt, params);
         if (verify === 'partial') writeLog('warn', `执行后回读校验不符（可能被组策略/安全软件覆盖）: ${opt.title}`);
         OPT_STATE.markApplied(optionId, verify);
+        // v2.7.0：执行成功及时回写检测结果（pass=已生效；partial=读回不符视为未生效；unknown 交启动扫描）
+        if (verify !== 'unknown') OPT_STATE.setDetectedEntry(optionId, verify === 'pass');
         return { success: ok, message: ok ? '完成' : '部分步骤可能失败', verify };
       } else {
         // 执行失败：转正为 applied+unknown（前序步骤可能已部分生效），
@@ -2357,6 +2374,40 @@ async function verifyOptionApplied(optionId, opt, params) {
   }
 }
 
+// v2.7.0（任务2）：优化项「已优化」检测结果持久化——应用首次启动即后台全量扫描并写入
+// optimization-state.json 的 detected 段（安装版 %APPDATA%\Trim，便携版程序目录\data），
+// 此后每次执行/还原及时回写单条，常态化留痕，不再只存在渲染层内存里。
+// 只扫可检测项（reg/svc 步骤）+ 动态项；cmd 类（bcdedit 等）无检测手段，不伪造结论。
+async function refreshOptimizerDetectCache() {
+  if (!OPT_STATE.ready()) return;
+  try {
+    const checkIds = [];
+    for (const o of OPTIMIZER.OPTIONS) {
+      if (o.dynamic) continue;
+      if ((o.steps || []).some(s => s && (typeof s.reg === 'string' || (s.service && s.disable)))) {
+        checkIds.push(o.id);
+      }
+    }
+    const detected = OPT_STATE.getDetectedAll();
+    const results = await checkOptimizedInternal(checkIds);
+    const now = new Date().toISOString();
+    for (const id of checkIds) {
+      if (typeof results[id] !== 'boolean') continue; // 检测脚本未返回（异常）时保留旧值
+      detected[id] = { optimized: results[id], at: now };
+    }
+    // 动态项：按当前阈值档位是否命中判定（default 档位视为未优化态）
+    const svc = await svcMemCurrentInternal();
+    if (svc.success) {
+      detected.svc_mem_gb = { optimized: svc.gb != null && svc.gb !== 'default', at: now };
+    }
+    OPT_STATE.replaceDetected(detected);
+    const optimizedCount = Object.values(detected).filter(d => d && d.optimized === true).length;
+    writeLog('info', `优化项已优化扫描完成并持久化: 可检测 ${checkIds.length + 1} 项，当前已生效 ${optimizedCount} 项`);
+  } catch (e) {
+    writeLog('warn', `优化项已优化扫描失败（保留既有记录）: ${e.message}`);
+  }
+}
+
 // v2.6.0（P0-1）：启动扫描 + 状态总览——对记账条目核对真实状态并标出 stale。
 // stale 判定：
 //   · status=pending（执行中断/崩溃遗留）→ 一律 stale（含无法检测的 cmd 类）；
@@ -2396,7 +2447,7 @@ handleSafe('optimizer:state-overview', async () => {
         if (results[id] === false) staleIds.push(id);
       }
     }
-    return { success: true, items, staleIds, migration: lastMigrationSummary };
+    return { success: true, items, staleIds, migration: lastMigrationSummary, detected: OPT_STATE.getDetectedAll() };
   } catch (e) {
     writeLog('error', `优化状态总览异常: ${e.message}`);
     return { success: false, items: [], staleIds: [], message: e.message, migration: lastMigrationSummary };
@@ -2631,7 +2682,11 @@ handleSafe('optimizer:restore-reg', async (event, { optionId } = {}) => {
     delete map[optionId];
     if (!saveOptBackups(map)) return { success: false, message: '还原完成但备份记录清理失败' };
     // v2.6.0（P0-1）：还原成功 → 同步销账（不变式：还原成功才清记录）
-    if (OPT_STATE.ready()) OPT_STATE.remove(optionId);
+    if (OPT_STATE.ready()) {
+      OPT_STATE.remove(optionId);
+      // v2.7.0：及时回写检测结果（还原成功 = 当前未生效）
+      OPT_STATE.setDetectedEntry(optionId, false);
+    }
     writeLog('info', `优化项注册表已按备份还原: ${optionId}（${restored} 项）`);
     return { success: true, restored };
   } catch (e) {
@@ -4094,43 +4149,49 @@ handleSafe('elevate:request', (event) => {
   });
 });
 
-// ==================== 优雅关闭流程 ====================
-// 拦截窗口关闭：先通知渲染进程展示"感谢使用"Toast 并逐步关闭服务，完成后真正退出
+// ==================== 关闭流程（v2.7.0：关闭即隐，后台静默收尾） ====================
+// 点击关闭按钮：主窗口立即从屏幕消失（无 Toast、无确认、无等待动画）；随后主进程在
+// 后台静默完成收尾——等删除类任务落定（清理结果不可回滚，半途强退会丢统计）、
+// 断开子进程（pwsh / finder 等全部网络与 IO）、清理临时脚本、刷盘日志与窗口状态——
+// 然后自动退出。用户视角 = 「点了 X 就关了」；工程视角 = 收尾一个不少，只是不可见。
+// 旧「感谢使用」渲染层 Toast 流程已移除（app.js 不再监听 app:shutdown，通道保留作扩展点）。
 let isShuttingDown = false;
-let shutdownTimeout = null;
+// 进行中的删除类任务计数（cleanup:execute 单次最长 10 分钟）
+let activeCleanupRuns = 0;
+
+function requestSilentQuit() {
+  const tryQuit = () => {
+    if (activeCleanupRuns > 0 || maintenanceRunning) {
+      // 后台静默等待删除类任务完成（窗口已隐藏，用户无感），不丢结果统计
+      setTimeout(tryQuit, 500);
+      return;
+    }
+    app.quit(); // before-quit：flushLogSync + saveWindowState + taskkill 全部子进程 + 清理临时脚本
+    // 兜底：quit 被意外阻塞（如 taskkill 卡死）时强制退出，不留僵尸进程
+    setTimeout(() => { try { flushLogSync(); } catch (_) {} app.exit(0); }, 5000);
+  };
+  tryQuit();
+}
 
 function registerShutdownHook() {
   mainWindow.on('close', (e) => {
-    if (isShuttingDown) return; // 已经确认关闭，放行
+    if (isShuttingDown) return; // app.quit() 触发的二次 close 直接放行
+    isShuttingDown = true;
     e.preventDefault();
-    try {
-      mainWindow?.webContents.send('app:shutdown');
-    } catch (err) {}
-    // 兜底：渲染进程 5 秒内未响应则直接关闭
-    shutdownTimeout = setTimeout(() => {
-      writeLog('warn', '优雅关闭超时，强制退出');
-      performFinalClose();
-    }, 5000);
+    try { mainWindow.hide(); } catch (err) {} // 窗口立即消失 = 用户感知的「已关闭」
+    writeLog('info', '收到关闭请求：窗口已隐藏，后台静默收尾后自动退出');
+    requestSilentQuit();
   });
 }
 
+// 兼容入口：渲染层 shutdown:complete / 预留扩展点仍走这里（渲染层 v2.7.0 起不再主动触发）
 function performFinalClose() {
-  if (shutdownTimeout) { clearTimeout(shutdownTimeout); shutdownTimeout = null; }
-  isShuttingDown = true;
-  // C2：确认真正退出时才持久化窗口状态（原来挂在 close 上，取消关闭也会写入）
-  try { saveWindowState(); } catch (e) {}
-  try {
-    cleanupTempScripts();
-  } catch (e) {}
-  try {
-    mainWindow?.close();
-  } catch (e) {}
-  app.quit();
+  try { mainWindow?.hide(); } catch (e) {}
+  requestSilentQuit();
 }
 
 onSafe('shutdown:begin', () => {
-  // 预留：尚未接线。渲染层当前走 shutdown:complete 直接触发 performFinalClose，
-  // 此通道保留作扩展点（如「关键操作完成后由渲染层主动上报再关闭」），勿当冗余删除。
+  // 预留：尚未接线。渲染层当前不再参与关闭编排，此通道保留作扩展点，勿当冗余删除。
 });
 
 onSafe('shutdown:complete', () => {
@@ -5451,8 +5512,12 @@ app.whenReady().then(() => {
   UPDATER.initUpdater(mainWindow, writeLog, { dataDir: APP_DATA_DIR });
 
   // 系统指标启动预热：后台提前采集一轮填充缓存，
-  // 用户进入/切回「系统概览」首页时首轮渲染即时出数据（无需等 pwsh 冷启动）
+  // 用户进入/切回「系统体检」首页时首轮渲染即时出数据（无需等 pwsh 冷启动）
   setTimeout(() => { collectOverviewMetrics(); }, 1500);
+
+  // v2.7.0（任务2）：应用首次启动即后台全量扫描优化项是否已生效并持久化（常态化记录）。
+  // 延迟 3s 错开指标预热与窗口创建的 pwsh 抢占；扫描失败保留旧记录不影响使用。
+  setTimeout(() => { refreshOptimizerDetectCache(); }, 3000);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
