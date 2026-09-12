@@ -435,7 +435,7 @@
   async function loadAppInfo() {
     if (!window.api?.app) {
       // 浏览器预览模式
-      setInfo('infoVersion', '2.7.1');
+      setInfo('infoVersion', '2.7.2');
       setInfo('infoPortable', '标准安装');
       setInfo('infoElectron', 'N/A');
       setInfo('infoNode', 'N/A');

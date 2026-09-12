@@ -238,9 +238,9 @@ check('主窗口最小尺寸与标题栏颜色固定', () => {
   if (!mainSource.includes('MAIN_WINDOW_MIN_WIDTH = 1294') || !mainSource.includes('MAIN_WINDOW_MIN_HEIGHT = 870')) {
     throw new Error('主窗口最小尺寸不是 1294x870');
   }
-  // v2.7.0：覆盖层颜色与 body.theme-light .titlebar 实际渲染色 #f7f8fb 对齐（用户修复：
-  // 历史 #F3F3F3 会被 main.css 的 #f7f8fb 覆盖导致右上角按钮出现独立浅灰条）
-  if (!mainSource.includes("color: '#f7f8fb'") || !mainSource.includes("symbolColor: '#1A1A1A'")) {
+  // v2.7.2：覆盖层完全透明（rgba(0,0,0,0)），按钮直接浮在 DOM/启动页内容上；
+  // 旧固定色 #f7f8fb（及其前身 #F3F3F3）方案已废弃
+  if (!mainSource.includes("color: 'rgba(0, 0, 0, 0)'") || !mainSource.includes("symbolColor: '#1A1A1A'")) {
     throw new Error('原生标题栏覆盖层颜色未固定');
   }
   if (!css.includes('body.electron-mica.win-maximized .main-content {\n  background: transparent;')) {
@@ -1361,21 +1361,19 @@ check('关闭即隐：主进程静默收尾编排（任务4）', () => {
   if (!/updater:install[\s\S]{0,200}isShuttingDown = true/.test(mainSrc)) throw new Error('updater:install 未提前置关闭态');
 });
 
-check('v2.7.1：启动加速编排 / 覆盖层融合 / postbuild 清旧包', () => {
+check('v2.7.2：启动加速编排 / 透明覆盖层 / postbuild 清旧包', () => {
   const appSrc = fs.readFileSync(abs('src/scripts/app.js'), 'utf8');
   const splashSrc = fs.readFileSync(abs('src/scripts/splash.js'), 'utf8');
   // 真实进度绑定：app 初始化完成派发事件，splash 监听收尾
   if (!appSrc.includes("new CustomEvent('trim:boot-ready')")) throw new Error('app.js 未派发 trim:boot-ready');
   if (!splashSrc.includes("addEventListener('trim:boot-ready'")) throw new Error('splash.js 未监听 trim:boot-ready');
   if (!splashSrc.includes('PROGRESS_CAP')) throw new Error('splash.js 缺少真实进度上限（92% 等就绪）');
-  // 覆盖层同色融合：main.js 提供 splash:overlay，preload 暴露，splash 首尾调用
+  // 透明覆盖层（Mineradio 式）：TITLEBAR_OVERLAY 用 rgba(0,0,0,0)，融合通道 splash:overlay 已下线
   const mainSrc = fs.readFileSync(abs('main.js'), 'utf8');
+  if (!mainSrc.includes("color: 'rgba(0, 0, 0, 0)'")) throw new Error('TITLEBAR_OVERLAY 未使用透明色');
+  if (mainSrc.includes("handleSafe('splash:overlay'") || mainSrc.includes('SPLASH_OVERLAY_COLOR')) throw new Error('splash:overlay 融合通道应已删除');
   const preloadSrc = fs.readFileSync(abs('preload.js'), 'utf8');
-  for (const [src, name] of [[mainSrc, 'main.js'], [preloadSrc, 'preload.js'], [splashSrc, 'splash.js']]) {
-    if (!src.includes('splash:overlay') && !(name === 'splash.js' && src.includes('setSplashOverlay'))) {
-      throw new Error(name + ' 缺少 splash:overlay 融合通道');
-    }
-  }
+  if (preloadSrc.includes('setSplashOverlay')) throw new Error('preload 仍暴露 setSplashOverlay（应已删除）');
   // postbuild 清旧包：脚本接线 + 当前版本保护
   const pkg = JSON.parse(fs.readFileSync(abs('package.json'), 'utf8'));
   if (pkg.scripts.postbuild !== 'node scripts/clean-old-packages.js') throw new Error('postbuild 钩子未接线 clean-old-packages');

@@ -22,9 +22,6 @@
   var splash = document.getElementById('splash');
   if (!splash) return; // 无启动页结构（结构异常）直接放行主界面
 
-  // v2.7.1：把原生标题栏覆盖层染成启动页同色（右上角 min/max/close 融入启动页，结束恢复）
-  try { window.api && window.api.window && window.api.window.setSplashOverlay && window.api.window.setSplashOverlay(true); } catch (e) {}
-
   var canvas = document.getElementById('splash-canvas');
   var trimEl = document.getElementById('splash-trim');
   var badgeEl = document.getElementById('splash-badge');
@@ -63,7 +60,6 @@
       splash.classList.add('finished');
       if (splash.parentNode) splash.parentNode.removeChild(splash);
     } catch (e) {}
-    try { window.api && window.api.window && window.api.window.setSplashOverlay && window.api.window.setSplashOverlay(false); } catch (e) {}
   }
 
   function showEnterButton() {

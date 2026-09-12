@@ -77,10 +77,11 @@ let lastFinderSnapshot = new Map();
 const MAIN_WINDOW_MIN_WIDTH = 1294;
 const MAIN_WINDOW_MIN_HEIGHT = 870;
 const TITLEBAR_OVERLAY = Object.freeze({
-  // 原生按钮覆盖层背景必须与 body.theme-light .titlebar 实际渲染色（#f7f8fb）严格一致，
-  // 否则右上角 min/max/close 会形成独立浅灰条，与标题栏出现竖线分界。
-  // 历史值 #F3F3F3 被 main.css 7152 行的 #f7f8fb 覆盖后未同步。
-  color: '#f7f8fb',
+  // v2.7.2：完全透明覆盖层（Mineradio 式）——min/max/close 按钮直接浮在网页内容上：
+  // 启动页期间浮在 WebGL 画面上、常规态浮在 DOM 标题栏底色上，任何场景都无色块接缝，
+  // 也不再需要随启动页/主题动态换色（旧 splash:overlay 融合通道已下线）。
+  // Electron 需 ≥39（透明色下 symbol hover 高亮错误已在 37/38/39 分支修复，见 electron#48193）。
+  color: 'rgba(0, 0, 0, 0)',
   symbolColor: '#1A1A1A',
   height: 36
 });
@@ -1008,22 +1009,8 @@ handleSafe('window:update-overlay', () => {
   }
 });
 
-// v2.7.1：启动页期间把原生标题栏覆盖层背景临时换成启动页渐变顶色。
-// titleBarOverlay 是 Windows 在非客户区绘制的原生控件，层级永远高于网页内容，
-// DOM（无论 z-index 多大）都盖不住它——所以思路不是「覆盖」而是「同色融合」：
-// 启动页把右上角区域染成同一色调，视觉上成为启动页的一部分；结束时恢复正式色。
-const SPLASH_OVERLAY_COLOR = '#efedfb'; // 与 .splash-bg 渐变顶色一致（main.css）
-handleSafe('splash:overlay', (_, { active } = {}) => {
-  try {
-    if (!mainWindow || mainWindow.isDestroyed()) return false;
-    mainWindow.setTitleBarOverlay(active
-      ? { color: SPLASH_OVERLAY_COLOR, symbolColor: TITLEBAR_OVERLAY.symbolColor, height: TITLEBAR_OVERLAY.height }
-      : TITLEBAR_OVERLAY);
-    return true;
-  } catch (e) {
-    return false;
-  }
-});
+// v2.7.1 曾在此提供 splash:overlay 通道（启动页期间把覆盖层染成渐变顶色）；
+// v2.7.2 覆盖层改为完全透明后按钮天然融入任何背景，该通道已下线删除。
 
 // 日志
 handleSafe('log:write', (event, { level, message }) => {

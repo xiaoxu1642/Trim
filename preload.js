@@ -48,8 +48,6 @@ contextBridge.exposeInMainWorld('api', {
     maximize: () => ipcRenderer.send('window:maximize'),
     close: () => ipcRenderer.send('window:close'),
     updateOverlay: (isDark) => ipcRenderer.invoke('window:update-overlay', { isDark }),
-    // v2.7.1：启动页期间融合原生标题栏覆盖层颜色（active=false 恢复正式色）
-    setSplashOverlay: (active) => ipcRenderer.invoke('splash:overlay', { active: !!active }),
     onResized: (callback) => {
       const handler = (_, bounds) => callback(bounds);
       ipcRenderer.on('window:resized', handler);
