@@ -435,7 +435,7 @@
   async function loadAppInfo() {
     if (!window.api?.app) {
       // 浏览器预览模式
-      setInfo('infoVersion', '2.7.0');
+      setInfo('infoVersion', '2.7.1');
       setInfo('infoPortable', '标准安装');
       setInfo('infoElectron', 'N/A');
       setInfo('infoNode', 'N/A');
@@ -704,6 +704,10 @@
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') trimRendererMemory();
     });
+
+    // v2.7.1：真实初始化完成——启动页（splash.js）监听此事件收尾进度并进入主界面，
+    // 替代纯假进度等待；预览模式无监听方，派发无副作用
+    try { window.dispatchEvent(new CustomEvent('trim:boot-ready')); } catch (e) {}
   }
 
   // 等待 DOM

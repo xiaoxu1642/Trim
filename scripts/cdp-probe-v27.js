@@ -91,8 +91,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   // 页面内时钟采样：一次 evaluate 抓 t0 + 4 个中间帧，排除 WS 往复抖动
   const series = await evaluate(ws, `new Promise((resolve) => {
     const el = document.getElementById('splash-trim');
+    const bg = document.querySelector('#splash .splash-bg');
     const vals = [];
-    const grab = (label) => { vals.push({ label, tf: getComputedStyle(el).transform }); };
+    const grab = (label) => { vals.push({ label, tf: getComputedStyle(el).transform, bgOp: getComputedStyle(bg).opacity }); };
     grab('t0');
     document.getElementById('splash-enter').click();
     [150, 350, 550, 750].forEach((ms) => setTimeout(() => grab('t' + ms), ms));
@@ -100,15 +101,20 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   })`, true);
   const uniq = [...new Set(series.map(s => s.tf))];
   log('FLIP 落位动画有位移/缩放采样变化', uniq.length >= 3, `${series.length} 帧 / ${uniq.length} 种 transform，首=${series[0].tf.slice(0, 40)} 末=${series[series.length - 1].tf.slice(0, 40)}`);
+  const fading = series.some(s => Number(s.bgOp) < 1);
+  log('落位期间主页内容渐显（背景层淡出）', fading, `bgOp 序列=${series.map(s => s.bgOp).join(',')}`);
 
-  // 落位完成后：启动页移除 + 标题栏品牌可见
+  // 落位完成后：启动页移除 + 标题栏品牌可见 + 默认落在系统体检页
   await sleep(800);
   const splashEnd = await evaluate(ws, `(() => ({
     gone: !document.getElementById('splash'),
     titleVisible: getComputedStyle(document.querySelector('.titlebar-title')).visibility === 'visible',
-    seen: localStorage.getItem('trim_splash_seen') === '1'
+    seen: localStorage.getItem('trim_splash_seen') === '1',
+    activePage: (document.querySelector('.page.active') || {}).id || ''
   }))()`);
-  log('落位完成：启动页移除、标题栏品牌显现、seen 已记录', splashEnd.gone && splashEnd.titleVisible && splashEnd.seen, JSON.stringify(splashEnd));
+  log('落位完成：启动页移除、标题栏品牌显现、默认系统体检页',
+    splashEnd.gone && splashEnd.titleVisible && splashEnd.seen && splashEnd.activePage === 'page-overview',
+    JSON.stringify(splashEnd));
 
   // ===== 2. 体检页：bad/warn 行按钮 + 忽略持久化 + 恢复 + 跳转 =====
   await evaluate(ws, "window.app.switchPage('overview')");

@@ -1,20 +1,29 @@
-// splash.js - 启动页（v2.7.0，参考 hero-preview/index.html 移植）
+// splash.js - 启动页（v2.7.0 新增，v2.7.1 加速编排，参考 hero-preview/index.html 移植）
 // 结构：WebGL 流线背景（烟→淡紫偏白，流星→黄白，作者 Matthias Hurrle，Trim 改色版）
 //       + 首次进入完整体验（徽章/简介/进度/点击进入），之后每次启动为紧凑模式（Trim+进度，自动进入）；
-//       加载完成后背景淡出，"Trim" 字样以 FLIP 变换平滑落位到标题栏品牌处（PowerPoint「平滑」效果）。
+//       加载完成后背景淡出（主页内容同步渐显），"Trim" 字样以 FLIP 变换平滑落位到标题栏品牌处
+//       （PowerPoint「平滑」效果）。
+// 进度编排（v2.7.1）：不再纯假进度——app.js 初始化完成会派发 `trim:boot-ready`，
+// 进度条到 92% 后停在原地等真实就绪事件，就绪即收尾进入（紧凑模式最快约 0.5s 进主界面）。
 // 约束：CSP 禁内联脚本，全部逻辑在此文件；prefers-reduced-motion 直接呈现主界面无动画；
 //       任何异常（目标元素缺失/脚本异常/transitionend 丢失）都有兜底路径保证进入主界面。
 (function () {
   'use strict';
 
   var SEEN_KEY = 'trim_splash_seen';
-  var PROGRESS_MS_FIRST = 2400;  // 首次进入：完整体验（徽章 + 简介 + 进度 + 点击进入）
-  var PROGRESS_MS_COMPACT = 900; // 后续启动：仅 Trim + 进度，完成后自动进入
-  var MORPH_MS = 900;            // 落位动画时长（与 CSS transition 一致）
-  var HARD_EXIT_MS = 15000;      // 兜底：无论卡在哪，15s 后强制进入主界面
+  var PROGRESS_MS_FIRST = 1600;   // 首次进入：完整体验节奏（徽章 + 简介 + 进度 + 点击进入）
+  var PROGRESS_MS_COMPACT = 500;  // 后续启动：仅 Trim + 进度，真实就绪后立刻进入
+  var MORPH_MS = 750;             // 落位动画时长（与 CSS transition 一致）
+  var PROGRESS_CAP = 0.92;        // 真实就绪前进度上限（诚实进度：92% = 等 app 初始化）
+  var BOOT_READY_HARDCAP = 4000;  // 兜底：等不到 trim:boot-ready 也按时进入（不卡死在启动页）
+  var MIN_DISPLAY_MS = 450;       // 最短展示时长，避免启动页一闪而过
+  var HARD_EXIT_MS = 15000;       // 兜底：无论卡在哪，15s 后强制进入主界面
 
   var splash = document.getElementById('splash');
   if (!splash) return; // 无启动页结构（结构异常）直接放行主界面
+
+  // v2.7.1：把原生标题栏覆盖层染成启动页同色（右上角 min/max/close 融入启动页，结束恢复）
+  try { window.api && window.api.window && window.api.window.setSplashOverlay && window.api.window.setSplashOverlay(true); } catch (e) {}
 
   var canvas = document.getElementById('splash-canvas');
   var trimEl = document.getElementById('splash-trim');
@@ -32,7 +41,14 @@
 
   var state = 'loading'; // loading → done → entered
   var finished = false;
+  var bootReady = false;
+  var enterScheduled = false;
   var hardTimer = setTimeout(finish, HARD_EXIT_MS);
+
+  function nowMs() {
+    return (window.performance && performance.now) ? performance.now() : Date.now();
+  }
+  var start = nowMs();
 
   function markSeen() {
     try { localStorage.setItem(SEEN_KEY, '1'); } catch (e) {}
@@ -47,7 +63,45 @@
       splash.classList.add('finished');
       if (splash.parentNode) splash.parentNode.removeChild(splash);
     } catch (e) {}
+    try { window.api && window.api.window && window.api.window.setSplashOverlay && window.api.window.setSplashOverlay(false); } catch (e) {}
   }
+
+  function showEnterButton() {
+    if (!enterBtn) { enterApp(); return; }
+    enterBtn.hidden = false;
+    requestAnimationFrame(function () {
+      enterBtn.style.transition = 'opacity .35s ease';
+      enterBtn.style.opacity = '1';
+    });
+    enterBtn.addEventListener('click', enterApp, { once: true });
+  }
+
+  // 紧凑模式自动进入：真实就绪后尽快，但不早于最短展示时长（防一闪而过）
+  function scheduleEnter() {
+    if (enterScheduled || state === 'entered') return;
+    enterScheduled = true;
+    var wait = Math.max(0, MIN_DISPLAY_MS - (nowMs() - start));
+    setTimeout(enterApp, wait);
+  }
+
+  // v2.7.1：app.js 初始化完成派发 `trim:boot-ready`——进度收尾 + 进入编排的真实触发器
+  function onBootReady() {
+    if (bootReady) return;
+    bootReady = true;
+    if (progressFill) progressFill.style.width = '100%';
+    if (progressText) progressText.textContent = '加载完成';
+    if (progressEl) progressEl.setAttribute('aria-valuenow', '100');
+    if (state === 'loading') {
+      state = 'done';
+      if (isFirstVisit) showEnterButton();
+      else scheduleEnter();
+    } else if (state === 'done' && !isFirstVisit) {
+      scheduleEnter();
+    }
+  }
+  window.addEventListener('trim:boot-ready', onBootReady);
+  // 兜底：4s 内没等到 boot-ready（如预览模式/异常）也照常进入
+  setTimeout(onBootReady, BOOT_READY_HARDCAP);
 
   function enterApp() {
     if (state === 'entered') return;
@@ -61,7 +115,7 @@
       el.style.opacity = '0';
       el.style.pointerEvents = 'none';
     });
-    splash.classList.add('entering'); // 背景层淡出（CSS 过渡）
+    splash.classList.add('entering'); // 背景层淡出（CSS 过渡）——主页内容同步渐显
 
     // 无动画 / 目标缺失：直接进入，不做 FLIP
     if (reduceMotion || !trimEl || !titleTarget || !trimEl.getBoundingClientRect || !titleTarget.getBoundingClientRect) {
@@ -221,18 +275,20 @@
     requestAnimationFrame(loop);
   })();
 
-  // ===== 进度模拟与进入编排 =====
+  // ===== 进度编排（v2.7.1：真实事件驱动） =====
+  // timer 只推进到 92%（诚实进度：剩余的是等 app.js 真实初始化完成）；
+  // `trim:boot-ready` 到达即跳 100% 并进入；4s 硬兜底防止卡死在启动页。
   var seen = false;
   try { seen = localStorage.getItem(SEEN_KEY) === '1'; } catch (e) {}
   var isFirstVisit = !seen;
   if (!isFirstVisit && splash.classList) splash.classList.add('compact'); // 后续启动：仅 Trim + 进度
 
   var PROGRESS_MS = isFirstVisit ? PROGRESS_MS_FIRST : PROGRESS_MS_COMPACT;
-  var start = (window.performance && performance.now) ? performance.now() : Date.now();
 
   function tick(now) {
-    if (finished || state === 'entered') return;
-    var t = Math.min(1, ((now || Date.now()) - start) / PROGRESS_MS);
+    if (finished || state !== 'loading') return;
+    var raw = Math.min(1, ((now || nowMs()) - start) / PROGRESS_MS);
+    var t = Math.min(bootReady ? 1 : PROGRESS_CAP, raw);
     var pct = Math.round(t * 100);
     if (progressFill) progressFill.style.width = pct + '%';
     if (progressText) progressText.textContent = '正在加载 ' + pct + '%';
@@ -241,23 +297,10 @@
       requestAnimationFrame(tick);
       return;
     }
-    if (progressText) progressText.textContent = '加载完成';
-    if (isFirstVisit) {
-      // 首次进入：展示「点击进入」（参考 hero-preview 的欢迎仪式）
-      state = 'done';
-      if (enterBtn) {
-        enterBtn.hidden = false;
-        requestAnimationFrame(function () {
-          enterBtn.style.transition = 'opacity .35s ease';
-          enterBtn.style.opacity = '1';
-        });
-        enterBtn.addEventListener('click', enterApp, { once: true });
-      } else {
-        enterApp();
-      }
-    } else {
-      setTimeout(enterApp, 400); // 后续启动：短暂停留后自动落位
-    }
+    // 进度走满（必然已 boot-ready）：首访展示「点击进入」，紧凑模式直接编排进入
+    state = 'done';
+    if (isFirstVisit) showEnterButton();
+    else scheduleEnter();
   }
   requestAnimationFrame(tick);
 })();

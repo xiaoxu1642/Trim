@@ -47,6 +47,7 @@ const SYNTAX_FILES = [
   'src/scripts/pathbinding.js',
   'src/scripts/splash.js',
   'src/scripts/modal.js',
+  'scripts/clean-old-packages.js',
   'src/scripts/logger.js',
   'src/scripts/intro.js',
   'src/scripts/maintenance.js',
@@ -1358,6 +1359,29 @@ check('关闭即隐：主进程静默收尾编排（任务4）', () => {
   if (appSrc.includes('shutdown.onRequest')) throw new Error('app.js 仍在监听 shutdown.onRequest');
   // 更新安装路径提前进入关闭态，防止 close 钩子卡住 quitAndInstall
   if (!/updater:install[\s\S]{0,200}isShuttingDown = true/.test(mainSrc)) throw new Error('updater:install 未提前置关闭态');
+});
+
+check('v2.7.1：启动加速编排 / 覆盖层融合 / postbuild 清旧包', () => {
+  const appSrc = fs.readFileSync(abs('src/scripts/app.js'), 'utf8');
+  const splashSrc = fs.readFileSync(abs('src/scripts/splash.js'), 'utf8');
+  // 真实进度绑定：app 初始化完成派发事件，splash 监听收尾
+  if (!appSrc.includes("new CustomEvent('trim:boot-ready')")) throw new Error('app.js 未派发 trim:boot-ready');
+  if (!splashSrc.includes("addEventListener('trim:boot-ready'")) throw new Error('splash.js 未监听 trim:boot-ready');
+  if (!splashSrc.includes('PROGRESS_CAP')) throw new Error('splash.js 缺少真实进度上限（92% 等就绪）');
+  // 覆盖层同色融合：main.js 提供 splash:overlay，preload 暴露，splash 首尾调用
+  const mainSrc = fs.readFileSync(abs('main.js'), 'utf8');
+  const preloadSrc = fs.readFileSync(abs('preload.js'), 'utf8');
+  for (const [src, name] of [[mainSrc, 'main.js'], [preloadSrc, 'preload.js'], [splashSrc, 'splash.js']]) {
+    if (!src.includes('splash:overlay') && !(name === 'splash.js' && src.includes('setSplashOverlay'))) {
+      throw new Error(name + ' 缺少 splash:overlay 融合通道');
+    }
+  }
+  // postbuild 清旧包：脚本接线 + 当前版本保护
+  const pkg = JSON.parse(fs.readFileSync(abs('package.json'), 'utf8'));
+  if (pkg.scripts.postbuild !== 'node scripts/clean-old-packages.js') throw new Error('postbuild 钩子未接线 clean-old-packages');
+  const cleanSrc = fs.readFileSync(abs('scripts/clean-old-packages.js'), 'utf8');
+  if (!cleanSrc.includes('m[2] === CURRENT')) throw new Error('clean-old-packages 缺少当前版本保护');
+  if (!cleanSrc.includes('SendToRecycleBin')) throw new Error('clean-old-packages 应优先回收站');
 });
 
 // ==================== 汇总 ====================

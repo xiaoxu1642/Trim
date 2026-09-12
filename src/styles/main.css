@@ -8169,12 +8169,13 @@ body.electron-mica[data-skin="glass"]:not(.win-maximized) .sidebar {
   flex: none;
 }
 
-/* 启动页（v2.7.0）：覆盖全窗，WebGL 流线背景 + Trim FLIP 落位标题栏 */
+/* 启动页（v2.7.0）：覆盖全窗。底色必须透明——不透明底会让「主页内容渐显」失效，
+   进入过渡时靠 .splash-bg（不透明渐变）淡出露出主界面，Trim 平移与内容渐显同步进行 */
 .splash-overlay {
   position: fixed;
   inset: 0;
   z-index: 9999;
-  background: #FBFAFF;
+  background: transparent;
 }
 .splash-overlay .splash-bg {
   position: absolute;

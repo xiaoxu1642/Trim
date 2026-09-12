@@ -1008,6 +1008,23 @@ handleSafe('window:update-overlay', () => {
   }
 });
 
+// v2.7.1：启动页期间把原生标题栏覆盖层背景临时换成启动页渐变顶色。
+// titleBarOverlay 是 Windows 在非客户区绘制的原生控件，层级永远高于网页内容，
+// DOM（无论 z-index 多大）都盖不住它——所以思路不是「覆盖」而是「同色融合」：
+// 启动页把右上角区域染成同一色调，视觉上成为启动页的一部分；结束时恢复正式色。
+const SPLASH_OVERLAY_COLOR = '#efedfb'; // 与 .splash-bg 渐变顶色一致（main.css）
+handleSafe('splash:overlay', (_, { active } = {}) => {
+  try {
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    mainWindow.setTitleBarOverlay(active
+      ? { color: SPLASH_OVERLAY_COLOR, symbolColor: TITLEBAR_OVERLAY.symbolColor, height: TITLEBAR_OVERLAY.height }
+      : TITLEBAR_OVERLAY);
+    return true;
+  } catch (e) {
+    return false;
+  }
+});
+
 // 日志
 handleSafe('log:write', (event, { level, message }) => {
   return writeLog(level, message);
