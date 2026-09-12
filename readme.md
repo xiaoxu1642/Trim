@@ -2,7 +2,7 @@
 
 > Trim 是一款 Windows 11 清理与优化小工具，中文界面，原生 Fluent Design 风格。
 > 由小旭个人开发，仅供个人测试交流使用，使用风险请自行承担。
-> 版本 **2.5**，适用 Windows 11 22H2 及以上（已在 27H2 Build 29648 验证），电脑上需要装有 **PowerShell 7**；内存清理功能需要**以管理员身份运行**。
+> 版本 **2.5**，适用 Windows 11 22H2 及以上，电脑上需要装有 **PowerShell 7**；内存清理功能需要**以管理员身份运行**。
 
 ---
 
@@ -172,4 +172,4 @@
 
 - 所有操作记录在 `%APPDATA%\Trim\logs\`，可在「操作日志」页查看和导出；
 - 配置和缓存都在 `%APPDATA%\Trim\` 下（settings.json、paths.json、cleanup、cache 等）；
-- 问题或建议欢迎联系：**1607642197@qq.com**。
+- 问题或建议欢迎提交issues。
