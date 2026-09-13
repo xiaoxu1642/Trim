@@ -383,19 +383,54 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
   // 应用背景图片：body::before 水印式铺底（置于内容之上、弹窗之下）。
   // 批次：雾化度语义反转 —— 入参 opacity 现为「雾化度」（0=零效果纯展示图片，100=雾化效果100%），
   // 图片不透明度 = (100 - 雾化度)/100；旧语义（值=图片不透明度）已在读取侧一次性迁移。
-  function applyBackground(file, opacity) {
+  // 批次：背景视角可调 —— posX/posY 为 0-100 的裁切窗口位置百分比（cover 下只对图片超出
+  // 窗口的那根轴生效），不传回落 50/50（居中，与旧行为一致）。
+  function applyBackground(file, opacity, posX, posY) {
     const root = document.documentElement;
     if (file) {
       const url = file.startsWith('file:') ? file : 'file:///' + String(file).replace(/\\/g, '/').replace(/^\//, '');
       root.style.setProperty('--app-bg-image', `url("${url}")`);
       const fog = opacity == null ? 85 : opacity;
       root.style.setProperty('--app-bg-opacity', String((100 - fog) / 100));
+      const px = clampPercent(posX, 50);
+      const py = clampPercent(posY, 50);
+      root.style.setProperty('--app-bg-position', `${px}% ${py}%`);
       document.body.classList.add('bg-image-on');
     } else {
       root.style.removeProperty('--app-bg-image');
       root.style.removeProperty('--app-bg-opacity');
+      root.style.removeProperty('--app-bg-position');
       document.body.classList.remove('bg-image-on');
     }
+  }
+
+  // 百分比参数钳位：非数值/越界一律收敛到 0-100，异常时取 fallback
+  function clampPercent(v, fallback) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(0, Math.min(100, Math.round(n)));
+  }
+
+  // 批次（v3.0）：背景图切换淡入淡出 —— 先把对应背景层透明度淡到 0，换图后再淡回。
+  // fadeVar：预设层 --preset-bg-fade / 导入层 --app-bg-fade（main.css 乘进 opacity）。
+  // reduce-motion 直接应用（无动画红线）；淡出仍在途时立即换图并淡入，避免连续切换排队卡顿。
+  const BG_FADE_MS = 340; // 与 --duration-slow(320ms) 同步，留少量余量
+  function crossfadeBg(fadeVar, applyFn) {
+    const root = document.documentElement;
+    let reduced = false;
+    try { reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
+    if (reduced) { applyFn(); return; }
+    if (root.style.getPropertyValue(fadeVar) === '0') {
+      applyFn();
+      root.style.setProperty(fadeVar, '1');
+      return;
+    }
+    root.style.setProperty(fadeVar, '0');
+    setTimeout(() => {
+      applyFn();
+      void document.body.offsetWidth; // 强制样式重算：新图先以零透明度渲染，再开始淡入
+      root.style.setProperty(fadeVar, '1');
+    }, BG_FADE_MS);
   }
 
   // 批次：雾化度语义反转迁移 —— 旧值存的是「图片不透明度」（100=纯图），新值为「雾化强度」
@@ -437,7 +472,7 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
           const ap2 = loadAppearance();
           ap2.bgPath = file;
           saveAppearance(ap2);
-          applyBackground(file, ap2.bgOpacity);
+          crossfadeBg('--app-bg-fade', () => applyBackground(file, ap2.bgOpacity, ap2.bgPosX, ap2.bgPosY));
           refreshBgCurrent(ap2);
           renderBgList(ap2);
         });
@@ -451,7 +486,7 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
           if (ap2.bgPath === file) {
             delete ap2.bgPath;
             saveAppearance(ap2);
-            applyBackground(null);
+            crossfadeBg('--app-bg-fade', () => applyBackground(null));
             refreshBgCurrent(ap2);
           }
           renderBgList(ap2);
@@ -467,7 +502,14 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
     const thumb = document.getElementById('bgThumb');
     const slider = document.getElementById('bgOpacity');
     const val = document.getElementById('bgOpacityVal');
+    // 批次：背景视角可调 —— 视角滑块与重置按钮跟「已选图片」同进退
+    const viewRow = document.getElementById('bgViewRow');
+    const posXSlider = document.getElementById('bgPosX');
+    const posYSlider = document.getElementById('bgPosY');
+    const posXVal = document.getElementById('bgPosXVal');
+    const posYVal = document.getElementById('bgPosYVal');
     if (currentRow) currentRow.style.display = ap.bgPath ? 'flex' : 'none';
+    if (viewRow) viewRow.style.display = ap.bgPath ? 'flex' : 'none';
     if (thumb && ap.bgPath) thumb.src = 'file:///' + String(ap.bgPath).replace(/\\/g, '/').replace(/^\//, '');
     if (slider) {
       slider.value = ap.bgOpacity == null ? 85 : ap.bgOpacity;
@@ -475,6 +517,19 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
       window.ds?.slider?.sync?.(slider);
     }
     if (val) val.textContent = (ap.bgOpacity == null ? 85 : ap.bgOpacity) + '%';
+    // 视角滑块同步存储值（缺省 50 = 居中），同样手动同步轨道填充
+    const px = ap.bgPosX == null ? 50 : ap.bgPosX;
+    const py = ap.bgPosY == null ? 50 : ap.bgPosY;
+    if (posXSlider) {
+      posXSlider.value = px;
+      window.ds?.slider?.sync?.(posXSlider);
+    }
+    if (posYSlider) {
+      posYSlider.value = py;
+      window.ds?.slider?.sync?.(posYSlider);
+    }
+    if (posXVal) posXVal.textContent = px + '%';
+    if (posYVal) posYVal.textContent = py + '%';
   }
 
   function initAppearance() {
@@ -606,7 +661,7 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
     // 背景图片
     refreshBgCurrent(ap);
     renderBgList(ap);
-    applyBackground(ap.bgPath, ap.bgOpacity);
+    applyBackground(ap.bgPath, ap.bgOpacity, ap.bgPosX, ap.bgPosY);
     document.getElementById('btnBgImport')?.addEventListener('click', async () => {
       const resp = await window.api?.appearance?.importBg?.();
       if (!resp || resp.canceled) return;
@@ -617,8 +672,11 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
       const ap2 = loadAppearance();
       ap2.bgPath = resp.data.path;
       if (ap2.bgOpacity == null) ap2.bgOpacity = 85;
+      // 新图新视角：换图即把裁切窗口回到居中，避免沿用上一张的取景
+      delete ap2.bgPosX;
+      delete ap2.bgPosY;
       saveAppearance(ap2);
-      applyBackground(ap2.bgPath, ap2.bgOpacity);
+      crossfadeBg('--app-bg-fade', () => applyBackground(ap2.bgPath, ap2.bgOpacity, ap2.bgPosX, ap2.bgPosY));
       refreshBgCurrent(ap2);
       renderBgList(ap2);
       window.app?.toast('success', '背景图片已导入并应用');
@@ -627,7 +685,7 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
       const ap2 = loadAppearance();
       delete ap2.bgPath;
       saveAppearance(ap2);
-      applyBackground(null);
+      crossfadeBg('--app-bg-fade', () => applyBackground(null));
       refreshBgCurrent(ap2);
       window.app?.toast('success', '已清除背景图片');
     });
@@ -645,7 +703,31 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
       const ap2 = loadAppearance();
       ap2.bgOpacity = v;
       saveAppearance(ap2);
-      applyBackground(ap2.bgPath, v);
+      applyBackground(ap2.bgPath, v, ap2.bgPosX, ap2.bgPosY);
+    });
+    // 批次：背景视角可调 —— 水平/垂直位置滑块，拖动即时生效并持久化（0-100 裁切窗口百分比）
+    function bindBgPosSlider(sliderId, valId, storeKey) {
+      const el = document.getElementById(sliderId);
+      el?.addEventListener('input', () => {
+        const v = parseInt(el.value, 10);
+        const val = document.getElementById(valId);
+        if (val) val.textContent = v + '%';
+        const ap2 = loadAppearance();
+        ap2[storeKey] = v;
+        saveAppearance(ap2);
+        applyBackground(ap2.bgPath, ap2.bgOpacity, ap2.bgPosX, ap2.bgPosY);
+      });
+    }
+    bindBgPosSlider('bgPosX', 'bgPosXVal', 'bgPosX');
+    bindBgPosSlider('bgPosY', 'bgPosYVal', 'bgPosY');
+    // 重置视角：回到居中（50/50），与默认行为一致
+    document.getElementById('btnBgViewReset')?.addEventListener('click', () => {
+      const ap2 = loadAppearance();
+      ap2.bgPosX = 50;
+      ap2.bgPosY = 50;
+      saveAppearance(ap2);
+      applyBackground(ap2.bgPath, ap2.bgOpacity, 50, 50);
+      refreshBgCurrent(ap2);
     });
     // 已导入图片列表折叠
     document.getElementById('bgListToggle')?.addEventListener('click', () => {
@@ -663,8 +745,10 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
 
     // ---- UI 设计系统：背景模糊度 + 预设背景（设置页整合4） ----
     // 原「皮肤：经典/液态玻璃」二选一下拉与背景磨砂合并为 0-100% 无级「背景模糊度」滑块：
-    // 0% = 经典不透明面板（无 data-skin）；>0% = 液态玻璃面板，模糊半径按百分比线性缩放
-    // （100% = 26px，与原液态玻璃一致；theme.js 启动期应用共用同一常量约定，改动需两处同步）
+    // >0% = 液态玻璃面板，模糊半径按百分比线性缩放
+    // （100% = 26px，与原液态玻璃一致；theme.js 启动期应用共用同一常量约定，改动需两处同步）。
+    // v3.0 全局玻璃化：0% 仅表示「无磨砂」（移除 data-skin），容器表面仍为玻璃 alpha——
+    // 表面 token 真源（main.css --surface-tint + 统一 alpha 表）本身就是玻璃值，无实心态。
     // 审查 5-5：上限常量收敛到 window.ds（theme.js 同源读取），ds 未加载时退回同值兜底
     const GLASS_MAX_BLUR_PX = window.ds?.GLASS_MAX_BLUR_PX || 26;
     function applyBgBlur(pct) {
@@ -698,7 +782,7 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
       const ap2 = loadAppearance();
       ap2.presetBg = presetBgSelect.value || '';
       saveAppearance(ap2);
-      applyPresetBg(ap2.presetBg);
+      crossfadeBg('--preset-bg-fade', () => applyPresetBg(ap2.presetBg));
     });
     // ==================== 内置实拍壁纸轮换（v2.8.0） ====================
     // 仅 wp-* 实拍壁纸预设参与轮换（渐变/无背景时计时器空转）；默认 10s，可调/可关；
@@ -724,7 +808,7 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
       const ap2 = loadAppearance();
       ap2.presetBg = next;
       saveAppearance(ap2);
-      applyPresetBg(next);
+      crossfadeBg('--preset-bg-fade', () => applyPresetBg(next));
       if (presetBgSelect) presetBgSelect.value = next; // 选择器同步跟随，所见即所得
     }
     function wpSync() {
@@ -735,7 +819,7 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
         const ap2 = loadAppearance();
         ap2.presetBg = WP_LIST[0];
         saveAppearance(ap2);
-        applyPresetBg(WP_LIST[0]);
+        crossfadeBg('--preset-bg-fade', () => applyPresetBg(WP_LIST[0]));
         if (presetBgSelect) presetBgSelect.value = WP_LIST[0];
       }
       wpTimer = setInterval(wpTick, wpIntervalMs());

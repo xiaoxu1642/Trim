@@ -208,7 +208,10 @@ contextBridge.exposeInMainWorld('api', {
     importBg: () => ipcRenderer.invoke('appearance:bg-import'),
     deleteBg: (file) => ipcRenderer.invoke('appearance:bg-delete', { file }),
     listBg: () => ipcRenderer.invoke('appearance:bg-list'),
-    openBgDir: () => ipcRenderer.invoke('appearance:bg-open-dir')
+    openBgDir: () => ipcRenderer.invoke('appearance:bg-open-dir'),
+    // 专家模式（v3.0 默认应用接管）：appearance.json 主进程真源，默认关闭
+    getExpert: () => ipcRenderer.invoke('appearance:get-expert'),
+    setExpert: (expertMode) => ipcRenderer.invoke('appearance:set-expert', { expertMode })
   },
 
   // AI 简介获取（按模块隔离：电脑优化中心 / 启动项管理 / 右键管理 各自使用所选模型）
@@ -304,6 +307,25 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.on('maintenance:output', handler);
       return () => ipcRenderer.removeListener('maintenance:output', handler);
     }
+  },
+
+  // 默认应用接管（v3.0）：渲染层只传受支持的 key/progId，命令原文在主进程数据文件
+  defaultapps: {
+    status: () => ipcRenderer.invoke('defaultapps:status'),
+    listPrograms: () => ipcRenderer.invoke('defaultapps:list-programs'),
+    applyXml: (entries) => ipcRenderer.invoke('defaultapps:apply-xml', { entries }),
+    removeXmlPolicy: () => ipcRenderer.invoke('defaultapps:remove-xml-policy'),
+    setUcpd: (disable, entries, originalStart) => ipcRenderer.invoke('defaultapps:set-ucpd', { disable, entries, originalStart }),
+    writeClass: (entries) => ipcRenderer.invoke('defaultapps:write-class', { entries }),
+    getState: () => ipcRenderer.invoke('defaultapps:get-state'),
+    clearState: () => ipcRenderer.invoke('defaultapps:clear-state'),
+    openSettings: () => ipcRenderer.invoke('defaultapps:open-settings')
+  },
+
+  // 网络检测（v3.0）：只读采集 + 白名单化一键修复（渲染层只传动作 id）
+  netcheck: {
+    collect: () => ipcRenderer.invoke('netcheck:collect'),
+    repair: (actionId) => ipcRenderer.invoke('netcheck:repair', { actionId })
   },
 
   // 图片预览（磁盘清理 → 文件清理 → 预览图片，独立窗口）

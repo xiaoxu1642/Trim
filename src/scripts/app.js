@@ -172,7 +172,7 @@
       el.classList.toggle('active', el.dataset.page === pageName);
     });
     const speedParent = document.querySelector('[data-nav-toggle="speed"]');
-    if (speedParent) speedParent.classList.toggle('active', pageName === 'netspeed' || pageName === 'diskbench');
+    if (speedParent) speedParent.classList.toggle('active', pageName === 'netspeed' || pageName === 'diskbench' || pageName === 'netcheck');
 
     // 页面进入逻辑
     if (pageName === 'logs') logger.load();
@@ -182,6 +182,10 @@
       window.memoryclean?.loadInfo?.();
     }
     if (pageName === 'settings') { pathbinding.init(); }
+    // 默认应用接管（v3.0）：进入页面刷新关联与状态机
+    if (pageName === 'defaultapps') window.defaultapps?.load?.();
+    // 网络检测（v3.0）：进入页面展示上次结果（不自动重跑）
+    if (pageName === 'netcheck') window.netcheck?.onEnter?.();
     // 实时网速（已并入网络测速页）：进入网络测速页启动采集，离开停止，避免后台空耗 CPU
     if (pageName === 'netspeed') realtime.start();
     else realtime.stop();
@@ -624,6 +628,16 @@
     document.getElementById('btnGitHub')?.addEventListener('click', () => {
       try { window.api?.app?.openExternal('https://github.com/xiaoxu1642/Trim'); } catch (_) {}
     });
+    // v3.1.0：蓝奏云备用下载渠道——先复制提取码（剪贴板写入需窗口在前台，须先于 openExternal）再打开链接
+    document.getElementById('btnLanzou')?.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText('8cpu');
+        window.app?.toast?.('success', '提取码 8cpu 已复制');
+      } catch (e) {
+        window.app?.toast?.('warning', '提取码复制失败，请在网盘页手动输入 8cpu');
+      }
+      try { window.api?.app?.openExternal('https://wwbhm.lanzouq.com/b0rbf8kli'); } catch (_) {}
+    });
     const usageBackdrop = document.getElementById('usageBackdrop');
     usageBackdrop?.addEventListener('click', (e) => {
       if (e.target === usageBackdrop) closeUsageGuide();
@@ -650,6 +664,8 @@
     memoryclean.init();
     startup.init();
     window.maintenance?.init?.();
+    window.defaultapps?.init?.();
+    window.netcheck?.init?.();
 
     // 磁盘清理分段视图：分段栏点击切换（液态滑块由 liquid-glass.js 统一监听跟随）
     document.getElementById('cleanupTabs')?.addEventListener('click', (e) => {

@@ -53,7 +53,8 @@
     try { ap = JSON.parse(localStorage.getItem('winclean-appearance') || '{}') || {}; } catch (e) {}
     // 背景模糊度（设置页整合4）：>0 挂 body[data-skin="glass"] 并按百分比缩放模糊半径
     // （100% = 26px，与原液态玻璃一致；与 pathbinding.js 的 GLASS_MAX_BLUR_PX 共用同一约定，
-    // 改动需两处同步）；0% = 经典不透明面板。旧 skin 键按 glass=100% / classic=0% 折算迁移。
+    // 改动需两处同步）。v3.0 全局玻璃化：0% 仅表示「无磨砂」，容器仍为玻璃 alpha
+    // （表面 token 真源即玻璃值），不再有「经典不透明面板」态。旧 skin 键按 glass=100% / classic=0% 折算迁移。
     let blur = ap.bgBlur;
     if (blur == null) {
       blur = ap.skin === 'glass' ? 100 : 0;

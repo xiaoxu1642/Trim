@@ -38,10 +38,14 @@ const SYNTAX_FILES = [
   'src/main/version-migrations.js',
   'src/scripts-powershell/cleanup-scripts.js',
   'src/scripts-powershell/maintenance-scripts.js',
+  'src/scripts-powershell/defaultapps-scripts.js',
+  'src/scripts-powershell/netcheck-scripts.js',
   'src/scripts/app.js',
   'src/scripts/cleanup.js',
   'src/scripts/cleanup-fallback.generated.js',
   'src/scripts/ds.js',
+  'src/scripts/defaultapps.js',
+  'src/scripts/netcheck.js',
   'src/scripts/optimizer.js',
   'src/scripts/overview.js',
   'src/scripts/pathbinding.js',
@@ -1460,6 +1464,148 @@ check('v2.8.0 环境自适应与焦点差异化（P0-③/P1-④⑥⑦）', () =>
   for (const ch of ['appearance:get-env', 'diag:dwm-conflict']) {
     if (!mainSrc.includes(`'${ch}'`)) throw new Error('main.js 缺少通道 ' + ch);
     if (!preloadSrc.includes(`'${ch}'`)) throw new Error('preload.js 缺少通道 ' + ch);
+  }
+});
+
+// ==================== 9. v3.0.0 批次（白色容器玻璃化收敛 / 启动页修复） ====================
+console.log('[9] v3.0.0 批次检查');
+
+// 防复发断言（docs规范/白色容器玻璃化收敛-方案设计-2026-09-13 第 4 步）：
+// token 真源建立后，main.css 不允许再出现「写死白色容器背景」与「写死 blur 实值」——
+// 白名单仅限：值含 var( 的回退、带「刻意设计」注释的行（独立观感：启动页/预览窗/样块预览等）。
+check('v3.0 玻璃化防复发：无写死白容器背景、无写死 blur（白名单外）', () => {
+  const css = fs.readFileSync(abs('src/styles/main.css'), 'utf8');
+  const lines = css.split('\n');
+  const WHITE = /(?:#fff(?:\b|[0-9a-f])|white\b|rgba\(\s*255\s*,\s*255\s*,\s*255)/i;
+  const offenders = [];
+  // 只取 background 声明的「值本身」（冒号到第一个分号，跨行渐变兼容），
+  // 避免把同一行后续 color:/border-color: 的白色前景误判为容器背景
+  const declRe = /\bbackground(?:-color)?:([^;]+);/g;
+  let m;
+  while ((m = declRe.exec(css)) !== null) {
+    const value = m[1];
+    if (!WHITE.test(value)) continue;
+    if (value.includes('var(')) continue;                    // var() 回退形态豁免
+    const lineNo = css.slice(0, m.index).split('\n').length; // 声明起始行（1 基）
+    // 「刻意设计」白名单：注释可能写在声明前数行（块首/多行声明前），回溯 12 行窗口
+    let marked = false;
+    for (let k = Math.max(0, lineNo - 13); k < lineNo; k++) {
+      if (lines[k] && lines[k].includes('刻意设计')) { marked = true; break; }
+    }
+    if (marked) continue;
+    offenders.push('L' + lineNo + ': ' + lines[lineNo - 1].trim().slice(0, 90));
+  }
+  if (offenders.length) throw new Error('存在写死白色背景（应用 token 或标「刻意设计」）:\n' + offenders.join('\n'));
+
+  const blurOffenders = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!/backdrop-filter:[^;]*blur\(\s*\d/.test(lines[i])) continue;
+    let marked = false;
+    for (let k = Math.max(0, i - 12); k <= i; k++) {
+      if (lines[k] && lines[k].includes('刻意设计')) { marked = true; break; }
+    }
+    if (marked) continue;
+    blurOffenders.push('L' + (i + 1) + ': ' + lines[i].trim().slice(0, 90));
+  }
+  if (blurOffenders.length) throw new Error('存在写死 blur 实值（应用 --glass-blur 派生档位或标「刻意设计」）:\n' + blurOffenders.join('\n'));
+});
+
+check('v3.0 表面参数唯一真源与情境覆写清除', () => {
+  const css = fs.readFileSync(abs('src/styles/main.css'), 'utf8');
+  // 真源要素齐全
+  for (const v of ['--surface-tint:', '--surface-alpha-card:', '--surface-alpha-card-hover:',
+    '--surface-alpha-elevated:', '--surface-alpha-input:', '--knob-bg:',
+    '--glass-blur-faint:', '--glass-blur-soft:', '--glass-blur-mid:', '--glass-blur-strong:']) {
+    if (!css.includes(v)) throw new Error('main.css 缺少表面参数 ' + v);
+  }
+  // 表面 token 必须由参数真源合成（值内引用 --surface-tint），不允许再出现字面量定义
+  const defs = css.match(/^\s*--bg-(?:card|card-hover|elevated|input):[^\n]+/gm) || [];
+  const bad = defs.filter(d => !d.includes('var(--surface-tint)'));
+  if (bad.length) throw new Error('表面 token 出现非合成定义: ' + bad.join(' | '));
+  // 情境覆写不得复活：玻璃皮肤/预设壁纸/Mica 块内不允许再写 --bg-card 系覆写
+  for (const sel of ['body[data-skin="glass"] {', 'body.electron-mica {', 'body.electron-mica.theme-light {']) {
+    const idx = css.indexOf(sel);
+    if (idx === -1) continue;
+    const block = css.slice(idx, css.indexOf('}', idx));
+    if (/--bg-(?:card|card-hover|elevated|input)/.test(block)) throw new Error(sel + ' 内不允许再覆写表面 token');
+  }
+  if (/body\.theme-light\[data-preset-bg\]\s*\{[^}]*--bg-card/.test(css)) {
+    throw new Error('theme-light[data-preset-bg] 的 rgba 覆写应保持删除');
+  }
+});
+
+check('v3.0 启动页进入编排：淡出前解除 fill:both 动画占用', () => {
+  const src = fs.readFileSync(abs('src/scripts/splash.js'), 'utf8');
+  const idx = src.indexOf('function enterApp');
+  if (idx === -1) throw new Error('enterApp 缺失');
+  const seg = src.slice(idx, src.indexOf('function initCanvas') > 0 ? src.indexOf('function initCanvas') : idx + 3000);
+  if (!seg.includes("el.style.animation = 'none'")) {
+    throw new Error('enterApp 淡出未清入场动画——splashFadeIn fill:both 终帧会覆盖内联 opacity:0（进度条残留复现）');
+  }
+  // trimEl FLIP 的 animation 解除必须保留（PowerPoint 平滑落位依赖）
+  if (!seg.includes("trimEl.style.animation = 'none'")) throw new Error('trimEl 的 animation 解除被动到');
+});
+
+check('v3.0 默认应用接管 / 网络检测：页面挂载与 IPC 双侧对齐', () => {
+  const html = fs.readFileSync(abs('src/index.html'), 'utf8');
+  // 导航项与页面容器成对
+  for (const p of ['defaultapps', 'netcheck']) {
+    if (!html.includes(`data-page="${p}"`)) throw new Error('index.html 缺少导航项 data-page=' + p);
+    if (!html.includes(`id="page-${p}"`)) throw new Error('index.html 缺少页面容器 page-' + p);
+  }
+  // netcheck 必须挂在测速父项的子菜单里
+  const submenu = html.slice(html.indexOf('data-nav-submenu="speed"'), html.indexOf('</div>', html.indexOf('data-nav-submenu="speed"')));
+  if (!submenu.includes('data-page="netcheck"')) throw new Error('网络检测未挂进测速父项子菜单');
+  // script 标签（ds.js 之后、app.js 之前）
+  for (const s of ['scripts/defaultapps.js', 'scripts/netcheck.js']) {
+    if (!html.includes(`<script src="${s}"></script>`)) throw new Error('index.html 缺少 script 引用 ' + s);
+  }
+  const appIdx = html.indexOf('<script src="scripts/app.js"></script>');
+  for (const s of ['scripts/defaultapps.js', 'scripts/netcheck.js']) {
+    if (html.indexOf(`<script src="${s}"></script>`) > appIdx) throw new Error(s + ' 必须在 app.js 之前加载');
+  }
+  // preload 命名空间白名单
+  const preloadSrc = fs.readFileSync(abs('preload.js'), 'utf8');
+  for (const ch of ['defaultapps:status', 'defaultapps:list-programs', 'defaultapps:apply-xml',
+    'defaultapps:remove-xml-policy', 'defaultapps:set-ucpd', 'defaultapps:write-class',
+    'defaultapps:get-state', 'defaultapps:open-settings', 'netcheck:collect', 'netcheck:repair',
+    'appearance:get-expert', 'appearance:set-expert']) {
+    if (!preloadSrc.includes(`'${ch}'`)) throw new Error('preload.js 缺少通道 ' + ch);
+  }
+  // main.js 注册对齐 + 只读白名单收口
+  const mainSrc = fs.readFileSync(abs('main.js'), 'utf8');
+  for (const ch of ['defaultapps:status', 'defaultapps:list-programs', 'defaultapps:apply-xml',
+    'defaultapps:remove-xml-policy', 'defaultapps:set-ucpd', 'defaultapps:write-class',
+    'defaultapps:get-state', 'defaultapps:open-settings', 'netcheck:collect', 'netcheck:repair',
+    'appearance:get-expert', 'appearance:set-expert']) {
+    if (!mainSrc.includes(`'${ch}'`)) throw new Error('main.js 缺少通道 ' + ch);
+  }
+  // 写类通道绝不能混入只读白名单
+  const roMatch = mainSrc.match(/const SIDE_EFFECT_FREE = new Set\(\[([\s\S]*?)\]\);/);
+  if (!roMatch) throw new Error('SIDE_EFFECT_FREE 白名单缺失');
+  for (const ch of ['defaultapps:apply-xml', 'defaultapps:set-ucpd', 'defaultapps:write-class',
+    'defaultapps:remove-xml-policy', 'netcheck:repair', 'appearance:set-expert']) {
+    if (roMatch[1].includes(`'${ch}'`)) throw new Error('写通道混入 SIDE_EFFECT_FREE: ' + ch);
+  }
+  // C 路径必须零哈希：类级关联写入，不允许再出现 UserChoice 哈希计算
+  const daSrc = fs.readFileSync(abs('src/scripts-powershell/defaultapps-scripts.js'), 'utf8');
+  if (/Get-UserChoiceHash|MD5CryptoServiceProvider|ToBase64String/.test(daSrc)) {
+    throw new Error('defaultapps-scripts 不应再包含哈希计算（v3.0 已改为类级关联写入）');
+  }
+  if (!daSrc.includes('function writeClass')) throw new Error('defaultapps-scripts 缺少类级关联写入 writeClass');
+  // 渲染层双模式（按文件类型 / 按程序指定）
+  const html2 = html;
+  if (!html2.includes('data-da-mode="program"') || !html2.includes('id="daProgramSelect"')) {
+    throw new Error('默认应用页缺少「按程序指定」模式结构');
+  }
+  // UCPD 不再随批量服务优化项禁用（与「默认应用接管」统一管理）
+  const optSrc = fs.readFileSync(abs('src/scripts-powershell/optimizer-scripts.js'), 'utf8');
+  const svcBlock = optSrc.slice(optSrc.indexOf("id: 'tf_svc_extra5'"), optSrc.indexOf("id: 'tf_ctx_copymove'"));
+  if (/["']UCPD["']/.test(svcBlock)) throw new Error('tf_svc_extra5 仍包含 UCPD（应已剔出）');
+  // 渲染层只传动作 id / 白名单 key：netcheck 修复不得接受渲染层传命令或网卡名
+  const ncMain = mainSrc.slice(mainSrc.indexOf('netcheck:repair'), mainSrc.indexOf('netcheck:repair') + 1600);
+  if (!ncMain.includes('netcheckSnapshot.find') || !ncMain.includes('NETCHECK_SCRIPT.repair')) {
+    throw new Error('netcheck:repair 未走检测快照白名单链路');
   }
 });
 

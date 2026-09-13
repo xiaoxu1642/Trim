@@ -114,6 +114,12 @@
           </svg>
           <span>右键管理</span>
         </button>
+        <button class="nav-item" data-page="defaultapps" data-tip="批量设置浏览器、PDF 等文件的默认打开方式">
+          <svg class="nav-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+            <path d="M17 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm0 16H7V5h10v14zm-5-2.5l4-4-1.4-1.4L12 13.7l-2.6-2.6L8 12.5l4 4z"/>
+          </svg>
+          <span>默认应用接管</span>
+        </button>
         <button class="nav-item nav-parent" data-page="netspeed" data-nav-toggle="speed" data-tip="测速工具">
           <svg class="nav-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
             <path d="M12 3.77L11.25 4.61C11.25 4.61 9.97 6.06 8.68 7.94C7.39 9.82 6 12.07 6 14.23A6 6 0 0 0 12 20.23A6 6 0 0 0 18 14.23C18 12.07 16.61 9.82 15.32 7.94C14.03 6.06 12.75 4.61 12.75 4.61L12 3.77M12 6.9C12.44 7.42 12.84 7.85 13.68 9.07C14.89 10.83 16 13.07 16 14.23C16 16.45 14.22 18.23 12 18.23S8 16.45 8 14.23C8 13.07 9.11 10.83 10.32 9.07C11.16 7.85 11.56 7.42 12 6.9Z"/>
@@ -126,6 +132,7 @@
         <div class="nav-submenu" data-nav-submenu="speed">
           <button class="nav-subitem" data-page="diskbench"><span class="nav-subdot"></span><span>磁盘测速</span></button>
           <button class="nav-subitem active" data-page="netspeed"><span class="nav-subdot"></span><span>网络测速</span></button>
+          <button class="nav-subitem" data-page="netcheck"><span class="nav-subdot"></span><span>网络检测</span></button>
         </div>
         <button class="nav-item" data-page="quickcmds" data-tip="快捷指令">
           <svg class="nav-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
@@ -534,6 +541,84 @@
           </div>
           <pre class="maint-output-body" id="maintOutputBody"></pre>
         </div>
+      </div>
+
+      <!-- 默认应用接管页面（v3.0）：A 引导 + B 策略 XML 主路径 + C 专家模式兜底 -->
+      <div class="page" id="page-defaultapps">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">默认应用接管</h1>
+            <p class="page-subtitle">批量设置浏览器、PDF 等文件的默认打开方式 · 策略接管免重启，专家模式可精确接管</p>
+          </div>
+          <div class="page-actions">
+            <button class="btn btn-accent" id="btnDaApplyXml" data-tip="按下方选择生成官方策略配置（需管理员），下次登录生效">策略接管</button>
+            <button class="btn btn-secondary" id="btnDaRemovePolicy" data-tip="移除策略配置，恢复手动管理">移除策略</button>
+            <button class="btn btn-secondary" id="btnDaOpenSettings" data-tip="打开系统「默认应用」设置页">系统设置</button>
+          </div>
+        </div>
+        <div class="da-banner" id="daStateBanner" style="display:none"><!-- 跨重启状态机提示：由 JS 渲染 --></div>
+        <div class="da-banner da-banner-muted" id="daExpertBanner" style="display:none">
+          <div class="da-banner-copy">
+            <strong>专家模式未开启</strong>
+            <p>普通用户使用「策略接管」即可批量设置默认应用，无需重启。开启专家模式后将显示需管理员权限或重启电脑的高风险操作（如临时禁用系统保护驱动 UCPD）。</p>
+          </div>
+          <!-- v3.1.0：横幅右侧快捷开启，免去跳转设置 → 系统信息 -->
+          <div class="da-banner-actions">
+            <button class="btn btn-secondary btn-small" id="btnDaEnableExpert" data-tip="开启后本页显示「专家模式 · 精确接管」高风险操作；设置 → 系统信息里可随时关闭">开启专家模式</button>
+          </div>
+        </div>
+        <div class="da-grid">
+          <div class="card da-card">
+            <div class="da-card-head">
+              <h3>当前关联</h3>
+              <button class="btn btn-secondary btn-small" id="btnDaRefresh" data-tip="重新读取当前关联与保护驱动状态">刷新</button>
+            </div>
+            <div class="da-status-list" id="daStatusList"><!-- 由 JS 渲染 --></div>
+            <div class="da-ucpd-row" id="daUcpdRow"><!-- UCPD 保护驱动状态：由 JS 渲染 --></div>
+          </div>
+          <div class="card da-card">
+            <div class="da-card-head">
+              <div class="da-mode-tabs" id="daModeTabs" role="tablist">
+                <button class="da-mode-tab active" data-da-mode="type" role="tab" aria-selected="true">按文件类型指定</button>
+                <button class="da-mode-tab" data-da-mode="program" role="tab" aria-selected="false">按程序指定</button>
+              </div>
+            </div>
+            <!-- 按文件类型：每个受支持类型各选一个默认程序 -->
+            <div class="da-pick-list" id="daPickList"><!-- 由 JS 渲染 --></div>
+            <!-- 按程序：选一个程序，把它声明支持的类型批量指定为默认 -->
+            <div class="da-program-panel" id="daProgramPanel" style="display:none">
+              <div class="da-pick-row">
+                <div class="da-status-copy"><strong>选择程序</strong><span>把它声明支持的类型批量指定为默认打开方式</span></div>
+                <select class="field-input da-pick-select" id="daProgramSelect"></select>
+              </div>
+              <div class="da-program-types" id="daProgramTypes"><!-- 覆盖类型复选：由 JS 渲染 --></div>
+              <p class="da-hint" id="daProgramHint"></p>
+            </div>
+            <p class="da-hint">候选列表来自系统注册的程序；「系统设置」可随时改单项目录。</p>
+          </div>
+        </div>
+        <div class="card da-card" id="daExpertPanel" style="display:none">
+          <div class="da-card-head"><h3>专家模式 · 精确接管</h3></div>
+          <p class="da-hint">临时禁用 UCPD 保护驱动并重启后，按上方选择写入<strong>类级关联</strong>（删除 UserChoice + 写类级默认 ProgId，不涉及任何哈希计算）。对 .pdf/.html 等文件类型可靠；http/https 属系统强保护，类级关联可能不生效，此类建议改用「策略接管」。此操作可能被安全软件标记为风险行为，且 Windows 更新可能重新启用驱动使设置回滚。</p>
+          <div class="da-expert-actions">
+            <button class="btn btn-danger" id="btnDaExpertWrite" data-tip="按上方选择执行精确接管（高危，需重启）">执行精确接管</button>
+            <button class="btn btn-secondary" id="btnDaRestoreUcpd" data-tip="重新启用 UCPD 保护驱动（需重启生效）" style="display:none">恢复 UCPD 保护</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 网络检测页面（v3.0）：全程只读采集 + 白名单化一键修复 -->
+      <div class="page" id="page-netcheck">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">网络检测</h1>
+            <p class="page-subtitle">6 项只读网络诊断 · 异常项给出证据与修复建议，可一键修复</p>
+          </div>
+          <div class="page-actions">
+            <button class="btn btn-accent" id="btnNetcheckStart" data-tip="重新执行全部检测项">开始检测</button>
+          </div>
+        </div>
+        <div class="netcheck-list" id="netcheckList"><!-- 检查项行：由 JS 渲染 --></div>
       </div>
 
       <!-- 内存清理页面 -->
@@ -1059,123 +1144,154 @@
           <div class="settings-section settings-appearance-section">
             <h3>显示</h3>
             <div class="appearance-grid">
-              <div class="appearance-card">
-                <!-- 预设主题选择（设置页整合4）：原「皮肤与背景」卡的预设背景收编至此 -->
-                <div class="appearance-sub">
-                  <div class="appearance-sub-head">预设主题选择</div>
-                  <div class="skin-row">
-                    <span class="skin-row-label">预设背景</span>
-                    <select id="presetBgSelect" data-tip="选择内置渐变墙纸或实拍壁纸">
-                      <option value="">无</option>
-                      <option value="aurora">极光 Aurora</option>
-                      <option value="sunset">落日 Sunset</option>
-                      <option value="graphite">石墨 Graphite</option>
-                      <option value="wp-winter">冬日 · 二次元</option>
-                      <option value="wp-mountain">山峰 · 乡村</option>
-                      <option value="wp-gaming">电竞 · 玩趣</option>
-                      <option value="wp-anime">动漫 · 场景</option>
-                      <option value="wp-doll">Doll · 手办</option>
-                    </select>
-                  </div>
-                  <p class="appearance-hint">内置渐变墙纸与实拍壁纸铺于页面底层，可与导入的图片背景叠加使用</p>
+              <!-- 背景与主题合并卡（v3.0）：预设背景与导入背景合二为一，同卡含壁纸轮换与主题颜色 -->
+              <div class="appearance-card appearance-card-wide">
+                <div class="appearance-card-head">
+                  <h4>背景与主题</h4>
+                  <p>预设壁纸、导入图片、自动轮换与界面强调色</p>
                 </div>
-                <!-- 壁纸轮换（v2.8.0）：仅实拍壁纸（wp-*）预设生效，默认 10s，可调/可关 -->
-                <div class="appearance-sub">
-                  <div class="appearance-sub-head">壁纸轮换</div>
-                  <div class="skin-row">
-                    <span class="skin-row-label">自动轮换</span>
-                    <label class="toggle-switch" for="wallpaperRotateToggle" data-tip="在内置实拍壁纸之间自动轮换；选择渐变或无背景时轮换暂停">
-                      <input type="checkbox" id="wallpaperRotateToggle" />
-                      <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                    </label>
+                <div class="appearance-merge-grid">
+                  <div class="appearance-merge-col">
+                    <div class="appearance-sub">
+                      <div class="appearance-sub-head">预设背景</div>
+                      <div class="skin-row">
+                        <span class="skin-row-label">预设壁纸</span>
+                        <select id="presetBgSelect" data-tip="选择内置渐变墙纸或实拍壁纸">
+                          <option value="">无</option>
+                          <option value="aurora">极光 Aurora</option>
+                          <option value="sunset">落日 Sunset</option>
+                          <option value="graphite">石墨 Graphite</option>
+                          <option value="wp-winter">冬日 · 二次元</option>
+                          <option value="wp-mountain">山峰 · 乡村</option>
+                          <option value="wp-gaming">电竞 · 玩趣</option>
+                          <option value="wp-anime">动漫 · 场景</option>
+                          <option value="wp-doll">Doll · 手办</option>
+                        </select>
+                      </div>
+                      <p class="appearance-hint">内置渐变墙纸与实拍壁纸铺于页面底层，可与下方导入的图片叠加使用</p>
+                    </div>
+                    <div class="appearance-sub">
+                      <div class="appearance-sub-head">导入图片</div>
+                      <div class="bg-ops-row">
+                        <button class="btn btn-secondary btn-small" id="btnBgClear">✕ 清除</button>
+                        <button class="btn btn-secondary btn-small" id="btnBgImport">⬆ 导入图片</button>
+                      </div>
+                      <div class="bg-current" id="bgCurrentRow" style="display:none">
+                        <img id="bgThumb" alt="背景预览" />
+                        <div class="bg-opacity-row">
+                          <span class="bg-opacity-label">雾化度</span>
+                          <input type="range" id="bgOpacity" min="0" max="100" value="15" />
+                          <span id="bgOpacityVal">15%</span>
+                        </div>
+                        <!-- 批次：背景视角可调 —— 裁切窗口位置滑块（0%=贴左/顶，100%=贴右/底），默认 50% 居中 -->
+                        <div class="bg-opacity-row bg-view-row">
+                          <span class="bg-opacity-label">水平位置</span>
+                          <input type="range" id="bgPosX" min="0" max="100" value="50" />
+                          <span id="bgPosXVal">50%</span>
+                        </div>
+                        <div class="bg-opacity-row bg-view-row">
+                          <span class="bg-opacity-label">垂直位置</span>
+                          <input type="range" id="bgPosY" min="0" max="100" value="50" />
+                          <span id="bgPosYVal">50%</span>
+                        </div>
+                      </div>
+                      <div class="bg-ops-row" id="bgViewRow" style="display:none">
+                        <button class="btn btn-secondary btn-small" id="btnBgViewReset" data-tip="位置恢复居中">⟲ 重置视角</button>
+                      </div>
+                      <div class="bg-list" id="bgList" style="display:none">
+                        <div class="bg-list-head" id="bgListToggle">已导入的图片（0）<span class="bg-list-chevron">⌄</span></div>
+                        <div class="bg-list-body" id="bgListBody"></div>
+                      </div>
+                      <button class="bg-dir-link btn-link" id="btnOpenBgDir" data-tip="打开背景图片存放目录">图片导入后存放地址</button>
+                    </div>
                   </div>
-                  <div class="skin-row">
-                    <span class="skin-row-label">轮换间隔</span>
-                    <select id="wallpaperIntervalSelect" data-tip="壁纸自动轮换的时间间隔">
-                      <option value="10">10 秒</option>
-                      <option value="30">30 秒</option>
-                      <option value="60">60 秒</option>
-                      <option value="300">5 分钟</option>
-                    </select>
+                  <div class="appearance-merge-col">
+                    <!-- 壁纸轮换（v2.8.0）：仅实拍壁纸（wp-*）预设生效，默认 10s，可调/可关 -->
+                    <div class="appearance-sub">
+                      <div class="appearance-sub-head">壁纸轮换</div>
+                      <div class="skin-row">
+                        <span class="skin-row-label">自动轮换</span>
+                        <label class="toggle-switch" for="wallpaperRotateToggle" data-tip="在内置实拍壁纸之间自动轮换（带淡入淡出过渡）；选择渐变或无背景时轮换暂停">
+                          <input type="checkbox" id="wallpaperRotateToggle" />
+                          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                        </label>
+                      </div>
+                      <div class="skin-row">
+                        <span class="skin-row-label">轮换间隔</span>
+                        <select id="wallpaperIntervalSelect" data-tip="壁纸自动轮换的时间间隔">
+                          <option value="10">10 秒</option>
+                          <option value="30">30 秒</option>
+                          <option value="60">60 秒</option>
+                          <option value="300">5 分钟</option>
+                        </select>
+                      </div>
+                      <p class="appearance-hint">窗口隐藏时自动暂停轮换，省电不打扰</p>
+                    </div>
+                    <!-- 主题颜色选择（设置页整合4）：原「颜色选择」卡收编至此 -->
+                    <div class="appearance-sub">
+                      <div class="appearance-sub-head">主题颜色选择</div>
+                      <div class="accent-row">
+                        <input type="color" id="accentColor" value="#8B8EE0" data-tip="选择强调色" aria-label="选择界面强调色" />
+                        <button class="btn btn-secondary btn-small" id="btnAccentReset" data-tip="恢复默认强调色">恢复默认</button>
+                      </div>
+                      <p class="appearance-hint">强调色管按钮、高亮与选中态</p>
+                    </div>
                   </div>
-                  <p class="appearance-hint">窗口隐藏时自动暂停轮换，省电不打扰</p>
-                </div>
-                <!-- 主题颜色选择（设置页整合4）：原「颜色选择」卡收编至此 -->
-                <div class="appearance-sub">
-                  <div class="appearance-sub-head">主题颜色选择</div>
-                  <div class="accent-row">
-                    <input type="color" id="accentColor" value="#8B8EE0" data-tip="选择强调色" aria-label="选择界面强调色" />
-                    <button class="btn btn-secondary btn-small" id="btnAccentReset" data-tip="恢复默认强调色">恢复默认</button>
-                  </div>
-                  <p class="appearance-hint">强调色管按钮、高亮与选中态</p>
                 </div>
               </div>
-              <div class="appearance-card">
+              <!-- 窗口材质与背景模糊度合并卡（v3.0）：横跨整行，与上方「背景与主题」卡等宽 -->
+              <div class="appearance-card appearance-card-wide">
                 <div class="appearance-card-head">
-                  <h4>窗口材质</h4>
-                  <p>选择窗口背景的视觉材质效果</p>
+                  <h4>窗口材质与背景模糊度</h4>
+                  <p>选择窗口背景的视觉材质效果，并调节面板磨砂强度</p>
                   <!-- 材质总开关（Motion.Lab toggle-flip 滑动开关改）：关闭 = 暂停原生材质并回落不透明表面，记忆所选材质 -->
                   <div class="mt-switch on" id="materialMasterToggle" role="switch" aria-checked="true" tabindex="0"
                        aria-label="窗口材质总开关" data-tip="窗口材质总开关：关闭后窗口恢复不透明表面，重新开启回到所选材质">
                     <span class="mt-switch-track"><span class="mt-switch-knob"></span></span>
                   </div>
                 </div>
-                <div class="material-grid">
-                  <div class="material-card" data-material="mica">
-                    <span class="material-swatch" style="background:#F3F3F3"></span>
-                    <span class="material-name">Mica</span>
-                    <span class="material-desc">柔和云母</span>
+                <div class="appearance-merge-grid">
+                  <div class="appearance-merge-col">
+                    <div class="material-grid">
+                      <div class="material-card" data-material="mica">
+                        <span class="material-swatch" style="background:#F3F3F3"></span>
+                        <span class="material-name">Mica</span>
+                        <span class="material-desc">柔和云母</span>
+                      </div>
+                      <div class="material-card" data-material="mica-alt">
+                        <span class="material-swatch" style="background:#E9E9E9"></span>
+                        <span class="material-name">Mica Alt</span>
+                        <span class="material-desc">层次云母</span>
+                      </div>
+                      <div class="material-card" data-material="acrylic">
+                        <span class="material-swatch" style="background:#D6D6D6"></span>
+                        <span class="material-name">亚克力</span>
+                        <span class="material-desc">磨砂玻璃</span>
+                      </div>
+                      <div class="material-card" data-material="thin-acrylic">
+                        <span class="material-swatch" style="background:#3A3A3A"></span>
+                        <span class="material-name">细亚克力</span>
+                        <span class="material-desc">更透亮的磨砂</span>
+                      </div>
+                    </div>
+                    <!-- 「无材质」卡片已移除（设置页整合4）：与上方材质总开关重复，关闭总开关即无材质观感 -->
+                    <p class="appearance-hint">材质同时作用于主窗口与大模型管理 / 外设优化 / 进程管理窗口；关闭上方总开关即无材质观感；切换后若观感未刷新，重启应用完全生效</p>
                   </div>
-                  <div class="material-card" data-material="mica-alt">
-                    <span class="material-swatch" style="background:#E9E9E9"></span>
-                    <span class="material-name">Mica Alt</span>
-                    <span class="material-desc">层次云母</span>
-                  </div>
-                  <div class="material-card" data-material="acrylic">
-                    <span class="material-swatch" style="background:#D6D6D6"></span>
-                    <span class="material-name">亚克力</span>
-                    <span class="material-desc">磨砂玻璃</span>
-                  </div>
-                  <div class="material-card" data-material="thin-acrylic">
-                    <span class="material-swatch" style="background:#3A3A3A"></span>
-                    <span class="material-name">细亚克力</span>
-                    <span class="material-desc">更透亮的磨砂</span>
+                  <div class="appearance-merge-col">
+                    <!-- 背景模糊度（设置页整合4）：合并原「皮肤：液态玻璃」与背景磨砂强度，0-100% 无级 -->
+                    <div class="appearance-sub">
+                      <div class="appearance-sub-head">背景模糊度</div>
+                      <div class="bg-opacity-row bg-blur-row">
+                        <span class="bg-opacity-label">磨砂强度</span>
+                        <input type="range" id="bgBlur" min="0" max="100" value="0" />
+                        <span id="bgBlurVal">0%</span>
+                      </div>
+                      <p class="appearance-hint">0% 无磨砂，100% 为完整磨砂（界面本身已是玻璃质感）；配合壁纸或导入图片层次感更强</p>
+                    </div>
                   </div>
                 </div>
-                <!-- 「无材质」卡片已移除（设置页整合4）：与上方材质总开关重复，关闭总开关即无材质观感 -->
-                <p class="appearance-hint">材质同时作用于主窗口与大模型管理 / 外设优化 / 进程管理窗口；关闭上方总开关即无材质观感；切换后若观感未刷新，重启应用完全生效</p>
               </div>
-              <div class="appearance-card">
-                <div class="appearance-card-head">
-                  <h4>背景图片</h4>
-                  <p>导入图片作为主页面背景</p>
-                </div>
-                <div class="bg-ops-row">
-                  <button class="btn btn-secondary btn-small" id="btnBgClear">✕ 清除</button>
-                  <button class="btn btn-secondary btn-small" id="btnBgImport">⬆ 导入图片</button>
-                </div>
-                <div class="bg-current" id="bgCurrentRow" style="display:none">
-                  <img id="bgThumb" alt="背景预览" />
-                  <div class="bg-opacity-row">
-                    <span class="bg-opacity-label">雾化度</span>
-                    <input type="range" id="bgOpacity" min="0" max="100" value="15" />
-                    <span id="bgOpacityVal">15%</span>
-                  </div>
-                </div>
-                <div class="bg-list" id="bgList" style="display:none">
-                  <div class="bg-list-head" id="bgListToggle">已导入的图片（0）<span class="bg-list-chevron">⌄</span></div>
-                  <div class="bg-list-body" id="bgListBody"></div>
-                </div>
-                <button class="bg-dir-link btn-link" id="btnOpenBgDir" data-tip="打开背景图片存放目录">图片导入后存放地址</button>
-                <!-- 背景模糊度（设置页整合4）：合并原「皮肤：液态玻璃」与背景磨砂强度，0-100% 无级 -->
-                <div class="bg-opacity-row bg-blur-row">
-                  <span class="bg-opacity-label">背景模糊度</span>
-                  <input type="range" id="bgBlur" min="0" max="100" value="0" />
-                  <span id="bgBlurVal">0%</span>
-                </div>
-                <p class="appearance-hint">0% 关闭液态玻璃面板，100% 为完整磨砂；配合预设背景或导入图片层次感更强</p>
-              </div>
-              <!-- 颜色选择卡已并入上方「预设主题选择」同卡（设置页整合4） -->
+              <!-- 背景图片卡已并入上方「背景与主题」合并卡（v3.0） -->
               <!-- 动效设置（设置页整合4）：合并原「鼠标拖尾」与「切换动效」两张卡 -->
               <div class="appearance-card">
                 <div class="appearance-card-head">
@@ -1229,7 +1345,11 @@
                 <strong>检查更新</strong>
                 <p id="updaterCheckHint">检查 Trim 是否有新版本</p>
               </div>
-              <button class="btn btn-secondary btn-small" id="btnCheckUpdate" type="button">检查更新</button>
+              <!-- v3.1.0：蓝奏云备用下载渠道，点击复制提取码并打开链接 -->
+              <div class="about-row-actions">
+                <button class="btn btn-secondary btn-small" id="btnLanzou" type="button" data-tip="打开蓝奏云下载页，提取码已自动复制">蓝奏云</button>
+                <button class="btn btn-secondary btn-small" id="btnCheckUpdate" type="button">检查更新</button>
+              </div>
             </div>
             <div class="about-row">
               <div class="about-row-copy">
@@ -1255,6 +1375,13 @@
               <span class="settings-collapse-chevron" id="systemInfoChevron">▾</span>
             </div>
             <div class="settings-system-body" id="systemInfoBody">
+              <!-- 专家模式（v3.0 默认应用接管）：appearance.json 主进程真源，默认关闭 -->
+              <div class="info-row"><span>专家模式</span>
+                <label class="toggle-switch" for="expertModeToggle" data-tip="开启后「默认应用接管」页显示需管理员权限或重启电脑的高风险操作；普通用户保持关闭即可">
+                  <input type="checkbox" id="expertModeToggle" />
+                  <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                </label>
+              </div>
               <div class="info-row"><span>应用版本</span><span id="infoVersion">--</span></div>
               <div class="info-row"><span>数据目录</span><span id="infoPortable">--</span></div>
               <div class="info-row" id="diagDwmRow" style="display:none"><span>兼容性提示</span><span id="diagDwmText">--</span></div>
@@ -1325,6 +1452,8 @@
   <script src="scripts/quickcmds.js"></script>
   <script src="scripts/startup.js"></script>
   <script src="scripts/maintenance.js"></script>
+  <script src="scripts/defaultapps.js"></script>
+  <script src="scripts/netcheck.js"></script>
   <!-- 批次：自动更新接入（依赖 modal.js/ds.js 统一弹窗与进度件，须在 app.js 之前） -->
   <script src="scripts/updater-ui.js"></script>
   <script src="scripts/app.js"></script>

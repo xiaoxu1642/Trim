@@ -19,6 +19,9 @@ native-scanner/target/
 # 智能体工作目录
 .workbuddy/
 
+# 方案文档（本地资料，不入库）
+docs规范/
+
 # 日志与临时文件
 *.log
 .tmp-ps-syntax-check.ps1

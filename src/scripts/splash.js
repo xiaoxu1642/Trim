@@ -107,6 +107,10 @@
     var fadeEls = [badgeEl, introEl, progressEl, enterBtn];
     fadeEls.forEach(function (el) {
       if (!el) return;
+      // 关键：先解除入场动画（splashFadeIn ... both）对 opacity 的持续占用——
+      // fill:both 的终帧 opacity:1 优先级高于内联样式，不清掉它下面的 opacity:0
+      // 完全不生效（进度条会残留到 FLIP 结束才随节点移除消失，与 trimEl 同坑）
+      el.style.animation = 'none';
       el.style.transition = 'opacity .45s ease';
       el.style.opacity = '0';
       el.style.pointerEvents = 'none';

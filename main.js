@@ -155,7 +155,10 @@ const SIDE_EFFECT_FREE = new Set([
   'overview:checkup',                                          // 系统体检（v2.6.0 只读诊断）
   'updater:get-mirror',                                        // 更新镜像偏好读取（v2.6.0）
   'appearance:get-env', 'diag:dwm-conflict',                   // 环境状态/注入工具检测结果读取（v2.8.0）
-  'paths:load', 'realtime:adapters', 'realtime:report-list'    // 路径配置/网络适配器/测速报告列表
+  'paths:load', 'realtime:adapters', 'realtime:report-list',   // 路径配置/网络适配器/测速报告列表
+  'defaultapps:status', 'defaultapps:list-programs',           // 默认应用状态/ProgId 枚举（只读采集，v3.0）
+  'defaultapps:get-state',                                     // 默认应用状态机文件读取（v3.0）
+  'netcheck:collect'                                           // 网络检测只读采集（v3.0）
 ]);
 
 function handleSafe(channel, fn) {
@@ -2979,6 +2982,22 @@ handleSafe('appearance:get-material', async () => {
   return { material: ap.material || 'mica', materialEnabled: ap.materialEnabled !== false };
 });
 
+// 专家模式（v3.0 默认应用接管）：appearance.json 主进程真源，默认关闭。
+// 渲染层 localStorage 仅作镜像显示；高危操作（UCPD/策略键）由主进程另行校验权限，
+// 该开关只控制页面上高风险入口的可见性。
+handleSafe('appearance:get-expert', async () => {
+  const ap = loadAppearance();
+  return { expertMode: ap.expertMode === true };
+});
+
+handleSafe('appearance:set-expert', async (event, { expertMode } = {}) => {
+  const ap = loadAppearance();
+  ap.expertMode = expertMode === true;
+  saveAppearance(ap);
+  writeLog('info', `专家模式已${ap.expertMode ? '开启' : '关闭'}`);
+  return { success: true, expertMode: ap.expertMode };
+});
+
 // 把原生材质应用到全部存活窗口；单窗失败不影响其余窗口与持久化
 //（Win11 27H2 运行中重设可能不生效，重启后由构造参数保证最终一致）
 function applyNativeMaterialAll(native) {
@@ -5549,6 +5568,301 @@ handleSafe('maintenance:run', async (event, { taskId } = {}) => {
     return { success: false, message: e.message, data: { taskId, result: 'error', output: lines.join('\n') } };
   } finally {
     maintenanceRunning = null;
+    try { fs.unlinkSync(scriptPath); } catch (e) {}
+  }
+});
+
+// ==================== 默认应用接管 IPC（v3.0） ====================
+// 三条路径：A 引导（纯渲染层）/ B 策略 XML（HKLM，需管理员）/ C 专家模式（UCPD + UserChoice 哈希）。
+// 数据即白名单：渲染层只传受支持的 key/progId（defaultapps-scripts.validateEntries 校验），
+// 命令原文全部由 defaultapps-scripts.js 生成。跨重启状态机落 defaultapps-state.json（原子写）。
+const DEFAULTAPPS_SCRIPT = require('./src/scripts-powershell/defaultapps-scripts');
+const DEFAULTAPPS_STATE_FILE = path.join(APP_DATA_DIR, 'defaultapps-state.json');
+const DEFAULTAPPS_XML_DIR = path.join(APP_DATA_DIR, 'defaultapps');
+
+function loadDefaultAppsState() {
+  try {
+    return JSON.parse(fs.readFileSync(DEFAULTAPPS_STATE_FILE, 'utf8')) || {};
+  } catch (e) { return {}; }
+}
+
+function saveDefaultAppsState(state) {
+  try { SECURITY.atomicWriteJson(DEFAULTAPPS_STATE_FILE, state); } catch (e) {
+    writeLog('error', `默认应用状态写入失败: ${e.message}`);
+  }
+}
+
+// UCPD 当前 Start 值（主进程自查，写入前 fail-closed：UCPD 未禁用时拒绝写 UserChoice）
+function readUcpdStart() {
+  try {
+    const out = spawnSync('reg', ['query', 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\UCPD', '/v', 'Start'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+    if (out.status === 0) {
+      const m = String(out.stdout).match(/Start\s+REG_DWORD\s+0x([0-9a-f]+)/i);
+      if (m) return parseInt(m[1], 16);
+    }
+  } catch (e) {}
+  return null;
+}
+
+// 状态解析：把跨重启的 phase 与系统实况对齐（UCPD 复活检测 / 恢复完成确认）
+function resolveDefaultAppsState() {
+  const st = loadDefaultAppsState();
+  const start = readUcpdStart();
+  if (st.phase === 'AWAIT_REBOOT1' && start === 4) {
+    st.readyToWrite = true; // UCPD 已确认为禁用，可以继续写入
+  }
+  if (st.phase === 'AWAIT_REBOOT1' && start !== 4 && st.disableRequested) {
+    st.ucpdAlive = true;    // Windows 更新可能复活了 UCPD，页面顶部提示重做
+  }
+  if (st.phase === 'AWAIT_REBOOT2' && start !== 4) {
+    st.phase = 'DONE';      // 恢复重启已完成，保护已回归
+    st.doneAt = Date.now();
+    saveDefaultAppsState(st);
+  }
+  st.ucpdStart = start;
+  return st;
+}
+
+handleSafe('defaultapps:status', async () => {
+  const scriptPath = writeTempScript(DEFAULTAPPS_SCRIPT.status());
+  try {
+    const { stdout, code, stderr } = await runPowerShellFile(scriptPath, { timeout: 30000 });
+    if (code !== 0 || !stdout.trim()) return { success: false, message: stderr || '状态查询失败' };
+    const data = JSON.parse(stdout.trim().split('\n').filter(l => l.trim().startsWith('{')).pop());
+    return { success: true, data, state: resolveDefaultAppsState() };
+  } catch (e) {
+    return { success: false, message: e.message };
+  } finally {
+    try { fs.unlinkSync(scriptPath); } catch (e) {}
+  }
+});
+
+handleSafe('defaultapps:list-programs', async () => {
+  const scriptPath = writeTempScript(DEFAULTAPPS_SCRIPT.listPrograms());
+  try {
+    const { stdout, code, stderr } = await runPowerShellFile(scriptPath, { timeout: 45000 });
+    if (code !== 0 || !stdout.trim()) return { success: false, message: stderr || '程序枚举失败' };
+    const data = JSON.parse(stdout.trim().split('\n').filter(l => l.trim().startsWith('{')).pop());
+    return { success: true, data };
+  } catch (e) {
+    return { success: false, message: e.message };
+  } finally {
+    try { fs.unlinkSync(scriptPath); } catch (e) {}
+  }
+});
+
+handleSafe('defaultapps:apply-xml', async (event, { entries } = {}) => {
+  let items;
+  try { items = DEFAULTAPPS_SCRIPT.validateEntries(entries); } catch (e) {
+    return { success: false, message: e.message };
+  }
+  flushLogSync(); // 危险操作前刷盘：写 HKLM 策略键属系统级变更
+  try {
+    fs.mkdirSync(DEFAULTAPPS_XML_DIR, { recursive: true });
+  } catch (e) {}
+  const xmlPath = path.join(DEFAULTAPPS_XML_DIR, 'DefaultAssociations.xml');
+  const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const xml = '<?xml version="1.0" encoding="UTF-8"?>\r\n<DefaultAssociations>\r\n' +
+    items.map(i => `  <Association Identifier="${esc(i.key)}" ProgId="${esc(i.progId)}" />\r\n`).join('') +
+    '</DefaultAssociations>\r\n';
+  try { fs.writeFileSync(xmlPath, xml, 'utf8'); } catch (e) {
+    return { success: false, message: '策略 XML 写入失败: ' + e.message };
+  }
+  const scriptPath = writeTempScript(DEFAULTAPPS_SCRIPT.applyXml(xmlPath));
+  try {
+    const { stdout, code, stderr } = await runPowerShellFile(scriptPath, { timeout: 30000 });
+    const line = stdout.trim().split('\n').filter(l => l.trim().startsWith('{')).pop();
+    const result = line ? JSON.parse(line) : { ok: false };
+    if (result.ok) {
+      const st = loadDefaultAppsState();
+      st.phase = 'XML_APPLIED';
+      st.xmlPath = xmlPath;
+      st.xmlEntries = items;
+      st.xmlAppliedAt = Date.now();
+      saveDefaultAppsState(st);
+      writeLog('info', `默认应用策略 XML 已应用: ${items.map(i => i.key).join(',')}`);
+      return { success: true, data: { xmlPath } };
+    }
+    if (code !== 0 && stderr && /管理员|administrator|denied|拒绝/i.test(stderr) === false && !result.message) {
+      return { success: false, message: stderr.slice(0, 200), needAdmin: true };
+    }
+    return { success: false, message: result.message || stderr || '策略键写入失败（可能需要管理员权限）', needAdmin: true };
+  } catch (e) {
+    return { success: false, message: e.message, needAdmin: true };
+  } finally {
+    try { fs.unlinkSync(scriptPath); } catch (e) {}
+  }
+});
+
+handleSafe('defaultapps:remove-xml-policy', async () => {
+  flushLogSync();
+  const scriptPath = writeTempScript(DEFAULTAPPS_SCRIPT.removeXmlPolicy());
+  try {
+    const { code, stderr } = await runPowerShellFile(scriptPath, { timeout: 20000 });
+    if (code !== 0) return { success: false, message: stderr || '策略键移除失败' };
+    const st = loadDefaultAppsState();
+    if (st.phase === 'XML_APPLIED') { st.phase = 'IDLE'; st.xmlPath = null; saveDefaultAppsState(st); }
+    writeLog('info', '默认应用策略 XML 已移除');
+    return { success: true };
+  } catch (e) {
+    return { success: false, message: e.message };
+  } finally {
+    try { fs.unlinkSync(scriptPath); } catch (e) {}
+  }
+});
+
+handleSafe('defaultapps:set-ucpd', async (event, { disable, entries, originalStart } = {}) => {
+  if (typeof disable !== 'boolean') return { success: false, message: '参数不合法' };
+  let items = null;
+  if (disable && entries) {
+    try { items = DEFAULTAPPS_SCRIPT.validateEntries(entries); } catch (e) {
+      return { success: false, message: e.message };
+    }
+  }
+  flushLogSync(); // 危险操作前刷盘：禁用/恢复内核过滤驱动属高风险动作
+  const scriptPath = writeTempScript(DEFAULTAPPS_SCRIPT.setUcpd(disable, originalStart));
+  try {
+    const { stdout, code, stderr } = await runPowerShellFile(scriptPath, { timeout: 30000 });
+    const line = stdout.trim().split('\n').filter(l => l.trim().startsWith('{')).pop();
+    const result = line ? JSON.parse(line) : { ok: false };
+    if (!result.ok) return { success: false, message: result.message || stderr || 'UCPD 配置失败', needAdmin: true };
+    const st = loadDefaultAppsState();
+    if (disable) {
+      if (st.ucpdOriginalStart == null && originalStart != null) st.ucpdOriginalStart = originalStart;
+      st.disableRequested = true;
+      if (items) { st.pendingWrites = items; }
+      st.phase = 'AWAIT_REBOOT1';
+    } else {
+      st.userChoseRestore = true;
+      if (st.phase === 'AWAIT_REBOOT1') st.phase = 'ROLLED_BACK'; // 未写入就恢复：直接回滚
+      else st.phase = 'AWAIT_REBOOT2';
+    }
+    st.updatedAt = Date.now();
+    saveDefaultAppsState(st);
+    writeLog('info', `UCPD 已${disable ? '禁用' : '恢复'}（默认应用接管专家模式）`);
+    return { success: true };
+  } catch (e) {
+    return { success: false, message: e.message, needAdmin: true };
+  } finally {
+    try { fs.unlinkSync(scriptPath); } catch (e) {}
+  }
+});
+
+handleSafe('defaultapps:write-class', async (event, { entries } = {}) => {
+  let items;
+  try { items = DEFAULTAPPS_SCRIPT.validateEntries(entries); } catch (e) {
+    return { success: false, message: e.message };
+  }
+  // fail-closed：UCPD 未禁用时删除 UserChoice 会被内核过滤驱动拦截，直接拒绝
+  const ucpd = readUcpdStart();
+  if (ucpd !== 4) {
+    return { success: false, message: 'UCPD 保护驱动未处于禁用状态，无法删除 UserChoice。请先完成专家模式的禁用与重启流程。', ucpdBlocked: true };
+  }
+  flushLogSync();
+  const scriptPath = writeTempScript(DEFAULTAPPS_SCRIPT.writeClass(items));
+  try {
+    const { stdout, stderr } = await runPowerShellFile(scriptPath, { timeout: 60000 });
+    if (!stdout.trim()) return { success: false, message: stderr || '写入无输出' };
+    const data = JSON.parse(stdout.trim().split('\n').filter(l => l.trim().startsWith('[')).pop());
+    const okAll = Array.isArray(data) && data.length > 0 && data.every(r => r.ok);
+    const st = loadDefaultAppsState();
+    if (okAll) {
+      st.phase = 'WRITE_DONE';
+      st.writtenAt = Date.now();
+      saveDefaultAppsState(st);
+    }
+    writeLog(okAll ? 'info' : 'warn', `类级关联写入${okAll ? '完成' : '部分失败'}: ${items.map(i => i.key).join(',')}`);
+    return { success: okAll, data };
+  } catch (e) {
+    return { success: false, message: e.message };
+  } finally {
+    try { fs.unlinkSync(scriptPath); } catch (e) {}
+  }
+});
+
+// 状态机读取（跨重启续接）：渲染层据此渲染「继续写入 / 恢复 UCPD / 重做」等面板
+handleSafe('defaultapps:get-state', async () => {
+  return { success: true, state: resolveDefaultAppsState() };
+});
+
+handleSafe('defaultapps:clear-state', async () => {
+  saveDefaultAppsState({});
+  return { success: true };
+});
+
+// A 路径引导：打开系统「默认应用」设置页（固定 URI，白名单常量，渲染层不可传参）
+handleSafe('defaultapps:open-settings', async () => {
+  try {
+    exec('start "" ms-settings:defaultapps', { windowsHide: true, timeout: 15000 }, (err) => {
+      if (err) writeLog('warn', `打开系统默认应用设置失败: ${err.message}`);
+    });
+    writeLog('info', '已引导打开系统默认应用设置');
+    return { success: true };
+  } catch (e) {
+    return { success: false, message: e.message };
+  }
+});
+
+// ==================== 网络检测 IPC（v3.0） ====================
+// 只读采集单脚本单 JSON；修复动作白名单映射固定命令，唯一可变参数（网卡名/接口索引）
+// 全部来自主进程自己的检测快照，渲染层只传动作 id（安全红线：不接受渲染层拼接任何字符串）。
+const NETCHECK_SCRIPT = require('./src/scripts-powershell/netcheck-scripts');
+const NETCHECK_ADMIN_ACTIONS = new Set(['enable-adapter', 'start-dhcp', 'start-dnscache', 'reset-dns', 'reset-winhttp']);
+let netcheckSnapshot = null; // 最近一次检测的快照（items，含 repair 参数）
+
+async function runNetcheckCollect() {
+  const scriptPath = writeTempScript(NETCHECK_SCRIPT.status());
+  try {
+    const { stdout, code, stderr } = await runPowerShellFile(scriptPath, { timeout: 25000, diagOp: 'netcheck.collect' });
+    if (!stdout.trim()) return { success: false, message: stderr || '网络检测无输出' };
+    const line = stdout.trim().split('\n').filter(l => l.trim().startsWith('{')).pop();
+    const data = JSON.parse(line);
+    if (!data || !Array.isArray(data.items)) return { success: false, message: '网络检测结果格式异常' };
+    netcheckSnapshot = data.items;
+    if (code !== 0) writeLog('warn', `网络检测退出码 ${code}`);
+    return { success: true, data };
+  } catch (e) {
+    return { success: false, message: e.message };
+  } finally {
+    try { fs.unlinkSync(scriptPath); } catch (e) {}
+  }
+}
+
+handleSafe('netcheck:collect', async () => {
+  return runNetcheckCollect();
+});
+
+handleSafe('netcheck:repair', async (event, { actionId } = {}) => {
+  if (typeof actionId !== 'string' || actionId.length > 40) return { success: false, message: '参数不合法' };
+  const item = Array.isArray(netcheckSnapshot)
+    ? netcheckSnapshot.find(it => it && it.repair && it.repair.id === actionId)
+    : null;
+  if (!item || !item.repair) return { success: false, message: '该修复动作不在当前检测快照内，请先重新检测' };
+  let script;
+  try {
+    script = NETCHECK_SCRIPT.repair(actionId, item.repair);
+  } catch (e) {
+    return { success: false, message: e.message };
+  }
+  if (NETCHECK_ADMIN_ACTIONS.has(actionId) && !(await isAdmin())) {
+    return { success: false, needAdmin: true, message: '该修复动作需要管理员权限' };
+  }
+  flushLogSync(); // 危险操作前刷盘：修复动作会改服务/网卡/代理配置（日志不落配置明文）
+  const scriptPath = writeTempScript(script);
+  try {
+    writeLog('info', `网络检测修复开始: ${actionId}`);
+    const { stdout, stderr } = await runPowerShellFile(scriptPath, { timeout: 60000, diagOp: 'netcheck.repair.' + actionId });
+    const line = stdout.trim().split('\n').filter(l => l.trim().startsWith('{')).pop();
+    const fix = line ? JSON.parse(line) : { ok: false, message: stderr || '修复无输出' };
+    // 修复后自动重跑检测（整页快照刷新，其余项也随之更新）
+    const collect = await runNetcheckCollect();
+    if (fix.ok) writeLog('info', `网络检测修复完成: ${actionId}`);
+    else writeLog('warn', `网络检测修复失败: ${actionId} -> ${String(fix.message || '').slice(0, 120)}`);
+    return { success: !!fix.ok, fix, items: collect.success ? collect.data.items : null, message: fix.message };
+  } catch (e) {
+    writeLog('error', `网络检测修复异常: ${actionId} -> ${e.message}`);
+    return { success: false, message: e.message };
+  } finally {
     try { fs.unlinkSync(scriptPath); } catch (e) {}
   }
 });

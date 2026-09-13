@@ -19,19 +19,13 @@
    层级靠 base → surface-1(card) → surface-2(elevated) → surface-3(input) 表达，
    卡片默认无投影，投影只用于弹窗/Toast/下拉浮层。 */
 :root {
-  /* 表面阶梯（碳墨，带蓝调） */
+  /* 表面阶梯（碳墨，带蓝调）——v3.0 全局玻璃化：表面 token 由「表面参数唯一真源」合成，
+     不再有任何不透明的经典实心态；实色回退只保留给 prefers-reduced-transparency 降级块
+     与 win-maximized 最大化护栏（见文档 白色容器玻璃化收敛-方案设计-2026-09-13）。 */
   --bg-base: #0F1115;
   --bg-mica: rgba(15, 17, 21, 0.88);
   --bg-acrylic: rgba(23, 26, 33, 0.72);
-  --bg-card: #171A21;
-  --bg-card-hover: #242936;
-  --bg-elevated: #1D212B;
-  --bg-input: #242936;
   --bg-overlay: rgba(0, 0, 0, 0.55);
-  /* 表面阶梯别名（v2.0 命名，与上方旧名等价，供新组件使用） */
-  --bg-surface-1: #171A21;
-  --bg-surface-2: #1D212B;
-  --bg-surface-3: #242936;
 
   --fg-primary: #F4F6FA;
   --fg-secondary: #C3C9D4;
@@ -77,6 +71,39 @@
   --protected-rgb: 167, 139, 250;
   /* 审查 3-1：不透明表面（prefers-reduced-transparency 降级时玻璃/材质面回退到此色） */
   --surface-solid: #171A21;
+
+  /* ==================== 表面参数唯一真源（v3.0 白色容器玻璃化收敛） ====================
+     「玻璃感」拆成 颜色 × 透明度 两个自由度：--surface-tint 定基色（RGB 三通道），
+     统一 alpha 表定透明度，四个表面 token 全部由参数合成——全仓半透明表面只此一处定义，
+     改观感只动这张表，杜绝情境覆写各写一套 alpha 造成漂移。
+     决议（docs规范/白色容器玻璃化收敛-方案设计-2026-09-13）：
+     ① 三套情境 alpha 统一为一套（0.46/0.62/0.52/0.50）；② 全局玻璃化，玻璃是常态，
+     bgBlur=0 仅表示「无模糊」而非「不透明」。 */
+  --surface-tint: 15 17 21;
+  --surface-alpha-card: 0.46;
+  --surface-alpha-card-hover: 0.62;
+  --surface-alpha-elevated: 0.52;
+  --surface-alpha-input: 0.50;
+  --bg-card: rgb(var(--surface-tint) / var(--surface-alpha-card));
+  --bg-card-hover: rgb(var(--surface-tint) / var(--surface-alpha-card-hover));
+  --bg-elevated: rgb(var(--surface-tint) / var(--surface-alpha-elevated));
+  --bg-input: rgb(var(--surface-tint) / var(--surface-alpha-input));
+  /* 表面阶梯别名（v2.0 命名，与上方等价，供新组件使用） */
+  --bg-surface-1: var(--bg-card);
+  --bg-surface-2: var(--bg-elevated);
+  --bg-surface-3: var(--bg-input);
+  /* 开关/复选圆钮前景（v3.0 收敛：原 3 处写死 white/#ffffff） */
+  --knob-bg: #ffffff;
+
+  /* 玻璃模糊档位（v3.0 收敛写实值）：全部档位由 --glass-blur 派生。
+     --glass-blur 基准 26px（与 ds.GLASS_MAX_BLUR_PX 一致），挂玻璃皮肤后由
+     「背景模糊度」滑块实时改写；未挂皮肤时回落基准值，各档位观感与收敛前一致。
+     faint≈12px / soft≈15.6px（沿用既有 0.6 先例）/ mid≈20px / strong≈40px（弹窗级）。 */
+  --glass-blur: 26px;
+  --glass-blur-faint: calc(var(--glass-blur) * 0.46);
+  --glass-blur-soft: calc(var(--glass-blur) * 0.6);
+  --glass-blur-mid: calc(var(--glass-blur) * 0.77);
+  --glass-blur-strong: calc(var(--glass-blur) * 1.54);
 
   /* 层级：卡片默认无投影，投影仅用于浮层/弹窗/Toast */
   --shadow-flyout: 0 8px 24px rgba(0, 0, 0, 0.5);
@@ -127,19 +154,23 @@
   --fs-meta: calc(12px * var(--font-size-scale, 1));
 }
 
-/* ---------- 浅色模式（v2.0 碳墨浅色：冷灰底 + 白卡表面阶梯）---------- */
+/* ---------- 浅色模式（v2.0 碳墨浅色：冷灰底 + 白卡表面阶梯）----------
+   v3.0 全局玻璃化：表面 token 由「表面参数真源」合成。注意 CSS 自定义属性在
+   声明元素处求值——:root 上的合成结果永远用暗色 tint，浅色必须在 .theme-light
+   里重申 --surface-tint 与四个合成声明，var() 才会按白基色重新解析。 */
 .theme-light {
   --bg-base: #F5F6F8;
   --bg-mica: rgba(245, 246, 248, 0.88);
   --bg-acrylic: rgba(255, 255, 255, 0.72);
-  --bg-card: #FFFFFF;
-  --bg-card-hover: #F0F1F4;
-  --bg-elevated: #F0F1F4;
-  --bg-input: #E9EBEF;
+  --surface-tint: 255 255 255;
+  --bg-card: rgb(var(--surface-tint) / var(--surface-alpha-card));
+  --bg-card-hover: rgb(var(--surface-tint) / var(--surface-alpha-card-hover));
+  --bg-elevated: rgb(var(--surface-tint) / var(--surface-alpha-elevated));
+  --bg-input: rgb(var(--surface-tint) / var(--surface-alpha-input));
+  --bg-surface-1: var(--bg-card);
+  --bg-surface-2: var(--bg-elevated);
+  --bg-surface-3: var(--bg-input);
   --bg-overlay: rgba(20, 24, 40, 0.38);
-  --bg-surface-1: #FFFFFF;
-  --bg-surface-2: #F0F1F4;
-  --bg-surface-3: #E9EBEF;
 
   --fg-primary: #1C1E24;
   --fg-secondary: #4B505B;
@@ -200,27 +231,22 @@
    - 背景模糊度（设置页整合4）：body[data-skin="glass"] 由设置页
      「背景模糊度」滑块驱动（0-100% 无级），模糊半径走 --glass-blur
      随百分比缩放（100% = 26px，与原液态玻璃皮肤观感一致）；0% 时
-     移除 data-skin，回落经典不透明面板。原「皮肤：经典/液态玻璃」
-     二选一下拉已被该滑块取代。
+     移除 data-skin 仅表示「无磨砂」，容器仍为玻璃 alpha（v3.0 全局
+     玻璃化：玻璃是常态，不再有「经典不透明面板」态）。原「皮肤：
+     经典/液态玻璃」二选一下拉已被该滑块取代。
    - 预设背景：body[data-preset-bg="aurora|sunset|graphite"] 选择底层
      渐变墙纸（z-index:-1 垫底，可与上方图片水印叠加，互不冲突）。
    ================================================================ */
 
-/* 玻璃皮肤：调整面板底色的透明度，让背景透出 */
+/* 玻璃皮肤（v3.0 全局玻璃化）：表面 alpha 已由 :root 真源统一供给（玻璃为常态），
+   本块只负责玻璃装饰层——描边/高光/光泽渐变；「背景模糊度」滑块驱动
+   --glass-blur 控制磨砂半径（0% = 无模糊，容器仍为玻璃 alpha）。 */
 body[data-skin="glass"] {
-  --bg-card: rgba(255, 255, 255, 0.06);
-  --bg-card-hover: rgba(255, 255, 255, 0.11);
-  --bg-elevated: rgba(255, 255, 255, 0.08);
-  --bg-input: rgba(255, 255, 255, 0.07);
   --glass-border: rgba(255, 255, 255, 0.16);
   --glass-highlight: rgba(255, 255, 255, 0.20);
   --glass-sheen: linear-gradient(135deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.02) 38%, rgba(255, 255, 255, 0) 55%);
 }
 body.theme-light[data-skin="glass"] {
-  --bg-card: rgba(255, 255, 255, 0.36);
-  --bg-card-hover: rgba(255, 255, 255, 0.54);
-  --bg-elevated: rgba(255, 255, 255, 0.44);
-  --bg-input: rgba(255, 255, 255, 0.40);
   --glass-border: rgba(255, 255, 255, 0.62);
   --glass-highlight: rgba(255, 255, 255, 0.65);
   --glass-sheen: linear-gradient(135deg, rgba(255, 255, 255, 0.48) 0%, rgba(255, 255, 255, 0.10) 40%, rgba(255, 255, 255, 0) 58%);
@@ -272,8 +298,9 @@ body[data-preset-bg] .layout::before {
   pointer-events: none;
   background-size: cover;
   background-position: center;
-  /* v2.0：预设背景整体透明度下调约 15%，确保文字/控件对比度 */
-  opacity: 0.85;
+  /* v2.0：预设背景整体透明度下调约 15%，确保文字/控件对比度
+     v3.0：乘 --preset-bg-fade（pathbinding 切换壁纸时先淡出后淡入）；transition 既有 */
+  opacity: calc(0.85 * var(--preset-bg-fade, 1));
   transition: opacity var(--duration-slow) var(--ease-emphasized);
 }
 body[data-preset-bg="aurora"] .layout::before {
@@ -464,15 +491,13 @@ body {
 /* ---------- 侧边栏（批次：悬浮岛侧边栏 —— 独立悬浮圆角导航卡） ---------- */
 .sidebar {
   width: 232px;
-  /* 岛浮在 bg-base 上，用实体表面 --bg-card 拉开一级明度，不再用 --bg-mica；
-     材质激活时 --bg-card 会被「材质 2.0」段重定义为半透明，岛色由该段接管 */
+  /* v3.0 统一白容器参数（docs规范/系统维护任务卡参数.md）：46% 白玻璃 + 10px 圆角，
+     磨砂由文件末尾「全局白容器统一参数」规则无条件供给；
+     材质激活时不再有 72%/78% 岛底浓度差异（旧方案已删，全局只保留这一套） */
   background: var(--bg-card);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
   /* 原 border-right 改整圈发丝边 */
   border: 1px solid var(--border-default);
-  /* 圆角走 --radius-btn（8px，硬约束上限，刻意不用参考图的大圆角） */
-  border-radius: var(--radius-btn);
+  border-radius: var(--radius-medium);
   box-shadow: var(--shadow-island);
   display: flex;
   flex-direction: column;
@@ -1096,6 +1121,7 @@ body {
   content: '';
   position: absolute;
   inset: 0;
+  /* 刻意设计：进度条流光扫过高光（白色微光属动效前景，非容器表面） */
   background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
   animation: shimmer 2s infinite;
 }
@@ -1279,8 +1305,8 @@ body {
   content: '';
   width: 10px;
   height: 5px;
-  border-left: 2px solid white;
-  border-bottom: 2px solid white;
+  border-left: 2px solid var(--knob-bg);
+  border-bottom: 2px solid var(--knob-bg);
   transform: rotate(-45deg) translate(1px, -1px);
 }
 .checkbox.indeterminate {
@@ -1291,7 +1317,7 @@ body {
   content: '';
   width: 8px;
   height: 2px;
-  background: white;
+  background: var(--knob-bg);
 }
 .checkbox.disabled {
   opacity: 0.35;
@@ -1458,6 +1484,7 @@ body.lg-mode-frost .maint-tab.active {
 body.lg-mode-full .maint-tab.active .maint-tab-count,
 body.lg-mode-standard .maint-tab.active .maint-tab-count,
 body.lg-mode-frost .maint-tab.active .maint-tab-count {
+  /* 刻意设计：液态玻璃标签计数徽章的白色浮起层，属 lg 玻璃装饰体系非容器表面 */
   background: rgba(255, 255, 255, 0.25);
   color: var(--lg-glass-fg);
 }
@@ -1999,7 +2026,7 @@ body.lg-mode-frost .maint-tab.active .maint-tab-count {
 }
 .toggle-switch input:checked + .toggle-track .toggle-thumb {
   transform: translateX(20px);
-  background: #ffffff;
+  background: var(--knob-bg);
 }
 .toggle-switch input:focus-visible + .toggle-track {
   outline: 2px solid var(--accent);
@@ -2051,6 +2078,8 @@ body.lg-mode-frost .maint-tab.active .maint-tab-count {
 .about-row-copy { min-width: 0; }
 .about-row-copy strong { display: block; margin-bottom: 3px; font-size: var(--fs-secondary); font-weight: calc(600 * var(--font-weight-scale, 1)); color: var(--fg-primary); }
 .about-row-copy p { margin: 0; color: var(--fg-tertiary); font-size: var(--fs-meta); line-height: 1.6; user-select: text; }
+/* v3.1.0：一行多个操作按钮（检查更新行的蓝奏云 + 检查更新） */
+.about-row-actions { display: flex; gap: 8px; flex: none; }
 @media (max-width: 720px) {
   .about-row { align-items: flex-start; flex-direction: column; gap: 10px; }
 }
@@ -2064,7 +2093,7 @@ body.lg-mode-frost .maint-tab.active .maint-tab-count {
 .settings-helper { margin: 0 0 12px; color: var(--fg-tertiary); font-size: var(--fs-meta); }
 .settings-section-actions { display: flex; align-items: center; gap: 10px; color: var(--fg-tertiary); font-size: calc(11px * var(--font-size-scale, 1)); white-space: nowrap; }
 .btn-small { min-height: 30px; padding: 6px 10px; font-size: var(--fs-meta); }
-.device-info-table { border: 1px solid var(--border-default); border-radius: var(--radius-small); overflow: hidden; }
+.device-info-table { border: 1px solid var(--border-default); border-radius: var(--radius-medium); overflow: hidden; }
 .device-info-row { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 16px; padding: 11px 13px; border-bottom: 1px solid var(--border-default); align-items: start; }
 .device-info-row:last-child { border-bottom: 0; }
 .device-info-label { color: var(--fg-tertiary); font-weight: calc(600 * var(--font-weight-scale, 1)); }
@@ -2095,7 +2124,7 @@ select.field-input { cursor: pointer; appearance: auto; }
 .benchmark-result-grid strong { color: var(--fg-primary); font-size: var(--fs-section); font-variant-numeric: tabular-nums; }
 .external-test-panel { margin-top: 16px; background: var(--bg-card); border: 1px solid var(--border-default); border-radius: var(--radius-medium); padding: 16px; }
 .external-test-source { margin: -8px 0 12px; color: var(--fg-tertiary); font-size: var(--fs-meta); }
-.external-test-panel iframe { width: 100%; height: 560px; border: 1px solid var(--border-default); border-radius: var(--radius-small); background: white; }
+.external-test-panel iframe { width: 100%; height: 560px; border: 1px solid var(--border-default); border-radius: var(--radius-small); background: var(--surface-solid); }
 .icon-btn { width: 32px; height: 32px; border: 0; border-radius: var(--radius-small); background: transparent; color: var(--fg-secondary); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: background 180ms var(--ease-standard), color 180ms var(--ease-standard); }
 .icon-btn:hover { background: var(--bg-card-hover); color: var(--fg-primary); }
 
@@ -2503,8 +2532,8 @@ select.field-input { cursor: pointer; appearance: auto; }
   align-items: center;
   justify-content: center;
   background: color-mix(in srgb, var(--bg-app) 65%, rgba(0, 0, 0, 0.35));
-  backdrop-filter: blur(12px) saturate(1.05);
-  -webkit-backdrop-filter: blur(12px) saturate(1.05);
+  backdrop-filter: blur(var(--glass-blur-faint)) saturate(1.05);
+  -webkit-backdrop-filter: blur(var(--glass-blur-faint)) saturate(1.05);
   opacity: 0;
   visibility: hidden;
   transition: opacity 200ms var(--ease-standard), visibility 0s linear 200ms;
@@ -2810,8 +2839,8 @@ select.field-input { cursor: pointer; appearance: auto; }
   font-size: var(--fs-secondary);
   min-width: 240px;
   max-width: 360px;
-  backdrop-filter: blur(40px);
-  -webkit-backdrop-filter: blur(40px);
+  backdrop-filter: blur(var(--glass-blur-strong));
+  -webkit-backdrop-filter: blur(var(--glass-blur-strong));
   animation: toastSlideIn var(--duration-base) var(--ease-emphasized);
   pointer-events: auto;
 }
@@ -2938,14 +2967,10 @@ body.electron-mica .layout {
    注意不能用 --bg-card 调配：材质 2.0 段已把它重定义为半透明（rgba(255,255,255,.055)），
    会再次近全透明；必须用未被动过的不透明表面 token --surface-solid。 */
 body.electron-mica:not(.win-maximized) .sidebar {
-  background: color-mix(in srgb, var(--surface-solid) 78%, transparent);
+  /* v3.0 统一白容器参数：岛底一律 46% 白玻璃（--bg-card），删除 78%/72% 浓度差旧方案；
+     磨砂由文件末尾统一规则供给 */
+  background: var(--bg-card);
   border-color: var(--border-default);
-  backdrop-filter: blur(20px) saturate(1.4);
-  -webkit-backdrop-filter: blur(20px) saturate(1.4);
-}
-body.electron-mica.theme-light:not(.win-maximized) .sidebar {
-  background: color-mix(in srgb, #ffffff 72%, transparent);
-  border-color: rgba(20, 24, 40, 0.10);
 }
 /* 最大化：不透明实体，遵守 win-maximized 不透明护栏（--bg-card 在材质下是半透明，同样不可用） */
 body.electron-mica.win-maximized .sidebar {
@@ -3010,6 +3035,7 @@ body.electron-mica[data-material="acrylic"] .main-content::before {
   inset: 0;
   z-index: -1;
   pointer-events: none;
+  /* 刻意设计：acrylic 材质面纱的左上高光渗透渐变（材质观感模拟，非容器表面 token） */
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.02) 34%, transparent 60%),
     radial-gradient(90% 70% at 100% 100%, rgba(255, 255, 255, 0.05) 0%, transparent 55%);
@@ -3187,9 +3213,10 @@ input[type="radio"]:focus-visible {
   gap: 14px;
   align-items: center;
   padding: 8px 10px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 6px;
-  background: var(--bg-secondary);
+  /* v3.0 统一白容器参数：--bg-secondary 为未定义 token（原声明实际失效），按参数文档收敛 */
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-medium);
+  background: var(--bg-card);
 }
 
 .installed-software-row strong {
@@ -3265,8 +3292,8 @@ input[type="radio"]:focus-visible {
   align-items: center;
   justify-content: center;
   animation: fadeIn var(--duration-base) var(--ease-standard);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(var(--glass-blur-faint));
+  -webkit-backdrop-filter: blur(var(--glass-blur-faint));
 }
 
 .preview-modal {
@@ -3723,6 +3750,7 @@ input[type="radio"]:focus-visible {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.45);
+  /* 刻意设计：详情弹窗遮罩仅极轻磨砂（4px），重模糊会喧宾夺主——独立观感，不并入玻璃档位 */
   backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
@@ -4339,8 +4367,7 @@ body.mw-window #pmBody .pm-virtual .xtable-body {
    ================================================================ */
 .electron-mica .titlebar,
 .electron-mica .sidebar {
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
+  /* v3.0：旧的「岛不磨砂」禁令已删——侧边岛纳入全局白容器统一参数（磨砂随滑块联动） */
 }
 
 /* ================================================================
@@ -4591,9 +4618,10 @@ body.mw-window #pmBody .pm-virtual .xtable-body {
   align-items: center;
   gap: 12px;
   padding: 10px 12px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
+  /* v3.0 统一白容器参数（原 --bg-secondary 未定义、声明失效） */
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-medium);
   transition: all var(--duration-base) var(--ease-standard);
 }
 .restore-item:hover {
@@ -4678,8 +4706,8 @@ body.mw-window #pmBody .pm-virtual .xtable-body {
   align-items: center;
   justify-content: center;
   background: color-mix(in srgb, var(--bg-app) 60%, rgba(0, 0, 0, 0.4));
-  backdrop-filter: blur(12px) saturate(1.05);
-  -webkit-backdrop-filter: blur(12px) saturate(1.05);
+  backdrop-filter: blur(var(--glass-blur-faint)) saturate(1.05);
+  -webkit-backdrop-filter: blur(var(--glass-blur-faint)) saturate(1.05);
   animation: fadeIn var(--duration-base) var(--ease-standard);
 }
 
@@ -4787,7 +4815,8 @@ body.mw-window #pmBody .pm-virtual .xtable-body {
   color: var(--fg-secondary);
 }
 .markdown-body th {
-  background: var(--bg-secondary);
+  /* v3.0 统一白容器参数（原 --bg-secondary 未定义、声明失效） */
+  background: var(--bg-card);
   color: var(--fg-primary);
   font-weight: calc(600 * var(--font-weight-scale, 1));
 }
@@ -4958,8 +4987,12 @@ body.mw-window #pmBody .pm-virtual .xtable-body {
   gap: 1px;
   background: var(--border-default);
   border: 1px solid var(--border-default);
-  border-radius: var(--radius-large);
+  /* v3.0：对齐系统维护任务卡参数（docs规范/系统维护任务卡参数.md）——
+     46% 白玻璃底（--bg-card）+ 20px 档磨砂随「背景模糊度」滑块联动，圆角收敛 --radius-medium */
+  border-radius: var(--radius-medium);
   overflow: hidden;
+  -webkit-backdrop-filter: blur(var(--glass-blur-mid)) saturate(1.35);
+  backdrop-filter: blur(var(--glass-blur-mid)) saturate(1.35);
 }
 .device-info-row {
   display: flex;
@@ -5019,9 +5052,10 @@ body.mw-window #pmBody .pm-virtual .xtable-body {
   align-items: center;
   gap: 12px;
   padding: 10px 12px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
+  /* v3.0 统一白容器参数（原 --bg-secondary 未定义、声明失效） */
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-medium);
   transition: all var(--duration-base) var(--ease-standard);
 }
 .startup-item:hover {
@@ -5163,8 +5197,8 @@ body.mw-window #pmBody .pm-virtual .xtable-body {
 /* 右键管理详情弹窗：对齐使用说明弹窗的遮罩与卡片风格 */
 .ctx-detail-backdrop {
   background: color-mix(in srgb, var(--bg-app) 60%, rgba(0, 0, 0, 0.4));
-  backdrop-filter: blur(12px) saturate(1.05);
-  -webkit-backdrop-filter: blur(12px) saturate(1.05);
+  backdrop-filter: blur(var(--glass-blur-faint)) saturate(1.05);
+  -webkit-backdrop-filter: blur(var(--glass-blur-faint)) saturate(1.05);
   z-index: 10000;
   animation: fadeIn var(--duration-base) var(--ease-standard);
 }
@@ -5797,10 +5831,12 @@ body.pv-window {
 .pv-btn {
   min-width: 30px; height: 30px; padding: 0 8px;
   border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 6px;
+  /* 刻意设计：预览窗纯黑底上的白色半透明控件（AGENTS 硬约定：预览窗纯黑底），非容器表面 */
   background: rgba(255, 255, 255, 0.06); color: #fff; font-size: 14px; line-height: 1;
   cursor: pointer;
   transition: background var(--duration-fast) var(--ease-standard);
 }
+/* 刻意设计：预览窗纯黑底控件悬停态（同 .pv-btn，非容器表面） */
 .pv-btn:hover { background: rgba(255, 255, 255, 0.14); }
 .pv-btn.pv-delete { color: #ff6b6b; display: inline-flex; align-items: center; gap: 4px; }
 .pv-btn.pv-delete:hover { background: rgba(255, 80, 80, 0.18); }
@@ -5815,8 +5851,8 @@ body.pv-window {
 /* 右键菜单详情弹窗（ctx-detail-modal） */
 .ctx-detail-backdrop {
   background: color-mix(in srgb, var(--bg-app) 60%, rgba(0, 0, 0, 0.4));
-  backdrop-filter: blur(12px) saturate(1.05);
-  -webkit-backdrop-filter: blur(12px) saturate(1.05);
+  backdrop-filter: blur(var(--glass-blur-faint)) saturate(1.05);
+  -webkit-backdrop-filter: blur(var(--glass-blur-faint)) saturate(1.05);
 }
 .ctx-detail-modal {
   border: 1px solid var(--border-strong);
@@ -6479,6 +6515,20 @@ body.pv-window {
 .appearance-grid > .appearance-card:last-child {
   grid-column: 1 / -1;
 }
+/* 批次（v3.0）：「背景与主题」合并卡 —— 预设背景与导入背景合二为一，横跨整行，
+   内部双列：左列背景（预设/导入/模糊度），右列壁纸轮换与主题颜色 */
+.appearance-card.appearance-card-wide {
+  grid-column: 1 / -1;
+}
+.appearance-merge-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 28px;
+  align-items: start;
+}
+@media (max-width: 1000px) {
+  .appearance-merge-grid { grid-template-columns: 1fr; }
+}
 .appearance-card {
   background: var(--bg-card);
   border: 1px solid var(--border-default);
@@ -6553,6 +6603,9 @@ body.pv-window {
   border-radius: 4px;
   border: 1px solid var(--border-subtle);
 }
+/* 批次：背景视角可调 —— 允许换行，视角两滑块各自独占一行（缩略图旁仍留雾化度行） */
+.bg-current { flex-wrap: wrap; row-gap: 6px; }
+.bg-current .bg-view-row { flex: 1 1 100%; }
 .bg-opacity-row {
   display: flex;
   align-items: center;
@@ -6624,14 +6677,18 @@ body.pv-window {
 }
 .settings-system-section.collapsed .settings-system-body { display: none; }
 
-/* 导入图片叠在预设背景之上，但仍只铺在布局区，不侵入标题栏。 */
+/* 导入图片叠在预设背景之上，但仍只铺在布局区，不侵入标题栏。
+   批次：背景视角可调 —— 裁切窗口位置走 CSS 变量（pathbinding.js 按设置写入），
+   未设置时回落 center，与旧版行为一致 */
 body.bg-image-on .layout::after {
   content: '';
   position: absolute;
   inset: 0;
   z-index: 1;
-  background: var(--app-bg-image, none) center / cover no-repeat;
-  opacity: var(--app-bg-opacity, 0.15);
+  background: var(--app-bg-image, none) var(--app-bg-position, center) / cover no-repeat;
+  /* v3.0：乘 --app-bg-fade（pathbinding 切换/清除导入图时先淡出后淡入） */
+  opacity: calc(var(--app-bg-opacity, 0.15) * var(--app-bg-fade, 1));
+  transition: opacity var(--duration-slow) var(--ease-emphasized);
   pointer-events: none;
 }
 
@@ -6727,18 +6784,22 @@ body.theme-light .path-blocked-tag { background: rgba(var(--warning-rgb), 0.12);
 /* 材质色块：用渐变模拟各材质真实观感（云母柔和 / 层次云母分层 / 磨砂高光 / 透亮深色） */
 .material-card[data-material="mica"] .material-swatch { background: linear-gradient(145deg, #F9F9F9 0%, #E9E9E9 100%); }
 .material-card[data-material="mica-alt"] .material-swatch {
+  /* 刻意设计：mica-alt 材质样块预览渐变（材质观感模拟，非容器表面 token） */
   background:
     linear-gradient(160deg, rgba(255, 255, 255, 0.65) 0%, rgba(255, 255, 255, 0) 45%),
     linear-gradient(145deg, #F2F2F2 0%, #DFDFDF 62%, #D2D2D2 100%);
 }
 .material-card[data-material="acrylic"] .material-swatch {
+  /* 刻意设计：材质样块是「材质效果预览图」，白玻璃观感与轻磨砂为示意所需，独立于玻璃档位 */
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0.08) 40%, transparent 62%),
     linear-gradient(145deg, #DADADA 0%, #BFBFBF 100%);
   background-color: #C9C9C9;
+  /* 刻意设计：材质样块是「材质效果预览图」，白玻璃观感与轻磨砂为示意所需，独立于玻璃档位 */
   backdrop-filter: blur(3px);
 }
 .material-card[data-material="thin-acrylic"] .material-swatch {
+  /* 刻意设计：thin-acrylic 样块预览渐变（同上，示意所需） */
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.28) 0%, transparent 46%),
     linear-gradient(145deg, #5A5A5A 0%, #2E2E2E 100%);
@@ -7158,7 +7219,10 @@ body.theme-light .path-blocked-tag { background: rgba(var(--warning-rgb), 0.12);
 
 /* Appearance controls: keep the selected preset visible behind a readable
    surface, and let the glass skin provide the intended blur/highlight layer. */
-body.theme-light[data-preset-bg] .main-content { background: rgba(245, 246, 248, 0.86); }
+/* v3.0：预设壁纸激活时内容画布必须全透明——壁纸是用户主动设置的背景，
+   画布再压灰底等于遮盖背景（0.86/0.70 两个历史档位均已删除）；
+   文字可读性由各白容器自身的 46% 白玻璃 + 磨砂承担（与导入图片模式同规则） */
+body.theme-light[data-preset-bg] .main-content { background: transparent; }
 body[data-preset-bg] .layout::before { display: block !important; }
 /* （玻璃皮肤磨砂层已合并至 197-228 行的 data-skin="glass" 主块，此处不再重复定义） */
 
@@ -7172,13 +7236,13 @@ body.theme-light .titlebar-title { color: #1c1e24; }
 
 /* Light mode readability: never inherit carbon surfaces or pale foregrounds. */
 body.theme-light { background-color: #f5f6f8; color: #1c1e24; background-image: none !important; }
-body.theme-light .sidebar { background: #ffffff; border-color: rgba(20, 24, 40, 0.12); }
+body.theme-light .sidebar { background: var(--bg-card); border-color: var(--border-default); }
 body.theme-light .main-content { background: #f5f6f8; }
 body.theme-light .nav-item { color: #1c1e24; }
 body.theme-light .nav-item:hover { background: #eef0f4; }
 body.theme-light .nav-item.active { background: rgba(94, 98, 198, 0.12); color: #4f53b4; }
 body.theme-light .nav-icon { color: #505766; }
-body.theme-light .nav-submenu.expanded { background: #ffffff; border-color: rgba(20, 24, 40, 0.12); }
+body.theme-light .nav-submenu.expanded { background: var(--bg-card); border-color: rgba(20, 24, 40, 0.12); }
 body.theme-light .nav-subitem { color: #4b505b; }
 body.theme-light .nav-subitem:hover { background: #eef0f4; color: #1c1e24; }
 body.theme-light .nav-subitem.active { background: rgba(94, 98, 198, 0.12); color: #4f53b4; }
@@ -7197,6 +7261,7 @@ body.theme-light .nav-section-title { color: #626a79; }
 /* 波纹层：必须脱离文档流，否则会成为 .btn 弹性布局的实端子项，
    导致点击瞬间整组按钮重排（见 按钮修复.md）。用 .btn > .btn-ripple
    提升特异性至 (0,2,0)，压过下方 .btn > * 的 position: relative。 */
+/* 刻意设计：按钮波纹反馈层的白色高光，属交互动效非容器表面 */
 .btn > .btn-ripple {
   position: absolute;
   z-index: 0;
@@ -7253,7 +7318,7 @@ body.theme-light .nav-section-title { color: #626a79; }
 }
 
 /* Light mode controls and content keep WCAG-friendly contrast. */
-body.theme-light .btn-secondary { background: #ffffff; border-color: rgba(20, 24, 40, 0.14); color: #1c1e24; }
+body.theme-light .btn-secondary { background: var(--bg-card); border-color: rgba(20, 24, 40, 0.14); color: #1c1e24; }
 body.theme-light .btn-secondary:hover:not(:disabled) { background: #f0f1f4; }
 /* 卡片底色走 token：材质激活时由「材质 2.0」段的 rgba token 接管（半透明玻璃化），
    无材质 / 不支持 DWM 时 token 本身就是不透明色，观感与原 #ffffff 一致（窗口界面升级3）。 */
@@ -7338,19 +7403,14 @@ body.theme-light .mouse-trail-label { color: #1c1e24; }
    仅预设背景存在时生效，不影响无预设时的常规不透明卡片。
    ================================================================ */
 
-/* 1) 设计令牌：内容面板由不透明白改半透明（供 var(--bg-card) 系表面使用，
-      如 .opt-col / .ctx-col 看板列、表格、弹层等）。 */
-body.theme-light[data-preset-bg] {
-  --bg-card: rgba(255, 255, 255, 0.46);
-  --bg-card-hover: rgba(255, 255, 255, 0.66);
-  --bg-elevated: rgba(255, 255, 255, 0.52);
-  --bg-input: rgba(255, 255, 255, 0.50);
-}
+/* 1) 设计令牌：v3.0 全局玻璃化后，:root 真源的表面 token 本身即玻璃值，
+      原 body.theme-light[data-preset-bg] 的一套 rgba 覆写已删除（统一 alpha 表），
+      预设背景下容器自动半透明，无需情境补丁。 */
 
-/* 2) 内容画布：降低预设背景之上的白色覆盖，让主题图在内容区真正透出来
-      （对比原文 0.86/0.82，调至 0.70 兼顾主题可见与文字可读）。 */
+/* 2) 内容画布：v3.0 起全透明（历史 0.86/0.70 档位已删）——
+      用户设置的壁纸/导入图不允许被画布遮盖，容器层次由白玻璃参数承担。 */
 body.theme-light[data-preset-bg] .main-content {
-  background: rgba(245, 246, 248, 0.70);
+  background: transparent;
 }
 
 /* 3) 覆盖 final 视觉层的硬编码白底（.card 等下层 specificity 同为 (0,2,1)，
@@ -7363,9 +7423,9 @@ body.theme-light[data-preset-bg] .settings-section,
 body.theme-light[data-preset-bg] .appearance-card,
 body.theme-light[data-preset-bg] .empty-state,
 body.theme-light[data-preset-bg] .maint-output {
-  background-color: rgba(255, 255, 255, 0.46);
-  -webkit-backdrop-filter: blur(20px) saturate(1.35);
-  backdrop-filter: blur(20px) saturate(1.35);
+  background-color: var(--bg-card);
+  -webkit-backdrop-filter: blur(var(--glass-blur-mid)) saturate(1.35);
+  backdrop-filter: blur(var(--glass-blur-mid)) saturate(1.35);
 }
 
 /* 4) 依赖 var(--bg-card) 令牌的看板/卡片（由上方令牌透明化），补磨砂模糊。 */
@@ -7373,8 +7433,8 @@ body[data-preset-bg] .opt-col,
 body[data-preset-bg] .ctx-col,
 body[data-preset-bg] .optimizer-card,
 body[data-preset-bg] .contextmenu-list {
-  -webkit-backdrop-filter: blur(20px) saturate(1.35);
-  backdrop-filter: blur(20px) saturate(1.35);
+  -webkit-backdrop-filter: blur(var(--glass-blur-mid)) saturate(1.35);
+  backdrop-filter: blur(var(--glass-blur-mid)) saturate(1.35);
 }
 
 /* ================================================================
@@ -7540,22 +7600,17 @@ body.bg-image-on .main-content {
   --lg-glass-highlight: rgba(255, 255, 255, 0.85);
   --lg-glass-fg: var(--fg-primary);
   /* v2.8.0：玻璃质感参数化（原 5 处饱和度/亮度硬编码收敛至此；
-     liquid-glass.js 的 SVG 滤镜链与内联 backdrop 同读这两个变量） */
+     liquid-glass.js 的 SVG 滤镜链与内联 backdrop 同读这两个变量）
+     v3.0：--glass-blur 与全部派生档位已上移 :root 真源（浅暗共用），此处不再重复定义 */
   --glass-satur: 1.65;
   --glass-bright: 1.04;
-  /* 分层模糊：卡片/设置分区等中小面积玻璃面用弱模糊，侧栏等大面保持全量
-     （借鉴成熟窗口美化工具「重背景轻前景」的层次配方） */
-  --glass-blur-soft: calc(var(--glass-blur, 26px) * 0.6);
 }
 
-/* ---------- 材质面纱分级（dark=碳墨浓度 / light=浅玻璃色板） ---------- */
+/* ---------- 材质面纱分级（dark=碳墨浓度 / light=浅玻璃色板） ----------
+   v3.0 全局玻璃化：表面 token 由 :root 真源统一供玻璃 alpha，
+   原 body.electron-mica 的两套 rgba 覆写已删除，材质层只保留 --mat-veil 面纱分级。 */
 body.electron-mica {
   --mat-veil: color-mix(in srgb, var(--bg-base) 55%, transparent);
-  /* token 级玻璃化：卡片/输入/浮层底色改半透明（主窗 + 子窗同时受益） */
-  --bg-card: rgba(255, 255, 255, 0.055);
-  --bg-card-hover: rgba(255, 255, 255, 0.10);
-  --bg-elevated: rgba(30, 34, 44, 0.74);
-  --bg-input: rgba(255, 255, 255, 0.07);
 }
 body.electron-mica[data-material="mica"]         { --mat-veil: color-mix(in srgb, var(--bg-base) 55%, transparent); }
 body.electron-mica[data-material="mica-alt"]     { --mat-veil: color-mix(in srgb, var(--bg-base) 48%, transparent); }
@@ -7565,10 +7620,6 @@ body.electron-mica[data-material="none"]         { --mat-veil: var(--bg-base); }
 
 body.electron-mica.theme-light {
   --mat-veil: rgba(233, 234, 246, 0.62);
-  --bg-card: rgba(255, 255, 255, 0.46);
-  --bg-card-hover: rgba(255, 255, 255, 0.62);
-  --bg-elevated: rgba(255, 255, 255, 0.68);
-  --bg-input: rgba(255, 255, 255, 0.52);
 }
 body.electron-mica.theme-light[data-material="mica"]         { --mat-veil: rgba(233, 234, 246, 0.62); }
 body.electron-mica.theme-light[data-material="mica-alt"]     { --mat-veil: rgba(233, 234, 246, 0.54); }
@@ -7606,26 +7657,26 @@ body.electron-mica .empty-state,
 body.electron-mica .mw-card,
 body.electron-mica .peri-card,
 body.electron-mica .pw-topbar {
-  backdrop-filter: blur(20px) saturate(1.5);
-  -webkit-backdrop-filter: blur(20px) saturate(1.5);
+  backdrop-filter: blur(var(--glass-blur-mid)) saturate(1.5);
+  -webkit-backdrop-filter: blur(var(--glass-blur-mid)) saturate(1.5);
 }
 /* 二级按钮材质下玻璃化（主按钮保留强调色实底，非液态模式不动） */
 body.electron-mica .btn-secondary {
   background: var(--bg-card);
-  backdrop-filter: blur(14px) saturate(1.4);
-  -webkit-backdrop-filter: blur(14px) saturate(1.4);
+  backdrop-filter: blur(var(--glass-blur-soft)) saturate(1.4);
+  -webkit-backdrop-filter: blur(var(--glass-blur-soft)) saturate(1.4);
 }
 /* 浮层：更强磨砂保证可读 */
 body.electron-mica .usage-modal,
 body.electron-mica .ctx-detail-modal {
   background: var(--bg-elevated);
-  backdrop-filter: blur(26px) saturate(1.6);
-  -webkit-backdrop-filter: blur(26px) saturate(1.6);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.6);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.6);
 }
 body.electron-mica .ds-menu,
 body.electron-mica .ds-tooltip {
-  backdrop-filter: blur(22px) saturate(1.55);
-  -webkit-backdrop-filter: blur(22px) saturate(1.55);
+  backdrop-filter: blur(var(--glass-blur-mid)) saturate(1.55);
+  -webkit-backdrop-filter: blur(var(--glass-blur-mid)) saturate(1.55);
 }
 
 /* ================================================================
@@ -7677,13 +7728,13 @@ body.lg-mode-frost .btn-secondary:hover:not(:disabled) {
 body.lg-mode-frost .btn-primary,
 body.lg-mode-frost .btn-accent,
 body.lg-mode-frost .btn-secondary {
-  backdrop-filter: blur(10px) saturate(1.5);
-  -webkit-backdrop-filter: blur(10px) saturate(1.5);
+  backdrop-filter: blur(var(--glass-blur-faint)) saturate(1.5);
+  -webkit-backdrop-filter: blur(var(--glass-blur-faint)) saturate(1.5);
 }
 body.lg-mode-frost .usage-modal,
 body.lg-mode-frost .ctx-detail-modal {
-  backdrop-filter: blur(22px) saturate(1.55);
-  -webkit-backdrop-filter: blur(22px) saturate(1.55);
+  backdrop-filter: blur(var(--glass-blur-mid)) saturate(1.55);
+  -webkit-backdrop-filter: blur(var(--glass-blur-mid)) saturate(1.55);
 }
 
 /* 指针弹性形变（full 档，liquid-glass.js 写入 --lg-* 变量）：
@@ -7706,6 +7757,7 @@ body.lg-mode-full .lg-elastic::before {
   z-index: 0;
   border-radius: inherit;
   pointer-events: none;
+  /* 刻意设计：液态玻璃弹性形变的悬停光泽高光（lg 装饰体系，非容器表面 token） */
   background: linear-gradient(135deg,
     rgba(255, 255, 255, 0) 12%,
     rgba(255, 255, 255, 0.14) 38%,
@@ -7793,12 +7845,14 @@ body.lg-mode-full .usage-modal > *:not(.lg-shimmer-canvas) {
 }
 .filter-tab .maint-tab-count { margin-left: 2px; }
 .filter-tab.active .maint-tab-count {
+  /* 刻意设计：强调色标签上的白色计数徽章浮起层，属徽章前景非容器表面 */
   background: rgba(255, 255, 255, 0.22);
   color: var(--accent-text);
 }
 body.lg-mode-full .filter-tab.active .maint-tab-count,
 body.lg-mode-standard .filter-tab.active .maint-tab-count,
 body.lg-mode-frost .filter-tab.active .maint-tab-count {
+  /* 刻意设计：液态玻璃标签计数徽章的白色浮起层，属 lg 玻璃装饰体系非容器表面 */
   background: rgba(255, 255, 255, 0.25);
   color: var(--lg-glass-fg);
 }
@@ -7866,7 +7920,7 @@ body.lg-mode-frost .filter-tab.active .maint-tab-count {
   transition: transform 350ms cubic-bezier(0.4, 0, 0.2, 1), background 350ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 .mt-switch.on .mt-switch-track { background: var(--accent); border-color: var(--accent); }
-.mt-switch.on .mt-switch-knob { transform: translateX(20px); background: #ffffff; }
+.mt-switch.on .mt-switch-knob { transform: translateX(20px); background: var(--knob-bg); }
 .mt-switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* 总开关关闭：材质卡阵列为「暂停」态，仅可通过开关恢复 */
 .appearance-card.material-off .material-grid { opacity: 0.45; pointer-events: none; }
@@ -7939,6 +7993,181 @@ body.electron-mica[data-skin="glass"]:not(.win-maximized) .sidebar {
   body.electron-mica .sidebar {
     background: var(--surface-solid);
   }
+}
+
+/* ==================== v3.0.0 批次样式（默认应用接管 / 网络检测） ==================== */
+
+/* ---------- 默认应用接管（.da- 域前缀） ---------- */
+.da-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  margin-bottom: 14px;
+  border: 1px solid var(--border-accent);
+  border-radius: var(--radius-btn);
+  background: var(--accent-soft);
+}
+.da-banner-muted { border-color: var(--border-default); background: transparent; }
+.da-banner-copy strong { display: block; font-size: var(--fs-body); color: var(--fg-primary); margin-bottom: 2px; }
+.da-banner-copy p { font-size: var(--fs-secondary); color: var(--fg-secondary); margin: 0; }
+.da-banner-actions { display: flex; gap: 8px; flex: none; }
+
+.da-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.da-card { padding: 16px; }
+.da-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.da-card-head h3 { margin: 0; font-size: var(--fs-section); color: var(--fg-primary); }
+
+/* 双模式切换（按文件类型 / 按程序指定） */
+.da-mode-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-btn);
+  background: var(--bg-input);
+}
+.da-mode-tab {
+  border: none;
+  background: transparent;
+  padding: 5px 12px;
+  border-radius: var(--radius-small);
+  font-size: var(--fs-secondary);
+  font-family: inherit;
+  color: var(--fg-secondary);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+}
+.da-mode-tab.active { background: var(--accent); color: var(--accent-text); }
+.da-mode-tab:focus-visible { outline: 2px solid var(--accent-hover); outline-offset: 2px; }
+.da-program-types { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 10px; }
+.da-program-type {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-secondary);
+  color: var(--fg-primary);
+  cursor: pointer;
+}
+
+.da-status-row, .da-pick-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.da-status-row:last-child, .da-pick-row:last-child { border-bottom: none; }
+.da-status-copy { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.da-status-copy strong { font-size: var(--fs-body); color: var(--fg-primary); font-weight: calc(600 * var(--font-weight-scale, 1)); }
+.da-status-copy span { font-size: var(--fs-meta); color: var(--fg-tertiary); }
+.da-status-value { font-size: var(--fs-secondary); color: var(--fg-secondary); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 55%; }
+.da-status-value.muted { color: var(--fg-tertiary); }
+.da-pick-select { min-width: 0; max-width: 55%; }
+
+.da-ucpd-row { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-subtle); }
+.da-ucpd-line, .da-policy-row { display: flex; align-items: center; gap: 10px; }
+.da-ucpd-hint { font-size: var(--fs-meta); color: var(--fg-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.da-policy-row { margin-top: 8px; }
+.da-hint { font-size: var(--fs-meta); color: var(--fg-tertiary); margin: 6px 0 0; }
+.da-expert-actions { display: flex; gap: 10px; margin-top: 10px; }
+
+/* ---------- 网络检测（netcheck- 域前缀） ---------- */
+.netcheck-list { display: flex; flex-direction: column; gap: 10px; }
+.netcheck-item { padding: 14px 16px; }
+.netcheck-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.netcheck-copy { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.netcheck-copy strong { font-size: var(--fs-body); color: var(--fg-primary); font-weight: calc(600 * var(--font-weight-scale, 1)); }
+.netcheck-copy span { font-size: var(--fs-meta); color: var(--fg-tertiary); }
+
+.netcheck-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 3px 10px;
+  border-radius: var(--radius-badge);
+  font-size: var(--fs-meta);
+  font-weight: calc(500 * var(--font-weight-scale, 1));
+}
+.netcheck-badge.pending { color: var(--fg-tertiary); background: rgba(var(--warning-rgb), 0.10); }
+.netcheck-badge.scanning { color: var(--info); background: rgba(var(--info-rgb), 0.12); }
+.netcheck-badge.ok { color: var(--success); background: var(--success-soft); }
+.netcheck-badge.warn { color: var(--warning); background: var(--warning-soft); }
+.netcheck-badge.fail { color: var(--danger); background: var(--danger-soft); }
+
+.netcheck-spinner {
+  width: 10px;
+  height: 10px;
+  border: 2px solid rgba(var(--info-rgb), 0.35);
+  border-top-color: var(--info);
+  border-radius: 50%;
+  animation: netcheckSpin .8s linear infinite;
+}
+@keyframes netcheckSpin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .netcheck-spinner { animation: none; }
+}
+
+.netcheck-detail { margin-top: 8px; font-size: var(--fs-secondary); color: var(--warning); }
+.netcheck-item:has(.netcheck-badge.fail) .netcheck-detail { color: var(--danger); }
+.netcheck-evidence {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-small);
+  background: rgba(var(--warning-rgb), 0.05);
+}
+.netcheck-evidence-line { font-size: var(--fs-meta); color: var(--fg-secondary); font-variant-numeric: tabular-nums; }
+.netcheck-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.netcheck-links { border-top: 1px solid var(--border-subtle); padding-top: 10px; }
+.netcheck-links-label { font-size: var(--fs-meta); color: var(--fg-tertiary); }
+
+/* 全局白容器统一参数（v3.0，docs规范/系统维护任务卡参数.md）：
+   46% 白玻璃底（--bg-card，各类既有定义）+ --border-default 描边（既有）+
+   --radius-medium(10px) 圆角 + 20px 档磨砂，全部无条件生效（不再依赖壁纸/材质激活），
+   磨砂随「背景模糊度」滑块联动；系统关透明度时由降级块统一停用。
+   本规则位于文件末尾，与各类原有 (0,1,0) 定义同级、按顺序胜出；
+   此处不声明 border/background——ctx-col 的 3px 彩色顶边等特殊描边不受影响。 */
+.card,
+.table-card,
+.summary-card,
+.overview-card,
+.settings-section,
+.appearance-card,
+.empty-state,
+.maint-card,
+.da-card,
+.startup-item,
+.opt-col,
+.ctx-col,
+.optimizer-card,
+.sidebar,
+.filter-tabs {
+  border-radius: var(--radius-medium);
+  -webkit-backdrop-filter: blur(var(--glass-blur-mid)) saturate(1.35);
+  backdrop-filter: blur(var(--glass-blur-mid)) saturate(1.35);
+}
+
+/* v3.0：预设壁纸激活时布局层不再垫色——壁纸之下不允许有任何遮罩，
+   （材质总开关关闭/无壁纸时 body 基色仍由既有规则承担） */
+body[data-preset-bg] .layout {
+  background: transparent;
 }
 
 /* 审查v4-L8：浏览器预览模式全局横幅（preload 缺失的降级路径）。
@@ -8198,6 +8427,7 @@ body.electron-mica[data-skin="glass"]:not(.win-maximized) .sidebar {
 .splash-overlay .splash-vignette {
   position: absolute;
   inset: 0;
+  /* 刻意设计：启动页独立覆盖层（固定浅色配色），白色暗角不随玻璃皮肤联动 */
   background: radial-gradient(ellipse 85% 75% at 50% 46%, rgba(255, 255, 255, .38), rgba(255, 255, 255, 0) 72%);
 }
 .splash-stage {
@@ -8215,11 +8445,13 @@ body.electron-mica[data-skin="glass"]:not(.win-maximized) .sidebar {
   font-size: 13px;
   letter-spacing: .08em;
   color: #6E6A96;
+  /* 刻意设计：启动页独立覆盖层（固定浅色配色），白色徽章底不随玻璃皮肤联动 */
   background: rgba(255, 255, 255, .78);
   border: 1px solid #E3DFF7;
   padding: 7px 18px;
   border-radius: 999px;
   box-shadow: 0 4px 14px -6px rgba(79, 70, 229, .18);
+  /* 刻意设计：启动页是独立覆盖层（固定浅色配色），不随玻璃皮肤/档位联动 */
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   animation: splashFadeIn .6s ease-out both;

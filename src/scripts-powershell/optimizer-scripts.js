@@ -1926,12 +1926,14 @@ const OPTIONS = [
   },
 
   // 服务精简补漏（总表 90/92/93/94/95，5 项）
+  // v3.0：UCPD 已从此项剔除——该驱动是默认应用的防篡改保护层，统一由「默认应用接管」
+  // 页面按专家模式流程管理（临时禁用/恢复），不再随服务批量优化项被永久禁用。
   {
     id: 'tf_svc_extra5', group: '系统服务', title: '传感器与存储感知等服务精简', risk: 'medium',
-    desc: '禁用传感器服务（SensrSvc/SensorDataService）、UCPD 用户选择保护驱动、存储感知（StorSvc，改用手动清理更可控）、应用兼容性助手（PcaSvc）、性能改进建议（WDI 诊断场景）。打印机/扫码仪等外设依赖传感器服务时请勿禁用。',
+    desc: '禁用传感器服务（SensrSvc/SensorDataService）、存储感知（StorSvc，改用手动清理更可控）、应用兼容性助手（PcaSvc）、性能改进建议（WDI 诊断场景）。打印机/扫码仪等外设依赖传感器服务时请勿禁用。UCPD 用户选择保护驱动不再随本项禁用（由「默认应用接管」管理）。',
     steps: [
-      { label: '禁用传感器 / UCPD / 存储感知 / PCA 服务', pwsh: [
-        'foreach ($n in @("SensrSvc","SensorDataService","UCPD","StorSvc","PcaSvc")) { Stop-Service -Name $n -Force -ErrorAction SilentlyContinue; sc.exe config $n start= disabled 2>$null | Out-Null }'
+      { label: '禁用传感器 / 存储感知 / PCA 服务', pwsh: [
+        'foreach ($n in @("SensrSvc","SensorDataService","StorSvc","PcaSvc")) { Stop-Service -Name $n -Force -ErrorAction SilentlyContinue; sc.exe config $n start= disabled 2>$null | Out-Null }'
       ].join('\n') },
       { label: '关闭性能改进建议（WDI 场景）', reg: regBlock({
         'HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows\\WDI': { 'ScenarioExecutionEnabled': 'dword:00000000' }
@@ -1939,7 +1941,7 @@ const OPTIONS = [
     ],
     restore: [
       { label: '还原：服务恢复手动/自动启动', pwsh: [
-        '$map = @{ SensrSvc = 3; SensorDataService = 3; UCPD = 2; StorSvc = 2; PcaSvc = 2 }; foreach ($n in $map.Keys) { $p = "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\$n"; if (Test-Path $p) { New-ItemProperty -Path $p -Name Start -Value $map[$n] -PropertyType DWord -Force | Out-Null } }'
+        '$map = @{ SensrSvc = 3; SensorDataService = 3; StorSvc = 2; PcaSvc = 2 }; foreach ($n in $map.Keys) { $p = "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\$n"; if (Test-Path $p) { New-ItemProperty -Path $p -Name Start -Value $map[$n] -PropertyType DWord -Force | Out-Null } }'
       ].join('\n') },
       { label: '还原：删除 WDI 策略键值', reg: regBlock({
         'HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows\\WDI': { 'ScenarioExecutionEnabled': '-' }
@@ -2166,7 +2168,7 @@ const PROS_CONS = {
   'tf_ai_off': { pros: '策略级关闭 Copilot/Recall/Click to Do/AI Agent 全家桶并禁用 AgentRuntime 服务，释放后台内存与 CPU，隐私零上传。', cons: '无法使用 Windows 内置 AI 功能（Copilot、Recall 等），系统更新后部分策略可能被重置需重新执行。' },
   'tf_perf_misc': { pros: '启动延迟归零、禁用窗口摇晃与失效快捷方式全盘解析，桌面响应更跟手。', cons: '个别依赖 Aero Shake 的使用习惯失效；禁用链接解析后指向网络位置的失效快捷方式打开更慢。' },
   'tf_privacy_extra': { pros: '补漏关闭 Chrome/Firefox/VS 遥测、许可验证上报、新闻兴趣流与步骤记录器，第三方数据外发通道进一步收窄。', cons: '浏览器与 VS 的官方反馈/体验改进计划退出，个别企业环境可能检测策略与预期不符。' },
-  'tf_svc_extra5': { pros: '停用传感器、UCPD、存储感知、PCA 等非必要服务，减少后台进程与定时唤醒。', cons: '亮度自动调节等传感器功能失效，打印机兼容性助手不再提示，外设依赖相关服务时需还原。' },
+  'tf_svc_extra5': { pros: '停用传感器、存储感知、PCA 等非必要服务，减少后台进程与定时唤醒。', cons: '亮度自动调节等传感器功能失效，打印机兼容性助手不再提示，外设依赖相关服务时需还原。' },
   'tf_ctx_copymove': { pros: '右键菜单直达「复制/移动到文件夹」对话框，搬运文件免剪贴粘贴。', cons: '右键菜单新增两项条目，菜单略长；个别精简系统该 CLSID 处理器可能缺失而无效果。' },
   'tf_disk_extra3': { pros: '禁用 NTFS 目录加密、搜索仅限索引位置并释放约 7GB 更新保留存储，磁盘空间与扫描开销双降。', cons: 'EFS 文件加密不可用（BitLocker 不受影响），索引范围外的文件搜索变慢，保留存储还原需 DISM 联网。' },
   'tf_store_autoupdate': { pros: '商店应用不再自动下载更新，消除后台偷跑流量与磁盘 IO，推广弹窗一并关闭。', cons: '应用须手动到商店检查更新，长期不更新可能错过安全补丁与新功能。' }
