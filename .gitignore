@@ -29,3 +29,6 @@ docs规范/
 # 编辑器与工具
 .vscode/
 .vexor/
+
+# 更新历史（本地资料，不入库）
+update history/
