@@ -25,6 +25,11 @@
   const TAB_SELECTOR = '.filter-tab, .maint-tab';
   // 折射玻璃按钮：主题色实底在液态模式下由 CSS 换成浅色玻璃底（main.css 液态玻璃段），JS 负责折射滤镜
   const BUTTON_SELECTOR = '.btn-primary, .btn-accent, .btn-secondary';
+  // v3 评估 C/L3：输入框与下拉纳入折射体系（field-input 同时挂在 input 与 select 上）。
+  // 归类为 control：有折射、无弹性形变（输入中形变会干扰打字）、无 shimmer
+  const INPUT_SELECTOR = '.field-input';
+  // 折射池全量扫描目标（按钮 + 输入控件 + 浮层）
+  const REFRACT_SELECTOR = BUTTON_SELECTOR + ', ' + INPUT_SELECTOR;
   // 悬浮玻璃层：统一弹窗 / 右键详情 / ds 下拉菜单（动态创建，由 MutationObserver 跟挂）。
   // v3.0 修复批次（B4 扩覆盖面）：--bg-card 透明化后 ds-menu 底色改由 CSS floor+blur
   // 兜底（main.css 菜单段），full/standard 档再由本引擎叠加折射与 shimmer
@@ -264,10 +269,12 @@
     };
     let displaced;
     if (aberration) {
+      // v3 评估 B1：色散差值 6%/12% → 15%/25%——原差值在强边缘几乎不可见，
+      // 拉大后 R/B 边缘出现可辨彩虹边（Apple 色散特征），成本不变（仍 3 次位移）
       const passes = [
         ['DISPR', 'CHR', displaceScale],
-        ['DISPG', 'CHG', displaceScale * 0.94],
-        ['DISPB', 'CHB', displaceScale * 0.88]
+        ['DISPG', 'CHG', displaceScale * 0.85],
+        ['DISPB', 'CHB', displaceScale * 0.75]
       ];
       passes.forEach(([res, chan, scale]) => {
         filter.appendChild(fe('feDisplacementMap', { in: 'SRC', in2: 'MAP', scale, xChannelSelector: 'R', yChannelSelector: 'G', result: res }));
@@ -292,11 +299,11 @@
     filter.appendChild(fe('feBlend', { in: 'SMASK', in2: displaced, mode: 'normal', result: 'WITH' }));
     filter.appendChild(fe('feBlend', { in: 'SFADE', in2: 'WITH', mode: 'normal', result: 'BASE' }));
     if (aberration) {
-      // v2.8.0 噪点层（full 专属）：静态 fractalNoise 压到极低 alpha 后 soft-light 叠加，
-      // 补齐玻璃「颗粒质感」（塑料感 → 磨砂玻璃感）。滤镜按 模式x尺寸x圆角 分桶复用，
-      // turbulence 数量有上界；standard/frost 不加——AGENTS 性能护栏刻意不放开
+      // v3 评估 B2：噪点降权（0.06 → 0.02）——噪点是微软 Acrylic 的语汇（MULTIPLY 混合的
+      // 颗粒层），Apple 的 clear glass 是干净的，质感来自折射+镜面+色散；保留极弱一层
+      // 兼顾大平面上的带通抖动抑制，不删（测试断言 feTurbulence 存在）
       filter.appendChild(fe('feTurbulence', { type: 'fractalNoise', baseFrequency: '0.9', numOctaves: '2', seed: '7', stitchTiles: 'stitch', result: 'NOISE' }));
-      filter.appendChild(fe('feColorMatrix', { in: 'NOISE', type: 'matrix', values: '0 0 0 0 0.55  0 0 0 0 0.55  0 0 0 0 0.58  0 0 0 0.06 0', result: 'GRAIN' }));
+      filter.appendChild(fe('feColorMatrix', { in: 'NOISE', type: 'matrix', values: '0 0 0 0 0.55  0 0 0 0 0.55  0 0 0 0 0.58  0 0 0 0.02 0', result: 'GRAIN' }));
       filter.appendChild(fe('feBlend', { in: 'GRAIN', in2: 'BASE', mode: 'soft-light' }));
     }
     return filter;
@@ -333,7 +340,7 @@
   // ============ 元素玻璃挂载（按钮 / 弹层） ============
   function attachGlass(el) {
     if (glassStates.has(el) || !el.isConnected) return;
-    const kind = el.matches(FLOATING_SELECTOR) ? 'floating' : 'button';
+    const kind = el.matches(FLOATING_SELECTOR) ? 'floating' : (el.matches(BUTTON_SELECTOR) ? 'button' : 'control');
     const rect = el.getBoundingClientRect();
     const w = Math.round(rect.width), h = Math.round(rect.height);
     if (!w || !h) return; // 隐藏中（未激活页 / 未显示弹窗），后续扫描再挂
@@ -364,7 +371,8 @@
         el.classList.add('lg-elastic');
         elasticEls.add(el);
       }
-    } else if (mode === 'full') {
+    } else if (kind === 'floating' && mode === 'full') {
+      // control（输入控件）不挂 shimmer：弹层点睛属于浮层，输入区不做焦散
       shimmer.attach(el);
     }
   }
@@ -409,10 +417,10 @@
 
   function attachIfNew(el) {
     if (!el || !el.matches) return;
-    if (el.matches(BUTTON_SELECTOR + ',' + FLOATING_SELECTOR)) attachGlass(el);
+    if (el.matches(REFRACT_SELECTOR + ',' + FLOATING_SELECTOR)) attachGlass(el);
     // 容器节点：扫描其内部（弹窗整体插入 body 时一次带出全部按钮）
     if (el.querySelectorAll) {
-      el.querySelectorAll(BUTTON_SELECTOR + ',' + FLOATING_SELECTOR).forEach(attachGlass);
+      el.querySelectorAll(REFRACT_SELECTOR + ',' + FLOATING_SELECTOR).forEach(attachGlass);
     }
   }
 
@@ -464,7 +472,7 @@
       scanTimer = 0;
       if (mode !== 'full' && mode !== 'standard') return;
       sweepDetached();
-      document.querySelectorAll(BUTTON_SELECTOR + ',' + FLOATING_SELECTOR).forEach((el) => {
+      document.querySelectorAll(REFRACT_SELECTOR + ',' + FLOATING_SELECTOR).forEach((el) => {
         if (!glassStates.has(el)) attachGlass(el);
       });
       // 修复实锤6：折射名额/滤镜桶腾出后，回收此前降级为磨砂的元素
@@ -842,7 +850,7 @@
       // full↔standard 滤镜链不同（色散差异），先清后挂
       if (attachedMode && attachedMode !== mode) detachAllGlass();
       // 不支持折射时滑块/按钮自动退化为磨砂（placeThumb / attachGlass 内处理）
-      document.querySelectorAll(BUTTON_SELECTOR + ',' + FLOATING_SELECTOR).forEach(attachGlass);
+      document.querySelectorAll(REFRACT_SELECTOR + ',' + FLOATING_SELECTOR).forEach(attachGlass);
       attachedMode = mode;
     }
     refreshBars(false);
@@ -941,7 +949,7 @@
 
     mountAll();
     if (mode === 'full' || mode === 'standard') {
-      document.querySelectorAll(BUTTON_SELECTOR + ',' + FLOATING_SELECTOR).forEach(attachGlass);
+      document.querySelectorAll(REFRACT_SELECTOR + ',' + FLOATING_SELECTOR).forEach(attachGlass);
       attachedMode = mode;
     }
     states.forEach((state) => {
