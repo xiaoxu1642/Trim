@@ -12,7 +12,7 @@
 //   - 高光：独立 specular 贴图在滤镜链内合成，参考 liquid实现2
 //   - 指针弹性形变：边缘激活区内的方向性缩放 + 平移，参考 liquid实现3
 // 能力检测失败（backdrop-filter 不支持引用 SVG 滤镜）自动降级 frost。
-// 性能护栏：贴图/滤镜按尺寸缓存复用；单元素折射有面积预算（420×420 当量）；
+// 性能护栏：贴图/滤镜按尺寸缓存复用；折射按环带像素量计费 + 面积兜底（B2）；
 //           折射元素数量与滤镜桶数量有上限；prefers-reduced-motion 时禁用指针形变与 WebGL 动画。
 (function () {
   'use strict';
@@ -31,11 +31,22 @@
   const FLOATING_SELECTOR = '.usage-modal, .ctx-detail-modal, .ds-menu';
   // 折射元素上限：滤镜链是像素级操作，数量失控会掉帧，超出的退化为磨砂
   const MAX_REFRACT = 28;
-  // 折射像素预算（B3 环带计费）：单元素 w×h ≤ 420×420 = 176400。
-  // 位移贴图只在边缘环带非零，但 feDisplacementMap 仍按元素整面积处理——按「面积」
-  // 计费才是诚实成本。同预算下 800×200 这类宽面板（工具行/横幅）与 420 方框等价，
-  // 不再因单边超 420 一刀切退化纯 blur（Apple 的玻璃主体恰是大面板）
-  const MAX_REFRACT_AREA = 420 * 420;
+  // 折射预算（v2 评估 B2 环带计费）：位移贴图只在边缘环带非零，主计费按环带像素量
+  // ring ≈ 2×(w+h)×bezel（bezel 与 buildMaps 同式）——宽工具行/大卡片/弹层与方框同权，
+  // 不再因整面积超限一刀切退化纯 blur（Apple 的玻璃主体恰是大面板）。
+  // 但 feDisplacementMap 仍按元素整面积处理，故保留面积兜底防极端大面板
+  const RING_BEZEL_MAX = 26;        // 与 buildMaps 的 bezel 上限一致
+  const MAX_RING_PIXELS = 96000;    // 环带预算：420² 方框≈44k、1200×160 工具行≈24k、560×420 弹层≈18k
+  const MAX_REFRACT_AREA = 352800;  // 面积兜底（≈594²）：主窗级整面板仍被挡
+
+  function ringBezel(w, h, radius) {
+    const r = Math.min(radius, w / 2, h / 2);
+    return Math.max(3, Math.min(r * 0.9, Math.min(w, h) * 0.4, RING_BEZEL_MAX));
+  }
+  function withinRefractBudget(w, h, radius) {
+    if (w * h > MAX_REFRACT_AREA) return false;
+    return 2 * (w + h) * ringBezel(w, h, radius) <= MAX_RING_PIXELS;
+  }
   // 指针弹性激活区：光标距元素边缘多少 px 内开始形变
   const ELASTIC_ZONE = 160;
   const ELASTICITY = 0.12;
@@ -326,10 +337,11 @@
     const rect = el.getBoundingClientRect();
     const w = Math.round(rect.width), h = Math.round(rect.height);
     if (!w || !h) return; // 隐藏中（未激活页 / 未显示弹窗），后续扫描再挂
-    const overBudget = w * h > MAX_REFRACT_AREA;
+    const radius = readRadius(el);
+    const overBudget = !withinRefractBudget(w, h, radius);
     const wantRefract = mode !== 'frost' && mode !== 'off' && refractionSupported && !overBudget && refractCount < MAX_REFRACT;
     const blur = kind === 'floating' ? 9 : 2;
-    const st = { kind, w, h, radius: readRadius(el), blur, refract: false };
+    const st = { kind, w, h, radius, blur, refract: false };
     if (wantRefract) {
       const id = getFilterId(mode, w, h, st.radius);
       if (id) {
@@ -364,6 +376,7 @@
     if (mode !== 'full' && mode !== 'standard') return;
     if (!refractionSupported || refractCount >= MAX_REFRACT) return;
     if (st.w * st.h > MAX_REFRACT_AREA) return;
+    if (2 * (st.w + st.h) * ringBezel(st.w, st.h, st.radius) > MAX_RING_PIXELS) return;
     const id = getFilterId(mode, st.w, st.h, st.radius);
     if (!id) return; // 桶满，等下一轮扫描
     st.refract = true;
@@ -426,7 +439,7 @@
         // 尺寸变化：重选桶（滤镜随尺寸重建，位移贴图走缓存）；超预算则降回磨砂
         refractCount = Math.max(0, refractCount - 1);
         st.refract = false;
-        if (w * h <= MAX_REFRACT_AREA) {
+        if (withinRefractBudget(w, h, st.radius)) {
           const id = getFilterId(mode, w, h, st.radius);
           if (id) {
             st.refract = true;

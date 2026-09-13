@@ -645,11 +645,14 @@ body {
 .nav-item:hover {
   background: var(--bg-card);
 }
+/* v2 评估 A3：强调色退出容器表面——侧栏选中项原为 accent 底+accent 字（大面积着色），
+   现填充转中性表面 token，强调色只保留 3px 选中指示条（语义需要强调的位置） */
 .nav-item.active {
-  background: var(--accent-light);
-  color: var(--accent);
+  background: var(--bg-card-hover);
+  color: var(--fg-primary);
   font-weight: calc(600 * var(--font-weight-scale, 1));
   position: relative;
+  box-shadow: 0 1px 4px rgba(20, 24, 40, 0.08);
 }
 .nav-item.active::before {
   content: '';
@@ -661,8 +664,9 @@ body {
   background: var(--accent);
   border-radius: 0 2px 2px 0;
 }
+/* A3：激活项图标随文字转中性，强调色只留在指示条 */
 .nav-item.active .nav-icon {
-  color: var(--accent);
+  color: var(--fg-primary);
 }
 .nav-icon {
   color: var(--fg-secondary);
@@ -779,7 +783,7 @@ body {
   transform: scale(1.25);
 }
 .nav-subitem:active { transform: scale(0.98); }
-.nav-subitem.active { background: var(--accent-soft); color: var(--accent); font-weight: calc(600 * var(--font-weight-scale, 1)); }
+.nav-subitem.active { background: var(--bg-card-hover); color: var(--fg-primary); font-weight: calc(600 * var(--font-weight-scale, 1)); }
 
 .sidebar-footer {
   margin-top: auto;
@@ -7220,12 +7224,10 @@ body.theme-light .sidebar { background: var(--bg-card); border-color: var(--bord
 body.theme-light .main-content { background: #f5f6f8; }
 body.theme-light .nav-item { color: #1c1e24; }
 body.theme-light .nav-item:hover { background: #eef0f4; }
-body.theme-light .nav-item.active { background: rgba(94, 98, 198, 0.12); color: #4f53b4; }
 body.theme-light .nav-icon { color: #505766; }
 body.theme-light .nav-submenu.expanded { background: var(--bg-card); border-color: rgba(20, 24, 40, 0.12); }
 body.theme-light .nav-subitem { color: #4b505b; }
 body.theme-light .nav-subitem:hover { background: #eef0f4; color: #1c1e24; }
-body.theme-light .nav-subitem.active { background: rgba(94, 98, 198, 0.12); color: #4f53b4; }
 body.theme-light .nav-subdot { background: rgba(20, 24, 40, 0.18); }
 body.theme-light .nav-subdot::after { background: #737987; }
 body.theme-light .nav-section-title { color: #626a79; }
@@ -7601,12 +7603,14 @@ body.electron-mica[data-material="thin-acrylic"] { --mat-veil: color-mix(in srgb
 body.electron-mica[data-material="none"]         { --mat-veil: var(--bg-base); }
 
 body.electron-mica.theme-light {
-  --mat-veil: rgba(233, 234, 246, 0.40);
+  --mat-veil: rgba(248, 248, 250, 0.40);
 }
-body.electron-mica.theme-light[data-material="mica"]         { --mat-veil: rgba(233, 234, 246, 0.40); }
-body.electron-mica.theme-light[data-material="mica-alt"]     { --mat-veil: rgba(233, 234, 246, 0.35); }
-body.electron-mica.theme-light[data-material="acrylic"]      { --mat-veil: rgba(201, 225, 248, 0.35); }
-body.electron-mica.theme-light[data-material="thin-acrylic"] { --mat-veil: rgba(201, 225, 248, 0.25); }
+/* v2 评估 A2：面纱是整窗底色，带色比按钮 tint 带色影响更大——四档统一中性灰白，
+   颜色只由壁纸/环境光提供（Apple 材质语言），不再使用薰衣草/冰蓝色板 */
+body.electron-mica.theme-light[data-material="mica"]         { --mat-veil: rgba(248, 248, 250, 0.40); }
+body.electron-mica.theme-light[data-material="mica-alt"]     { --mat-veil: rgba(248, 248, 250, 0.35); }
+body.electron-mica.theme-light[data-material="acrylic"]      { --mat-veil: rgba(248, 248, 250, 0.30); }
+body.electron-mica.theme-light[data-material="thin-acrylic"] { --mat-veil: rgba(248, 248, 250, 0.20); }
 body.electron-mica.theme-light[data-material="none"]         { --mat-veil: var(--bg-base); }
 
 /* ---------- 半透明化本体（最大化期间保持不透明护栏） ---------- */
@@ -7668,6 +7672,9 @@ body.electron-mica .ds-tooltip {
 
 /* 按钮去主题色实底：三档 tint 均为中性消色白玻璃（Apple 材质语义，见 7568 token 段）；
    文字与描边走玻璃高光体系，强调色仅保留在焦点环与选中指示 */
+/* v2 评估 B1：引进方案 4 的「硬高光层」思想——.sharp 的双 inset 描边（受光侧亮/
+   背光侧稍暗白）直接落在宿主盒上；折射/磨砂仍走引擎滤镜链（位移贴图中心零位移
+   已天然等价环带遮罩，无需 DOM 四层包裹）。注意不抄方案 4 的滤镜本体（缺 in2 退化实现） */
 body.lg-mode-full .btn-primary,
 body.lg-mode-standard .btn-primary,
 body.lg-mode-frost .btn-primary,
@@ -7678,8 +7685,8 @@ body.lg-mode-frost .btn-accent {
   color: var(--lg-glass-fg);
   border-color: var(--lg-glass-border);
   box-shadow:
-    inset 0 1px 0 var(--lg-glass-highlight),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.05),
+    inset 1px 1px 0 rgba(255, 255, 255, 0.55),
+    inset -1px -1px 0 rgba(255, 255, 255, 0.38),
     0 2px 10px rgba(20, 28, 48, 0.16);
   text-shadow: none;
 }
@@ -7690,7 +7697,8 @@ body.lg-mode-frost .btn-secondary {
   color: var(--lg-glass-fg);
   border-color: var(--lg-glass-border);
   box-shadow:
-    inset 0 1px 0 var(--lg-glass-highlight),
+    inset 1px 1px 0 rgba(255, 255, 255, 0.48),
+    inset -1px -1px 0 rgba(255, 255, 255, 0.32),
     0 1px 6px rgba(20, 28, 48, 0.10);
 }
 /* hover：轻度提亮 + 描边增亮，保持玻璃透明感（不做实底加深） */
@@ -7856,8 +7864,10 @@ body.lg-mode-frost .filter-tab.active .maint-tab-count {
 /* ---------- 4) 跟随聚光 · Spotlight（仅选择块：按钮 / 分段标签 / 分类胶囊 / 材质卡 / 单选行） ---------- */
 /* 光斑坐标由 spotlight.js 以 document 级事件委托写入 --spot-x/--spot-y，
    动态渲染的列表按钮同样生效；radial 渐变天然被宿主圆角裁剪，无需 overflow。 */
-:root { --spot-glow: rgba(139, 142, 224, 0.20); }
-.theme-light { --spot-glow: rgba(94, 98, 198, 0.14); }
+/* v2 评估 A2：聚光辉光原为强调色染色（紫罗兰），改为中性石板灰——
+   跟随光斑属玻璃高光体系，颜色应由环境光提供而非强调色 */
+:root { --spot-glow: rgba(140, 144, 158, 0.16); }
+.theme-light { --spot-glow: rgba(120, 124, 140, 0.12); }
 .btn, .filter-tab, .maint-tab, .material-card {
   position: relative;
 }
