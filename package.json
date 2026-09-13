@@ -36,7 +36,7 @@
     "copyright": "Copyright © 2026 xiaoxu",
     "electronDist": "node_modules/electron/dist",
     "directories": {
-      "output": "build-release",
+      "output": "D:\\KaiFa\\Trim goujian\\build-release",
       "buildResources": "build"
     },
     "files": [
