@@ -594,7 +594,7 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
     // 初始高亮以主进程持久化值为准（窗口实际材质），避免与 localStorage 不一致
     // 导致「选中项和窗口效果对不上」。取不到时回退 mica（与主进程默认一致）。
     (async () => {
-      let current = 'mica';
+      let current = 'mica-alt';
       try {
         const resp = await window.api?.appearance?.getMaterial?.();
         if (resp && resp.material) current = resp.material;
@@ -627,9 +627,9 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
           // 失败回滚到主进程记录的真实材质
           try {
             const cur = await window.api?.appearance?.getMaterial?.();
-            refreshMaterialCards((cur && cur.material) || 'mica');
+            refreshMaterialCards((cur && cur.material) || 'mica-alt');
           } catch (e) {
-            refreshMaterialCards('mica');
+            refreshMaterialCards('mica-alt');
           }
           window.app?.toast('error', (resp && resp.message) || '材质切换失败');
         }
@@ -873,6 +873,52 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
     }
   }
 
+
+  // 背景模糊度滑块（Motion.Lab range-drag 适配）：拖动实时模糊壁纸 .layout::before
+  function initBgBlur() {
+    var range = document.getElementById('bgBlurRange');
+    if (!range) return;
+    var track = range.querySelector('.bbr-track');
+    var fill = range.querySelector('.bbr-fill');
+    var knob = range.querySelector('.bbr-knob');
+    var valEl = document.getElementById('bgBlurVal');
+    var MAX_BLUR = 20;
+    var dragging = false;
+    function setBlur(pct) {
+      pct = Math.max(0, Math.min(100, pct));
+      var px = (pct / 100 * MAX_BLUR).toFixed(1);
+      fill.style.width = pct + '%';
+      knob.style.left = pct + '%';
+      valEl.textContent = Math.round(pct) + '%';
+      document.documentElement.style.setProperty('--bg-blur', px + 'px');
+      try {
+        var ap = JSON.parse(localStorage.getItem('winclean-appearance') || '{}');
+        ap.wallpaperBlur = Math.round(pct);
+        localStorage.setItem('winclean-appearance', JSON.stringify(ap));
+      } catch (e) {}
+    }
+    function updateFromClientX(clientX) {
+      var r = track.getBoundingClientRect();
+      var pct = (clientX - r.left) / r.width * 100;
+      setBlur(pct);
+    }
+    track.addEventListener('mousedown', function (e) {
+      dragging = true;
+      range.classList.add('dragging');
+      updateFromClientX(e.clientX);
+      e.preventDefault();
+    });
+    window.addEventListener('mousemove', function (e) {
+      if (dragging) updateFromClientX(e.clientX);
+    });
+    window.addEventListener('mouseup', function () {
+      if (dragging) { dragging = false; range.classList.remove('dragging'); }
+    });
+    try {
+      var ap2 = JSON.parse(localStorage.getItem('winclean-appearance') || '{}');
+      setBlur(typeof ap2.wallpaperBlur === 'number' ? ap2.wallpaperBlur : 0);
+    } catch (e) { setBlur(0); }
+  }
   function init() {
     if (isInitialized) return;
     isInitialized = true;
@@ -893,6 +939,7 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
     });
     setTimeout(load, 300);
     initAppearance();
+    initBgBlur();
   }
 
   window.pathbinding = { init, load, autoScan, openModal, getConfig: () => pathConfig, GROUPS };

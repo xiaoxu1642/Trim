@@ -80,10 +80,13 @@
      ① 三套情境 alpha 统一为一套（0.46/0.62/0.52/0.50）；② 全局玻璃化，玻璃是常态，
      bgBlur=0 仅表示「无模糊」而非「不透明」。 */
   --surface-tint: 15 17 21;
-  --surface-alpha-card: 0.46;
-  --surface-alpha-card-hover: 0.62;
-  --surface-alpha-elevated: 0.52;
-  --surface-alpha-input: 0.50;
+  /* v3.0 批次：白色容器完全透明化——alpha 从 0.32 降到 0，普通容器无白色填充，
+     完全透出原生窗口材质；hover/elevated/input 三档保留 alpha 保证交互反馈。
+     亮色 --surface-tint=255 255 255 继承本表 alpha */
+  --surface-alpha-card: 0;
+  --surface-alpha-card-hover: 0.48;
+  --surface-alpha-elevated: 0.38;
+  --surface-alpha-input: 0.36;
   --bg-card: rgb(var(--surface-tint) / var(--surface-alpha-card));
   --bg-card-hover: rgb(var(--surface-tint) / var(--surface-alpha-card-hover));
   --bg-elevated: rgb(var(--surface-tint) / var(--surface-alpha-elevated));
@@ -266,8 +269,6 @@ body[data-skin="glass"] .empty-state,
 body[data-skin="glass"] .overview-card,
 body[data-skin="glass"] .table-card {
   /* 模糊半径由设置页「背景模糊度」滑块写入 --glass-blur（0-26px），缺省 26px 保持原液态玻璃观感 */
-  -webkit-backdrop-filter: blur(var(--glass-blur-soft, 15.6px)) saturate(var(--glass-satur, 1.65)) brightness(var(--glass-bright, 1.04));
-  backdrop-filter: blur(var(--glass-blur-soft, 15.6px)) saturate(var(--glass-satur, 1.65)) brightness(var(--glass-bright, 1.04));
   border-color: var(--glass-border);
   box-shadow:
     inset 0 1px 0 var(--glass-highlight),
@@ -392,8 +393,6 @@ body {
   align-items: center;
   background: #F3F3F3;
   /* 原生 Mica 已负责窗口材质；避免 drag 区域与 CSS blur 形成错误命中层。 */
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
   -webkit-app-region: drag;
   position: relative;
   z-index: 100;
@@ -1897,7 +1896,7 @@ body.lg-mode-frost .maint-tab.active .maint-tab-count {
    日志查看器
    ================================================================ */
 .log-viewer {
-  background: #0E0E0E;
+  background: transparent;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-medium);
   padding: 12px 16px;
@@ -1913,7 +1912,7 @@ body.lg-mode-frost .maint-tab.active .maint-tab-count {
   word-break: break-all;
 }
 .theme-light .log-viewer {
-  background: #FAFAFA;
+  background: transparent;
   color: #1E1E1E;
 }
 
@@ -2532,8 +2531,6 @@ select.field-input { cursor: pointer; appearance: auto; }
   align-items: center;
   justify-content: center;
   background: color-mix(in srgb, var(--bg-app) 65%, rgba(0, 0, 0, 0.35));
-  backdrop-filter: blur(var(--glass-blur-faint)) saturate(1.05);
-  -webkit-backdrop-filter: blur(var(--glass-blur-faint)) saturate(1.05);
   opacity: 0;
   visibility: hidden;
   transition: opacity 200ms var(--ease-standard), visibility 0s linear 200ms;
@@ -2839,8 +2836,6 @@ select.field-input { cursor: pointer; appearance: auto; }
   font-size: var(--fs-secondary);
   min-width: 240px;
   max-width: 360px;
-  backdrop-filter: blur(var(--glass-blur-strong));
-  -webkit-backdrop-filter: blur(var(--glass-blur-strong));
   animation: toastSlideIn var(--duration-base) var(--ease-emphasized);
   pointer-events: auto;
 }
@@ -2954,8 +2949,6 @@ body.electron-mica .titlebar {
   /* 标题栏不参与 Mica/主题渲染，需与原生按钮覆盖层保持完全同色。
      恒浅色下被 7152 行 #f7f8fb 覆盖，此处仅作回退色，与 TITLEBAR_OVERLAY 同步。 */
   background: #f7f8fb;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
 }
 
 body.electron-mica .layout {
@@ -2975,8 +2968,6 @@ body.electron-mica:not(.win-maximized) .sidebar {
 /* 最大化：不透明实体，遵守 win-maximized 不透明护栏（--bg-card 在材质下是半透明，同样不可用） */
 body.electron-mica.win-maximized .sidebar {
   background: var(--surface-solid);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
 }
 
 body.electron-mica .main-content {
@@ -3292,8 +3283,6 @@ input[type="radio"]:focus-visible {
   align-items: center;
   justify-content: center;
   animation: fadeIn var(--duration-base) var(--ease-standard);
-  backdrop-filter: blur(var(--glass-blur-faint));
-  -webkit-backdrop-filter: blur(var(--glass-blur-faint));
 }
 
 .preview-modal {
@@ -3751,7 +3740,6 @@ input[type="radio"]:focus-visible {
   inset: 0;
   background: rgba(0, 0, 0, 0.45);
   /* 刻意设计：详情弹窗遮罩仅极轻磨砂（4px），重模糊会喧宾夺主——独立观感，不并入玻璃档位 */
-  backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -4706,8 +4694,6 @@ body.mw-window #pmBody .pm-virtual .xtable-body {
   align-items: center;
   justify-content: center;
   background: color-mix(in srgb, var(--bg-app) 60%, rgba(0, 0, 0, 0.4));
-  backdrop-filter: blur(var(--glass-blur-faint)) saturate(1.05);
-  -webkit-backdrop-filter: blur(var(--glass-blur-faint)) saturate(1.05);
   animation: fadeIn var(--duration-base) var(--ease-standard);
 }
 
@@ -4985,14 +4971,15 @@ body.mw-window #pmBody .pm-virtual .xtable-body {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1px;
-  background: var(--border-default);
+  /* v3.0 批次：统一白容器单层视觉——外层背景改透明（原 border-default 造成双层白色叠加），
+     磨砂仍在外层、白色由 .device-info-row 的 --bg-card 供给，整体等效单层 bg-card+磨砂；
+     1px gap 为透明分隔线，透出下层模糊壁纸，与透明玻璃风格一致 */
+  background: transparent;
   border: 1px solid var(--border-default);
   /* v3.0：对齐系统维护任务卡参数（docs规范/系统维护任务卡参数.md）——
      46% 白玻璃底（--bg-card）+ 20px 档磨砂随「背景模糊度」滑块联动，圆角收敛 --radius-medium */
   border-radius: var(--radius-medium);
   overflow: hidden;
-  -webkit-backdrop-filter: blur(var(--glass-blur-mid)) saturate(1.35);
-  backdrop-filter: blur(var(--glass-blur-mid)) saturate(1.35);
 }
 .device-info-row {
   display: flex;
@@ -5177,7 +5164,6 @@ body.mw-window #pmBody .pm-virtual .xtable-body {
   padding: 4px 2px 0;
 }
 
-
 /* ================================================================
    弹窗样式统一（以「设置 - 使用说明」弹窗为基准）
    —— 所有新增弹窗（大模型选择 / 安装路径绑定 / 启动项简介）均复用
@@ -5197,8 +5183,6 @@ body.mw-window #pmBody .pm-virtual .xtable-body {
 /* 右键管理详情弹窗：对齐使用说明弹窗的遮罩与卡片风格 */
 .ctx-detail-backdrop {
   background: color-mix(in srgb, var(--bg-app) 60%, rgba(0, 0, 0, 0.4));
-  backdrop-filter: blur(var(--glass-blur-faint)) saturate(1.05);
-  -webkit-backdrop-filter: blur(var(--glass-blur-faint)) saturate(1.05);
   z-index: 10000;
   animation: fadeIn var(--duration-base) var(--ease-standard);
 }
@@ -5851,8 +5835,6 @@ body.pv-window {
 /* 右键菜单详情弹窗（ctx-detail-modal） */
 .ctx-detail-backdrop {
   background: color-mix(in srgb, var(--bg-app) 60%, rgba(0, 0, 0, 0.4));
-  backdrop-filter: blur(var(--glass-blur-faint)) saturate(1.05);
-  -webkit-backdrop-filter: blur(var(--glass-blur-faint)) saturate(1.05);
 }
 .ctx-detail-modal {
   border: 1px solid var(--border-strong);
@@ -6156,7 +6138,6 @@ body.pv-window {
 }
 
 /* 进程轮询状态按钮 + 弹出菜单（轮询 UI 已移除，进程列表迁至独立「应用进程管理」窗口） */
-
 
 /* ================================================================
    看板布局（电脑优化中心 / 右键管理 共用）：Grid 自适应列数
@@ -6796,7 +6777,6 @@ body.theme-light .path-blocked-tag { background: rgba(var(--warning-rgb), 0.12);
     linear-gradient(145deg, #DADADA 0%, #BFBFBF 100%);
   background-color: #C9C9C9;
   /* 刻意设计：材质样块是「材质效果预览图」，白玻璃观感与轻磨砂为示意所需，独立于玻璃档位 */
-  backdrop-filter: blur(3px);
 }
 .material-card[data-material="thin-acrylic"] .material-swatch {
   /* 刻意设计：thin-acrylic 样块预览渐变（同上，示意所需） */
@@ -7424,18 +7404,12 @@ body.theme-light[data-preset-bg] .appearance-card,
 body.theme-light[data-preset-bg] .empty-state,
 body.theme-light[data-preset-bg] .maint-output {
   background-color: var(--bg-card);
-  -webkit-backdrop-filter: blur(var(--glass-blur-mid)) saturate(1.35);
-  backdrop-filter: blur(var(--glass-blur-mid)) saturate(1.35);
 }
 
-/* 4) 依赖 var(--bg-card) 令牌的看板/卡片（由上方令牌透明化），补磨砂模糊。 */
-body[data-preset-bg] .opt-col,
-body[data-preset-bg] .ctx-col,
-body[data-preset-bg] .optimizer-card,
-body[data-preset-bg] .contextmenu-list {
-  -webkit-backdrop-filter: blur(var(--glass-blur-mid)) saturate(1.35);
-  backdrop-filter: blur(var(--glass-blur-mid)) saturate(1.35);
-}
+/* 4) 看板/卡片依赖 var(--bg-card) 令牌（v3.0 已透明化）。v3.0 修复批次：原「预设
+   壁纸下按容器补磨砂」的规则退役——壁纸模糊由 .layout::before（--bg-blur 滑块）
+   统一供给，容器自身保持透明，避免「壁纸模糊 + 容器再模糊」双重叠影；
+   原残缺选择器（无声明块）还会吞并下方 body.bg-image-on 规则，一并清除。 */
 
 /* ================================================================
    自定义背景图（bg-image-on）下主内容区保底底色
@@ -7455,7 +7429,6 @@ body[data-preset-bg] .contextmenu-list {
 body.bg-image-on .main-content {
   background: transparent;
 }
-
 
 /* ================================================================
    磁盘清理 · 查找器（重复/大文件/空/AppData）通用样式
@@ -7526,7 +7499,6 @@ body.bg-image-on .main-content {
 .xtable-cell-path .folder-ico { opacity: 0.75; }
 .finder-size-end { text-align: right; font-variant-numeric: tabular-nums; }
 
-
 /* 查找器结果表格：两栏 grid（路径 | 大小），行内含复选框 */
 .finder-table {
   width: 100%;
@@ -7581,8 +7553,10 @@ body.bg-image-on .main-content {
        （主窗与三个子窗口共用 token，一次覆盖全部生效）
      · 「无材质(none)」回退不透明；最大化(win-maximized)护栏保持
        100% 自绘不透明（DWM 材质层不随客户区扩展，见 2866 段结论）
-   液态玻璃四档（body.lg-mode-*，liquid-glass.js 挂载）：
-     full / standard：按钮换浅色玻璃 tint（去主题色实底）+ SVG 折射；
+   液态玻璃四档（body.lg-mode-*，liquid-glass.js 挂载），材质语义对齐 Apple：
+     full ≈ clear+（折射+色散+弹性+焦散）/ standard ≈ regular（折射无色散）/
+     frost = regular 降级（性能/环境回退，仅 CSS 磨砂）/ off = 实底；
+     full / standard：按钮换中性玻璃 tint（去主题色实底）+ SVG 折射；
      full 额外有指针弹性形变(.lg-elastic)与 WebGL 弹层焦散(.lg-shimmer-canvas)
    ================================================================ */
 
@@ -7593,38 +7567,46 @@ body.bg-image-on .main-content {
   --lg-glass-fg: var(--fg-primary);
 }
 .theme-light {
-  --lg-tint-primary: rgba(201, 225, 248, 0.62);
-  --lg-tint-secondary: rgba(233, 234, 246, 0.55);
-  --lg-tint-tertiary: rgba(246, 234, 239, 0.60);
+  /* v3.0 修复批次（Apple 消色玻璃，docs规范/update/2026-09-14 评估方案 A1）：
+     三档 tint 全部中性化（原冰蓝/薰衣草/浅粉属「彩色糖果玻璃」），Apple 的玻璃
+     是消色中性材质，靠环境光与原生材质染色，不做彩色 tint */
+  --lg-tint-primary: rgba(255, 255, 255, 0.55);
+  --lg-tint-secondary: rgba(250, 250, 252, 0.48);
+  --lg-tint-tertiary: rgba(255, 255, 255, 0.42);
   --lg-glass-border: rgba(255, 255, 255, 0.75);
   --lg-glass-highlight: rgba(255, 255, 255, 0.85);
+  /* 对比度护栏（方案 A5）：玻璃浮层的最小白底——与 --bg-elevated 叠加复合后
+     保证 ≥0.45 alpha，任意壁纸上正文（--fg-primary 深色）维持 WCAG AA 对比 */
+  --lg-glass-floor: rgba(255, 255, 255, 0.45);
   --lg-glass-fg: var(--fg-primary);
   /* v2.8.0：玻璃质感参数化（原 5 处饱和度/亮度硬编码收敛至此；
      liquid-glass.js 的 SVG 滤镜链与内联 backdrop 同读这两个变量）
-     v3.0：--glass-blur 与全部派生档位已上移 :root 真源（浅暗共用），此处不再重复定义 */
-  --glass-satur: 1.65;
-  --glass-bright: 1.04;
+     v3.0：--glass-blur 与全部派生档位已上移 :root 真源（浅暗共用），此处不再重复定义
+     v3.0 修复批次：satur 1.65→1.25 / bright 1.04→1.02——Apple 玻璃增艳温和
+     （1.1–1.3 区间），1.65 会把彩色 tint 的彩度进一步放大，与消色方向相悖 */
+  --glass-satur: 1.25;
+  --glass-bright: 1.02;
 }
 
 /* ---------- 材质面纱分级（dark=碳墨浓度 / light=浅玻璃色板） ----------
    v3.0 全局玻璃化：表面 token 由 :root 真源统一供玻璃 alpha，
    原 body.electron-mica 的两套 rgba 覆写已删除，材质层只保留 --mat-veil 面纱分级。 */
 body.electron-mica {
-  --mat-veil: color-mix(in srgb, var(--bg-base) 55%, transparent);
+  --mat-veil: color-mix(in srgb, var(--bg-base) 40%, transparent);
 }
-body.electron-mica[data-material="mica"]         { --mat-veil: color-mix(in srgb, var(--bg-base) 55%, transparent); }
-body.electron-mica[data-material="mica-alt"]     { --mat-veil: color-mix(in srgb, var(--bg-base) 48%, transparent); }
-body.electron-mica[data-material="acrylic"]      { --mat-veil: color-mix(in srgb, var(--bg-base) 38%, transparent); }
-body.electron-mica[data-material="thin-acrylic"] { --mat-veil: color-mix(in srgb, var(--bg-base) 26%, transparent); }
+body.electron-mica[data-material="mica"]         { --mat-veil: color-mix(in srgb, var(--bg-base) 40%, transparent); }
+body.electron-mica[data-material="mica-alt"]     { --mat-veil: color-mix(in srgb, var(--bg-base) 35%, transparent); }
+body.electron-mica[data-material="acrylic"]      { --mat-veil: color-mix(in srgb, var(--bg-base) 30%, transparent); }
+body.electron-mica[data-material="thin-acrylic"] { --mat-veil: color-mix(in srgb, var(--bg-base) 20%, transparent); }
 body.electron-mica[data-material="none"]         { --mat-veil: var(--bg-base); }
 
 body.electron-mica.theme-light {
-  --mat-veil: rgba(233, 234, 246, 0.62);
+  --mat-veil: rgba(233, 234, 246, 0.40);
 }
-body.electron-mica.theme-light[data-material="mica"]         { --mat-veil: rgba(233, 234, 246, 0.62); }
-body.electron-mica.theme-light[data-material="mica-alt"]     { --mat-veil: rgba(233, 234, 246, 0.54); }
-body.electron-mica.theme-light[data-material="acrylic"]      { --mat-veil: rgba(201, 225, 248, 0.55); }
-body.electron-mica.theme-light[data-material="thin-acrylic"] { --mat-veil: rgba(201, 225, 248, 0.38); }
+body.electron-mica.theme-light[data-material="mica"]         { --mat-veil: rgba(233, 234, 246, 0.40); }
+body.electron-mica.theme-light[data-material="mica-alt"]     { --mat-veil: rgba(233, 234, 246, 0.35); }
+body.electron-mica.theme-light[data-material="acrylic"]      { --mat-veil: rgba(201, 225, 248, 0.35); }
+body.electron-mica.theme-light[data-material="thin-acrylic"] { --mat-veil: rgba(201, 225, 248, 0.25); }
 body.electron-mica.theme-light[data-material="none"]         { --mat-veil: var(--bg-base); }
 
 /* ---------- 半透明化本体（最大化期间保持不透明护栏） ---------- */
@@ -7642,8 +7624,6 @@ body.electron-mica:not(.win-maximized) .main-content { background: transparent !
 /* 最大化：不透明实体（护栏），压过上方全部半透明岛色 */
 body.electron-mica.win-maximized .sidebar {
   background: var(--surface-solid);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
 }
 
 /* 卡片级磨砂：内容滚动时卡片底下模糊，材质与背景保持通透 */
@@ -7657,26 +7637,28 @@ body.electron-mica .empty-state,
 body.electron-mica .mw-card,
 body.electron-mica .peri-card,
 body.electron-mica .pw-topbar {
-  backdrop-filter: blur(var(--glass-blur-mid)) saturate(1.5);
-  -webkit-backdrop-filter: blur(var(--glass-blur-mid)) saturate(1.5);
+  /* v3.0 批次：saturate 从 1.5 收敛到 1.35，与全局白容器统一规则一致——
+     消除 electron-mica 异步挂载时的磨砂饱和度跳变（原 1.35→1.5 视觉上像"过一会才嵌套"） */
 }
 /* 二级按钮材质下玻璃化（主按钮保留强调色实底，非液态模式不动） */
 body.electron-mica .btn-secondary {
   background: var(--bg-card);
-  backdrop-filter: blur(var(--glass-blur-soft)) saturate(1.4);
-  -webkit-backdrop-filter: blur(var(--glass-blur-soft)) saturate(1.4);
 }
 /* 浮层：更强磨砂保证可读 */
 body.electron-mica .usage-modal,
 body.electron-mica .ctx-detail-modal {
   background: var(--bg-elevated);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.6);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.6);
 }
+/* v3.0 修复批次：v3.0 把 --bg-card 透明化后，ds-menu/ds-tooltip 失去底色（原规则
+   又被残缺选择器破坏，连带吞并下方按钮 tint 规则）。按评估方案 A2 恢复：菜单给
+   --bg-elevated + blur，并叠加 --lg-glass-floor 保证最小白底（A5 对比度护栏）。
+   磨砂走 --glass-blur-mid 档随「背景模糊度」滑块联动；保留 electron-mica 前缀
+   抬高特异性压过 ds.css 同名规则（ds.css 在 main.css 之后加载）。 */
 body.electron-mica .ds-menu,
 body.electron-mica .ds-tooltip {
-  backdrop-filter: blur(var(--glass-blur-mid)) saturate(1.55);
-  -webkit-backdrop-filter: blur(var(--glass-blur-mid)) saturate(1.55);
+  background: linear-gradient(var(--lg-glass-floor), var(--lg-glass-floor)), var(--bg-elevated);
+  backdrop-filter: blur(var(--glass-blur-mid)) saturate(var(--glass-satur));
+  -webkit-backdrop-filter: blur(var(--glass-blur-mid)) saturate(var(--glass-satur));
 }
 
 /* ================================================================
@@ -7684,7 +7666,7 @@ body.electron-mica .ds-tooltip {
    （body.lg-mode-* 由 liquid-glass.js 挂载；off 档不命中以下规则）
    ================================================================ */
 
-/* 按钮去主题色实底：primary/accent 用冰蓝 tint，secondary 用薰衣草白×浅粉；
+/* 按钮去主题色实底：三档 tint 均为中性消色白玻璃（Apple 材质语义，见 7568 token 段）；
    文字与描边走玻璃高光体系，强调色仅保留在焦点环与选中指示 */
 body.lg-mode-full .btn-primary,
 body.lg-mode-standard .btn-primary,
@@ -7724,17 +7706,29 @@ body.lg-mode-frost .btn-secondary:hover:not(:disabled) {
   background: linear-gradient(165deg, var(--lg-tint-primary), var(--lg-tint-tertiary));
   border-color: color-mix(in srgb, var(--lg-glass-border) 60%, rgba(255, 255, 255, 0.55));
 }
-/* 磨砂档：无折射滤镜，仅毛玻璃 */
+/* 对比度护栏（A5）：液态档弹层可读性底线——floor 与 --bg-elevated 叠加复合
+   ≥0.45 白底，任意壁纸/材质上弹层正文保 AA；折射/磨砂滤镜由 JS 内联供给 */
+body.lg-mode-full .usage-modal,
+body.lg-mode-standard .usage-modal,
+body.lg-mode-frost .usage-modal,
+body.lg-mode-full .ctx-detail-modal,
+body.lg-mode-standard .ctx-detail-modal,
+body.lg-mode-frost .ctx-detail-modal {
+  background: linear-gradient(var(--lg-glass-floor), var(--lg-glass-floor)), var(--bg-elevated);
+}
+/* 磨砂档兜底（A2 修复：原残缺选择器连带吞并了 .lg-elastic 形变规则）：
+   frost 档 JS 已卸载全部内联滤镜，毛玻璃由本段 CSS 供给——按钮 blur(soft)，
+   弹层 blur(mid)；saturate 统一走 token，系统关透明度时 --glass-blur 归零自动停用 */
 body.lg-mode-frost .btn-primary,
 body.lg-mode-frost .btn-accent,
 body.lg-mode-frost .btn-secondary {
-  backdrop-filter: blur(var(--glass-blur-faint)) saturate(1.5);
-  -webkit-backdrop-filter: blur(var(--glass-blur-faint)) saturate(1.5);
+  backdrop-filter: blur(var(--glass-blur-soft)) saturate(var(--glass-satur));
+  -webkit-backdrop-filter: blur(var(--glass-blur-soft)) saturate(var(--glass-satur));
 }
 body.lg-mode-frost .usage-modal,
 body.lg-mode-frost .ctx-detail-modal {
-  backdrop-filter: blur(var(--glass-blur-mid)) saturate(1.55);
-  -webkit-backdrop-filter: blur(var(--glass-blur-mid)) saturate(1.55);
+  backdrop-filter: blur(var(--glass-blur-mid)) saturate(var(--glass-satur));
+  -webkit-backdrop-filter: blur(var(--glass-blur-mid)) saturate(var(--glass-satur));
 }
 
 /* 指针弹性形变（full 档，liquid-glass.js 写入 --lg-* 变量）：
@@ -7757,12 +7751,13 @@ body.lg-mode-full .lg-elastic::before {
   z-index: 0;
   border-radius: inherit;
   pointer-events: none;
-  /* 刻意设计：液态玻璃弹性形变的悬停光泽高光（lg 装饰体系，非容器表面 token） */
-  background: linear-gradient(135deg,
-    rgba(255, 255, 255, 0) 12%,
-    rgba(255, 255, 255, 0.14) 38%,
-    rgba(255, 255, 255, 0.28) 62%,
-    rgba(255, 255, 255, 0) 88%);
+  /* 刻意设计：液态玻璃弹性形变的悬停光泽高光（lg 装饰体系，非容器表面 token）。
+     修复实锤4：--lg-mx/--lg-my 原先写入后无人消费（高光断链空转），现作为
+     radial specular 光斑圆心——坐标由 liquid-glass.js pointerover 采样写入 */
+  background: radial-gradient(circle at var(--lg-mx, 50%) var(--lg-my, 40%),
+    rgba(255, 255, 255, 0.30) 0%,
+    rgba(255, 255, 255, 0.12) 40%,
+    rgba(255, 255, 255, 0) 72%);
   opacity: 0;
   transition: opacity 200ms var(--ease-standard);
 }
@@ -7779,7 +7774,8 @@ body.lg-mode-full .lg-elastic:hover::before { opacity: 1; }
   pointer-events: none;
   mix-blend-mode: screen;
 }
-body.lg-mode-full .usage-modal > *:not(.lg-shimmer-canvas) {
+body.lg-mode-full .usage-modal > *:not(.lg-shimmer-canvas),
+body.lg-mode-full .ds-menu > *:not(.lg-shimmer-canvas) {
   position: relative;
   z-index: 1;
 }
@@ -7929,48 +7925,13 @@ body.lg-mode-frost .filter-tab.active .maint-tab-count {
 }
 
 /* ================================================================
-   设置页整合4 · 背景模糊度裁定层
-   「背景模糊度」滑块（body[data-skin="glass"] + --glass-blur）激活时，
-   卡片/侧栏的磨砂半径以滑块为准：本块置于文件末尾并以更高特异性
-   覆盖「窗口材质 2.0」层固定 blur(20px) 与「预设背景」层固定 blur(20px)，
-   避免原生材质/预设背景开启时滑块失效。增艳/亮度与玻璃描边高光
-   仍由文件头部 data-skin="glass" 主块提供。
+   设置页整合4 · 背景模糊度裁定层（v3.0 修复批次退役说明）
+   原「按皮肤以更高特异性覆盖容器 blur」的三组裁定规则已整体退役：
+   v3.0 全局玻璃化后容器自身不再持有 backdrop-filter，滑块改经两条
+   链路生效——① :root --glass-blur 派生四档（faint/soft/mid/strong），
+   供 frost 档兜底与菜单/tooltip 磨砂等余留消费方；② 壁纸层 --bg-blur
+   （.layout::before）。系统关透明度时 --glass-blur 归零自动全停。
    ================================================================ */
-body[data-skin="glass"] .card,
-body[data-skin="glass"] .table-card,
-body[data-skin="glass"] .settings-section,
-body[data-skin="glass"] .appearance-card,
-body[data-skin="glass"] .overview-card,
-body[data-skin="glass"] .summary-card,
-body[data-skin="glass"] .empty-state {
-  -webkit-backdrop-filter: blur(var(--glass-blur-soft, 15.6px)) saturate(var(--glass-satur, 1.65)) brightness(var(--glass-bright, 1.04));
-  backdrop-filter: blur(var(--glass-blur-soft, 15.6px)) saturate(var(--glass-satur, 1.65)) brightness(var(--glass-bright, 1.04));
-}
-body.electron-mica[data-skin="glass"] .card,
-body.electron-mica[data-skin="glass"] .table-card,
-body.electron-mica[data-skin="glass"] .settings-section,
-body.electron-mica[data-skin="glass"] .appearance-card,
-body.electron-mica[data-skin="glass"] .overview-card,
-body.electron-mica[data-skin="glass"] .summary-card,
-body.electron-mica[data-skin="glass"] .empty-state {
-  -webkit-backdrop-filter: blur(var(--glass-blur-soft, 15.6px)) saturate(var(--glass-satur, 1.65)) brightness(var(--glass-bright, 1.04));
-  backdrop-filter: blur(var(--glass-blur-soft, 15.6px)) saturate(var(--glass-satur, 1.65)) brightness(var(--glass-bright, 1.04));
-}
-body[data-preset-bg][data-skin="glass"] .card,
-body[data-preset-bg][data-skin="glass"] .table-card,
-body[data-preset-bg][data-skin="glass"] .settings-section,
-body[data-preset-bg][data-skin="glass"] .appearance-card,
-body[data-preset-bg][data-skin="glass"] .overview-card,
-body[data-preset-bg][data-skin="glass"] .summary-card,
-body[data-preset-bg][data-skin="glass"] .empty-state {
-  -webkit-backdrop-filter: blur(var(--glass-blur-soft, 15.6px)) saturate(var(--glass-satur, 1.65)) brightness(var(--glass-bright, 1.04));
-  backdrop-filter: blur(var(--glass-blur-soft, 15.6px)) saturate(var(--glass-satur, 1.65)) brightness(var(--glass-bright, 1.04));
-}
-body.electron-mica[data-skin="glass"]:not(.win-maximized) .sidebar {
-  /* 侧栏是大面积玻璃面：保持全量模糊（分层模糊配方里「重背景」的一侧） */
-  -webkit-backdrop-filter: blur(var(--glass-blur, 26px)) saturate(var(--glass-satur, 1.65)) brightness(var(--glass-bright, 1.04));
-  backdrop-filter: blur(var(--glass-blur, 26px)) saturate(var(--glass-satur, 1.65)) brightness(var(--glass-bright, 1.04));
-}
 
 /* ==================== 审查 3-1/6-1：系统「透明度效果」降级 ==================== */
 /* Windows 11 辅助功能关闭「透明度效果」（prefers-reduced-transparency: reduce）时：
@@ -7978,10 +7939,6 @@ body.electron-mica[data-skin="glass"]:not(.win-maximized) .sidebar {
    兼顾低配机合成性能与视觉可读性。仅在系统声明该偏好时生效，常态视觉不受影响。 */
 @media (prefers-reduced-transparency: reduce) {
   body[data-skin="glass"] { --glass-blur: 0px; }
-  *, *::before, *::after {
-    -webkit-backdrop-filter: none !important;
-    backdrop-filter: none !important;
-  }
   body[data-skin="glass"] .card,
   body[data-skin="glass"] .usage-modal,
   body[data-skin="glass"] .filter-tabs,
@@ -8158,10 +8115,26 @@ body.electron-mica[data-skin="glass"]:not(.win-maximized) .sidebar {
 .ctx-col,
 .optimizer-card,
 .sidebar,
-.filter-tabs {
+.filter-tabs,
+.checkup-list,
+.progress-section,
+.category-list,
+.speed-card,
+.metric-card,
+.chart-container,
+.settings-entry-card,
+.process-entry-card,
+.pw-group,
+.pw-topbar,
+.mw-card,
+.mw-group,
+.mw-footer,
+.rt-report-chart,
+.rt-sr-panel,
+.mem-panel,
+.realtime-chart-panel,
+.external-test-panel {
   border-radius: var(--radius-medium);
-  -webkit-backdrop-filter: blur(var(--glass-blur-mid)) saturate(1.35);
-  backdrop-filter: blur(var(--glass-blur-mid)) saturate(1.35);
 }
 
 /* v3.0：预设壁纸激活时布局层不再垫色——壁纸之下不允许有任何遮罩，
@@ -8306,7 +8279,8 @@ body[data-preset-bg] .layout {
   display: flex;
   flex-direction: column;
   border: 1px solid var(--border-default);
-  border-radius: var(--radius-small);
+  /* v3.0 批次：统一白容器玻璃参数——圆角收敛 medium，磨砂由文件末尾全局规则供给 */
+  border-radius: var(--radius-medium);
   background: var(--bg-card, transparent);
   overflow: hidden;
 }
@@ -8452,8 +8426,6 @@ body[data-preset-bg] .layout {
   border-radius: 999px;
   box-shadow: 0 4px 14px -6px rgba(79, 70, 229, .18);
   /* 刻意设计：启动页是独立覆盖层（固定浅色配色），不随玻璃皮肤/档位联动 */
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
   animation: splashFadeIn .6s ease-out both;
 }
 .splash-trim {
@@ -8574,4 +8546,86 @@ body.win-inactive::after {
   background: rgba(0, 0, 0, 0.04);
   pointer-events: none;
   z-index: 9998;
+}
+
+/* v3.0 批次：隐藏「窗口材质与背景模糊度」设置卡（磨砂已删除、材质已设默认，该卡不再需要） */
+#materialBlurCard {
+  display: none !important;
+}
+
+/* v3.0 批次：背景模糊度滑块（Motion.Lab range-drag 适配）—— 自定义圆形滑块，
+   拖动实时写入 --bg-blur，壁纸层 .layout::before 按此值模糊 */
+body[data-preset-bg] .layout::before {
+  filter: blur(var(--bg-blur, 0px));
+}
+.bg-blur-range {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+}
+.bbr-track {
+  position: relative;
+  flex: 1;
+  height: 6px;
+  background: rgba(127, 127, 127, 0.18);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.bbr-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  width: 0%;
+  background: var(--accent, #8B8EE0);
+  border-radius: 999px;
+  transition: width 0.05s linear;
+}
+.bbr-knob {
+  position: absolute;
+  top: 50%;
+  left: 0%;
+  transform: translate(-50%, -50%);
+  width: 18px;
+  height: 18px;
+  /* 刻意设计：滑块旋钮恒白，保证在任意强调色/壁纸上都清晰可见 */
+  background: #ffffff;
+  border: 2px solid var(--accent, #8B8EE0);
+  border-radius: 50%;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  cursor: grab;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.bbr-knob:hover {
+  transform: translate(-50%, -50%) scale(1.15);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.28);
+}
+.bbr-knob:active,
+.bg-blur-range.dragging .bbr-knob {
+  cursor: grabbing;
+  transform: translate(-50%, -50%) scale(1.25);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+.bbr-val {
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-secondary);
+  min-width: 36px;
+  text-align: right;
+}
+
+/* v3.0 批次：设置页 appearance-card 禁用液态玻璃 3D 弹性形变（背景与主题 / 动效设置卡）
+   liquid-glass.js 会直接写 inline transform，必须用 !important 覆盖 */
+.appearance-card {
+  transform: none !important;
+}
+
+/* v3.0 批次：主题颜色选择与背景模糊度左右齐平布局 */
+.accent-blur-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  align-items: start;
 }

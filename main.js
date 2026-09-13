@@ -2979,7 +2979,7 @@ function saveAppearance(v) {
 
 handleSafe('appearance:get-material', async () => {
   const ap = loadAppearance();
-  return { material: ap.material || 'mica', materialEnabled: ap.materialEnabled !== false };
+  return { material: ap.material || 'mica-alt', materialEnabled: ap.materialEnabled !== false };
 });
 
 // 专家模式（v3.0 默认应用接管）：appearance.json 主进程真源，默认关闭。

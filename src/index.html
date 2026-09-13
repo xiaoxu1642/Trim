@@ -1227,20 +1227,34 @@
                       </div>
                       <p class="appearance-hint">窗口隐藏时自动暂停轮换，省电不打扰</p>
                     </div>
-                    <!-- 主题颜色选择（设置页整合4）：原「颜色选择」卡收编至此 -->
+                                        <!-- 主题颜色选择 + 背景模糊度（v3.0）：左右齐平排列，背景模糊度使用 Motion.Lab range-drag 自定义滑块 -->
                     <div class="appearance-sub">
-                      <div class="appearance-sub-head">主题颜色选择</div>
-                      <div class="accent-row">
-                        <input type="color" id="accentColor" value="#8B8EE0" data-tip="选择强调色" aria-label="选择界面强调色" />
-                        <button class="btn btn-secondary btn-small" id="btnAccentReset" data-tip="恢复默认强调色">恢复默认</button>
+                      <div class="accent-blur-grid">
+                        <div class="accent-blur-col">
+                          <div class="appearance-sub-head">主题颜色选择</div>
+                          <div class="accent-row">
+                            <input type="color" id="accentColor" value="#8B8EE0" data-tip="选择强调色" aria-label="选择界面强调色" />
+                            <button class="btn btn-secondary btn-small" id="btnAccentReset" data-tip="恢复默认强调色">恢复默认</button>
+                          </div>
+                          <p class="appearance-hint">强调色管按钮、高亮与选中态</p>
+                        </div>
+                        <div class="accent-blur-col">
+                          <div class="appearance-sub-head">背景模糊度</div>
+                          <div class="bg-blur-range" id="bgBlurRange">
+                            <div class="bbr-track">
+                              <div class="bbr-fill"></div>
+                              <div class="bbr-knob"></div>
+                            </div>
+                            <span class="bbr-val" id="bgBlurVal">0%</span>
+                          </div>
+                          <p class="appearance-hint">拖动滑块模糊壁纸背景，0% 清晰 / 100% 完全磨砂</p>
+                        </div>
                       </div>
-                      <p class="appearance-hint">强调色管按钮、高亮与选中态</p>
                     </div>
-                  </div>
                 </div>
               </div>
               <!-- 窗口材质与背景模糊度合并卡（v3.0）：横跨整行，与上方「背景与主题」卡等宽 -->
-              <div class="appearance-card appearance-card-wide">
+              <div class="appearance-card appearance-card-wide" id="materialBlurCard">
                 <div class="appearance-card-head">
                   <h4>窗口材质与背景模糊度</h4>
                   <p>选择窗口背景的视觉材质效果，并调节面板磨砂强度</p>
@@ -1320,7 +1334,7 @@
                       <option value="off">关闭</option>
                     </select>
                   </div>
-                  <p class="appearance-hint">「完整」= 折射 + 色散 + 指针弹性形变（弹层含 WebGL 高光）；「标准」= 折射无色散；「磨砂」= 仅毛玻璃；按钮均为浅色玻璃底，不使用主题色</p>
+                  <p class="appearance-hint">「完整」= 折射 + 色散 + 指针弹性形变（弹层含 WebGL 高光）；「标准」= 折射无色散；「磨砂」= 仅毛玻璃；按钮均为中性玻璃底，不使用主题色。材质语义对齐 Apple Liquid Glass：完整 ≈ clear+，标准 ≈ regular，磨砂 = regular 降级</p>
                 </div>
               </div>
             </div>

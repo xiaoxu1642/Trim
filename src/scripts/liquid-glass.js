@@ -1,18 +1,19 @@
 // liquid-glass.js - 全局「液态玻璃」引擎 2.0
-// 模式（localStorage 'winclean-liquid-motion'，四档；旧值 refract 自动迁移为 standard）：
-//   full     = 完整液态玻璃：分段栏滑块 + 按钮 + 弹层 SVG 物理折射（斯涅尔定律位移贴图）
+// 模式（localStorage 'winclean-liquid-motion'，四档；旧值 refract 自动迁移为 standard）。
+// 材质语义对齐 Apple Liquid Glass（docs规范/update/2026-09-14 五方案评估·B1）：
+//   full     ≈ clear+ ：完整液态玻璃——分段栏滑块 + 按钮 + 弹层 SVG 物理折射（斯涅尔定律位移贴图）
 //              + RGB 三通道边缘色散 + 高光贴图 + 指针弹性形变 + WebGL 弹层焦散高光
-//   standard = 标准液态玻璃：覆盖面同 full，但单通道折射、无色散 / 形变 / WebGL
-//   frost    = 磨砂玻璃：仅 backdrop blur（CSS 驱动），无折射滤镜
-//   off      = 关闭：隐藏滑块、恢复实底按钮，不注入任何滤镜
+//   standard ≈ regular：标准液态玻璃——覆盖面同 full，但单通道折射、无色散 / 形变 / WebGL
+//   frost    = regular 降级：磨砂玻璃，仅 backdrop blur（CSS 驱动），无折射滤镜
+//   off      = 实底：隐藏滑块、恢复实底按钮，不注入任何滤镜
 // 技术来源：
 //   - 位移贴图：圆角矩形角环 + 斯涅尔折射轮廓（厚度 / 斜边宽 / 折射率），参考 liquid实现2
 //   - 色散：R/G/B 三次 feDisplacementMap 不同 scale 后按 screen 混合，参考 liquid实现3
 //   - 高光：独立 specular 贴图在滤镜链内合成，参考 liquid实现2
 //   - 指针弹性形变：边缘激活区内的方向性缩放 + 平移，参考 liquid实现3
 // 能力检测失败（backdrop-filter 不支持引用 SVG 滤镜）自动降级 frost。
-// 性能护栏：贴图/滤镜按尺寸缓存复用；大元素（>420px）只 blur 不折射；折射元素数量有上限；
-//           prefers-reduced-motion 时禁用指针形变与 WebGL 动画。
+// 性能护栏：贴图/滤镜按尺寸缓存复用；单元素折射有面积预算（420×420 当量）；
+//           折射元素数量与滤镜桶数量有上限；prefers-reduced-motion 时禁用指针形变与 WebGL 动画。
 (function () {
   'use strict';
 
@@ -24,12 +25,17 @@
   const TAB_SELECTOR = '.filter-tab, .maint-tab';
   // 折射玻璃按钮：主题色实底在液态模式下由 CSS 换成浅色玻璃底（main.css 液态玻璃段），JS 负责折射滤镜
   const BUTTON_SELECTOR = '.btn-primary, .btn-accent, .btn-secondary';
-  // 悬浮玻璃层：统一弹窗 / 右键详情（动态创建，由 MutationObserver 跟挂）
-  const FLOATING_SELECTOR = '.usage-modal, .ctx-detail-modal';
+  // 悬浮玻璃层：统一弹窗 / 右键详情 / ds 下拉菜单（动态创建，由 MutationObserver 跟挂）。
+  // v3.0 修复批次（B4 扩覆盖面）：--bg-card 透明化后 ds-menu 底色改由 CSS floor+blur
+  // 兜底（main.css 菜单段），full/standard 档再由本引擎叠加折射与 shimmer
+  const FLOATING_SELECTOR = '.usage-modal, .ctx-detail-modal, .ds-menu';
   // 折射元素上限：滤镜链是像素级操作，数量失控会掉帧，超出的退化为磨砂
   const MAX_REFRACT = 28;
-  // 大面元素不做折射（逐像素位移贴图 + 大面积采样代价高），只 blur
-  const MAX_REFRACT_DIM = 420;
+  // 折射像素预算（B3 环带计费）：单元素 w×h ≤ 420×420 = 176400。
+  // 位移贴图只在边缘环带非零，但 feDisplacementMap 仍按元素整面积处理——按「面积」
+  // 计费才是诚实成本。同预算下 800×200 这类宽面板（工具行/横幅）与 420 方框等价，
+  // 不再因单边超 420 一刀切退化纯 blur（Apple 的玻璃主体恰是大面板）
+  const MAX_REFRACT_AREA = 420 * 420;
   // 指针弹性激活区：光标距元素边缘多少 px 内开始形变
   const ELASTIC_ZONE = 160;
   const ELASTICITY = 0.12;
@@ -38,8 +44,9 @@
   let refractionSupported = true;
   let reduceMotion = false;
   // v2.8.0：玻璃质感参数（读自 main.css --glass-satur/--glass-bright，init 时取一次）
-  let glassSatur = 1.65;
-  let glassBright = 1.04;
+  // v3.0 修复批次：默认值与 token 同步收敛到 Apple 消色玻璃档（1.25/1.02）
+  let glassSatur = 1.25;
+  let glassBright = 1.02;
   // v2.8.0：环境自适应状态（会话级降级，不改用户存储的偏好）
   let envBattery = false;        // 电池供电：full/standard → frost
   let envNoTransparency = false; // 系统关闭「透明效果」：强制 frost
@@ -284,10 +291,16 @@
     return filter;
   }
 
+  // 滤镜桶上限（修复实锤5）：桶随 模式x尺寸x圆角 组合增长，超过上限后新组合不再
+  // 建桶（调用方退化为磨砂）。不做 LRU 淘汰——已挂元素仍引用桶内滤镜，删除节点
+  // 会让其整条 backdrop-filter 悬空失效；退磨砂可由 scheduleScan 容量回收后升级
+  const FILTER_BUCKETS_MAX = 48;
+
   function getFilterId(kind, w, h, radius) {
     const key = kind + '|' + w + 'x' + h + 'r' + Math.round(radius);
     let id = filterBuckets.get(key);
     if (id) return id;
+    if (filterBuckets.size >= FILTER_BUCKETS_MAX) return null;
     const maps = buildMaps(w, h, radius);
     id = 'lg-f-' + kind + '-' + Math.random().toString(36).slice(2, 8);
     const filterEl = buildFilterEl(id, w, h, maps, Math.min(Math.max(radius * 0.85, 3), 12), kind === 'full');
@@ -313,20 +326,27 @@
     const rect = el.getBoundingClientRect();
     const w = Math.round(rect.width), h = Math.round(rect.height);
     if (!w || !h) return; // 隐藏中（未激活页 / 未显示弹窗），后续扫描再挂
-    const big = Math.max(w, h) > MAX_REFRACT_DIM;
-    const wantRefract = mode !== 'frost' && mode !== 'off' && refractionSupported && !big && refractCount < MAX_REFRACT;
+    const overBudget = w * h > MAX_REFRACT_AREA;
+    const wantRefract = mode !== 'frost' && mode !== 'off' && refractionSupported && !overBudget && refractCount < MAX_REFRACT;
     const blur = kind === 'floating' ? 9 : 2;
-    const st = { kind, w, h, radius: readRadius(el), blur, refract: wantRefract };
+    const st = { kind, w, h, radius: readRadius(el), blur, refract: false };
     if (wantRefract) {
-      refractCount++;
       const id = getFilterId(mode, w, h, st.radius);
-      setBackdrop(el, `url(#${id}) blur(${blur}px) saturate(${glassSatur}) brightness(${glassBright})`);
-      glassRo.observe(el);
+      if (id) {
+        st.refract = true;
+        refractCount++;
+        setBackdrop(el, `url(#${id}) blur(${blur}px) saturate(${glassSatur}) brightness(${glassBright})`);
+      } else {
+        // 滤镜桶满（上限护栏）：退化为磨砂，scheduleScan 会在容量腾出后升级
+        setBackdrop(el, `blur(${kind === 'floating' ? 18 : blur}px) saturate(${glassSatur}) brightness(${glassBright})`);
+      }
     } else {
-      // 大元素 / 超上限 / 不支持折射：纯磨砂（弹层面积大，磨砂力度比按钮更高）
+      // 超预算 / 不支持折射：纯磨砂（弹层面积大，磨砂力度比按钮更高）
       setBackdrop(el, `blur(${kind === 'floating' ? 18 : blur}px) saturate(${glassSatur}) brightness(${glassBright})`);
     }
     glassStates.set(el, st);
+    // 全量观察（含磨砂元素）：尺寸变化后可重新评估折射资格（实锤6 资格回升）
+    glassRo.observe(el);
     if (kind === 'button') {
       if (mode === 'full' && !reduceMotion) {
         el.classList.add('lg-elastic');
@@ -335,6 +355,20 @@
     } else if (mode === 'full') {
       shimmer.attach(el);
     }
+  }
+
+  // 折射资格回升（修复实锤6）：元素缩小回预算内 / 折射名额或滤镜桶腾出后，
+  // 把停在纯 blur 的元素升回折射。只升不降，降级路径在 glassRo 与 attachGlass
+  function tryUpgradeGlass(el, st) {
+    if (st.refract || el.isConnected === false) return;
+    if (mode !== 'full' && mode !== 'standard') return;
+    if (!refractionSupported || refractCount >= MAX_REFRACT) return;
+    if (st.w * st.h > MAX_REFRACT_AREA) return;
+    const id = getFilterId(mode, st.w, st.h, st.radius);
+    if (!id) return; // 桶满，等下一轮扫描
+    st.refract = true;
+    refractCount++;
+    setBackdrop(el, `url(#${id}) blur(${st.blur}px) saturate(${glassSatur}) brightness(${glassBright})`);
   }
 
   function detachGlass(el, st) {
@@ -387,21 +421,24 @@
       if (!st) return;
       const w = Math.round(entry.contentRect.width), h = Math.round(entry.contentRect.height);
       if (w === st.w && h === st.h) return;
-      // 尺寸变化：重新选桶（折射随尺寸重建，磨砂不受影响）
+      st.w = w; st.h = h;
       if (st.refract) {
+        // 尺寸变化：重选桶（滤镜随尺寸重建，位移贴图走缓存）；超预算则降回磨砂
         refractCount = Math.max(0, refractCount - 1);
-        const big = Math.max(w, h) > MAX_REFRACT_DIM;
-        st.w = w; st.h = h;
-        st.refract = refractionSupported && !big && refractCount < MAX_REFRACT;
-        if (st.refract) {
-          refractCount++;
+        st.refract = false;
+        if (w * h <= MAX_REFRACT_AREA) {
           const id = getFilterId(mode, w, h, st.radius);
-          setBackdrop(el, `url(#${id}) blur(${st.blur}px) saturate(1.4) brightness(1.03)`);
-        } else {
-          setBackdrop(el, `blur(${st.blur}px) saturate(1.45) brightness(1.03)`);
+          if (id) {
+            st.refract = true;
+            refractCount++;
+            setBackdrop(el, `url(#${id}) blur(${st.blur}px) saturate(${glassSatur}) brightness(${glassBright})`);
+            return;
+          }
         }
+        setBackdrop(el, `blur(${st.blur}px) saturate(${glassSatur}) brightness(${glassBright})`);
       } else {
-        st.w = w; st.h = h;
+        // 修复实锤6：磨砂元素尺寸变化后重新评估折射资格（缩小回预算内可回升）
+        tryUpgradeGlass(el, st);
       }
     });
   });
@@ -416,6 +453,10 @@
       sweepDetached();
       document.querySelectorAll(BUTTON_SELECTOR + ',' + FLOATING_SELECTOR).forEach((el) => {
         if (!glassStates.has(el)) attachGlass(el);
+      });
+      // 修复实锤6：折射名额/滤镜桶腾出后，回收此前降级为磨砂的元素
+      glassStates.forEach((st, el) => {
+        if (el.isConnected) tryUpgradeGlass(el, st);
       });
     }, 120);
   }
@@ -471,14 +512,18 @@
     elasticRaf = requestAnimationFrame(updateElastics);
   }
 
-  // 高光渐变随指针流动（CSS 变量驱动 ::before 光泽角）
+  // 高光渐变随指针流动（CSS 变量驱动 ::before radial specular 光斑）。
+  // 修复实锤4：只往消费方 .lg-elastic 写入——弹层光效由 WebGL shimmer 承担（full 档），
+  // 原先对弹层写入 --lg-mx/--lg-my 无任何读取方，属死变量。
+  // 值必须带 %：CSS radial-gradient 的 circle at 位置吃 <percentage>，无单位数字会让
+  // 整条渐变在 computed-value 阶段非法回退为 none
   function onPointerOver(e) {
-    const el = e.target && e.target.closest ? e.target.closest('.lg-elastic, .usage-modal, .ctx-detail-modal') : null;
+    const el = e.target && e.target.closest ? e.target.closest('.lg-elastic') : null;
     if (!el) return;
     const r = el.getBoundingClientRect();
     if (!r.width || !r.height) return;
-    el.style.setProperty('--lg-mx', (((e.clientX - r.left) / r.width) * 100).toFixed(1));
-    el.style.setProperty('--lg-my', (((e.clientY - r.top) / r.height) * 100).toFixed(1));
+    el.style.setProperty('--lg-mx', (((e.clientX - r.left) / r.width) * 100).toFixed(1) + '%');
+    el.style.setProperty('--lg-my', (((e.clientY - r.top) / r.height) * 100).toFixed(1) + '%');
   }
 
   function onPressIn(e) {
@@ -675,11 +720,12 @@
 
     if (refractionSupported && (mode === 'full' || mode === 'standard')) {
       ensureFilter(state, Math.round(w), Math.round(h), radius);
-      const bd = `url(#${state.filterId}) blur(1px) saturate(1.55) brightness(1.07)`;
+      // 质感参数读 token（修复实锤2：原 1.55/1.07 硬编码与 --glass-satur/--glass-bright 漂移）
+      const bd = `url(#${state.filterId}) blur(1px) saturate(${glassSatur}) brightness(${glassBright})`;
       thumb.style.backdropFilter = bd;
       thumb.style.webkitBackdropFilter = bd;
     } else if (mode !== 'off') {
-      const bd = 'blur(12px) saturate(1.5) brightness(1.06)';
+      const bd = `blur(12px) saturate(${glassSatur}) brightness(${glassBright})`;
       thumb.style.backdropFilter = bd;
       thumb.style.webkitBackdropFilter = bd;
     }

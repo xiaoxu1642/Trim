@@ -57,7 +57,7 @@
     // （表面 token 真源即玻璃值），不再有「经典不透明面板」态。旧 skin 键按 glass=100% / classic=0% 折算迁移。
     let blur = ap.bgBlur;
     if (blur == null) {
-      blur = ap.skin === 'glass' ? 100 : 0;
+      blur = 100;
       ap.bgBlur = blur;
       delete ap.skin;
       try { localStorage.setItem('winclean-appearance', JSON.stringify(ap)); } catch (e) {}
