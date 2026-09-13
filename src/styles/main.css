@@ -1985,10 +1985,11 @@ body.lg-mode-frost .maint-tab.active .maint-tab-count {
   border-bottom: 1px solid var(--border-default);
 }
 
-/* 设置页所有区块通栏：功能入口 / 显示 / 系统信息 / 关于我们 均为整行容器，
-   宽度保持一致（「显示」内含双列 appearance-grid，自身不再与已删除的
-   清理选项区块并排，否则右列整列留白）。 */
+/* 设置页所有区块通栏：功能入口 / 背景与主题（拆分批次独立卡）/ 显示 / 系统信息 /
+   关于我们 均为整行容器，宽度保持一致（「显示」内含双列 appearance-grid，自身
+   不再与已删除的清理选项区块并排，否则右列整列留白）。 */
 .settings-entry-section,
+.settings-bgtheme-section,
 .settings-appearance-section,
 .settings-system-section,
 .settings-about-section {
