@@ -21,8 +21,10 @@
   const MODES = ['full', 'standard', 'frost', 'off'];
   const LEGACY_MODE_MAP = { refract: 'standard' };
 
-  const BAR_SELECTOR = '.filter-tabs, .maint-tabs';
-  const TAB_SELECTOR = '.filter-tab, .maint-tab';
+  // v3.2.0（侧边岛玻璃选中滑块）：#sidebar 纳入滑块引擎，.nav-item 作为 tab——
+  // 点击导航时选中玻璃块从旧项纵向平滑滑到新项（弹簧回弹 + 轻微挤压），替换硬切背景
+  const BAR_SELECTOR = '.filter-tabs, .maint-tabs, #sidebar';
+  const TAB_SELECTOR = '.filter-tab, .maint-tab, .nav-item';
   // 折射玻璃按钮：主题色实底在液态模式下由 CSS 换成浅色玻璃底（main.css 液态玻璃段），JS 负责折射滤镜
   const BUTTON_SELECTOR = '.btn-primary, .btn-accent, .btn-secondary';
   // v3 评估 C/L3：输入框与下拉纳入折射体系（field-input 同时挂在 input 与 select 上）。
@@ -687,16 +689,28 @@
   };
 
   // ============ 分段栏滑块（原有机制，贴图换成物理折射版） ============
+  // v3.2.0：#sidebar 也是 bar，active 查找同步覆盖 .nav-item
   function findActiveTab(bar) {
+    // 侧边栏：测速父项在其子页（diskbench/netcheck/netspeed）也带 .active（分组高亮），
+    // 滑块必须贴合真实菜单项——排除带 data-nav-toggle 的父级条目
+    if (isSidebarBar(bar)) {
+      return bar.querySelector('.nav-item.active:not([data-nav-toggle])');
+    }
     // 注意：不能拼成 '.filter-tab, .maint-tab.active'——选择器列表是并集，
     // 会命中任意第一个 .filter-tab；必须对两种类分别要求 .active
     return bar.querySelector('.filter-tab.active, .maint-tab.active');
   }
 
+  // 侧边栏 bar（纵向滑动、小圆角、不开折射贴图——性能护栏见 placeThumb）
+  function isSidebarBar(bar) { return bar && bar.id === 'sidebar'; }
+
   function createThumb(bar, state) {
     const thumb = document.createElement('span');
     thumb.className = 'lg-thumb';
-    bar.appendChild(thumb);
+    // v3.2.0：侧边栏滑块挂进 .nav-scroll 滚动容器内——nav 纵向滚动时滑块随内容
+    // 自然跟随（.nav-scroll 已 position:relative），免去 scrollTop 逐帧修正
+    const mount = isSidebarBar(bar) ? (bar.querySelector('.nav-scroll') || bar) : bar;
+    mount.appendChild(thumb);
     state.thumb = thumb;
     return thumb;
   }
@@ -719,11 +733,14 @@
     const thumb = state.thumb;
     const tab = findActiveTab(bar);
     if (!thumb || !tab) return;
+    const vertical = isSidebarBar(bar);
     const x = tab.offsetLeft;
+    const y = tab.offsetTop;
     const w = tab.offsetWidth;
     const h = tab.offsetHeight;
     if (!w || !h) return; // 页面隐藏中，等下次刷新
-    const radius = h / 2;
+    // 横向 tab 栏保持胶囊；侧边栏菜单项是小圆角（--radius-medium），非胶囊
+    const radius = vertical ? 10 : h / 2;
 
     if (!animate) thumb.classList.add('lg-no-anim');
 
@@ -732,14 +749,24 @@
       thumb.classList.add('lg-moving');
     }
 
-    thumb.style.top = tab.offsetTop + 'px';
+    // v3.2.0：纵向侧边栏两轴位移都走 transform（GPU 加速），不再直接写 top（瞬移无过渡）；
+    // 横向 tab 栏 offsetTop 恒 0，维持原 top 写法兼容
+    if (vertical) {
+      thumb.style.top = '0px';
+      thumb.style.setProperty('--lg-y', y + 'px');
+      state.lastY = y;
+    } else {
+      thumb.style.top = y + 'px';
+    }
     thumb.style.width = w + 'px';
     thumb.style.height = h + 'px';
     thumb.style.setProperty('--lg-x', x + 'px');
     thumb.style.borderRadius = radius + 'px';
     state.lastX = x;
 
-    if (refractionSupported && (mode === 'full' || mode === 'standard')) {
+    // 性能护栏（AGENTS §7 / 方案三-3）：侧边栏菜单项面积约为横向 tab 两倍，
+    // 折射滤镜像素级开销翻倍——侧栏滑块只开普通磨砂（blur+saturate），不开 SVG 折射贴图
+    if (!vertical && refractionSupported && (mode === 'full' || mode === 'standard')) {
       ensureFilter(state, Math.round(w), Math.round(h), radius);
       // 质感参数读 token（修复实锤2：原 1.55/1.07 硬编码与 --glass-satur/--glass-bright 漂移）
       const bd = `url(#${state.filterId}) blur(1px) saturate(${glassSatur}) brightness(${glassBright})`;
@@ -788,6 +815,11 @@
         if (typeof state.lastX === 'number') {
           state.thumb.classList.add('lg-no-anim');
           state.thumb.style.setProperty('--lg-x', state.lastX + 'px');
+          // v3.2.0：侧边栏纵向坐标一并恢复（top=0 + --lg-y），否则重建后瞬跳回顶部
+          if (typeof state.lastY === 'number') {
+            state.thumb.style.top = '0px';
+            state.thumb.style.setProperty('--lg-y', state.lastY + 'px');
+          }
           void state.thumb.offsetWidth;
           requestAnimationFrame(() => {
             state.thumb?.classList.remove('lg-no-anim');

@@ -15,7 +15,8 @@
 
   let settingsCache = null;
   let openResolve = null;
-  let escHandler = null;
+  let pickerCtrl = null;     // v3.2.0：弹窗工厂 ctrl
+  let pickerChanged = false; // 本次弹窗内是否切换了模型（close 时交给 resolve）
 
   function escapeHtml(text) {
     const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
@@ -52,9 +53,10 @@
   }
 
   function close(changed) {
-    document.getElementById('modelPickerBackdrop')?.remove();
-    if (escHandler) { document.removeEventListener('keydown', escHandler); escHandler = null; }
-    if (openResolve) { openResolve(changed); openResolve = null; }
+    // v3.2.0：骨架由工厂创建，关闭统一走 ctrl.close()（Esc/遮罩/× 触发 onClose 同样结算 Promise）
+    if (typeof changed === 'boolean') pickerChanged = changed;
+    if (pickerCtrl) { const c = pickerCtrl; pickerCtrl = null; c.close(); return; }
+    if (openResolve) { openResolve(pickerChanged); openResolve = null; }
   }
 
   // 打开模型选择弹窗；返回 Promise<boolean>，true 表示用户切换了模型
@@ -69,48 +71,53 @@
         document.getElementById('modelPickerBackdrop')?.remove();
         const { list, scopes } = normalize(data || {});
         const current = (scopes && scopes[scopeKey]) || 'metaso';
+        pickerChanged = false;
 
-        const backdrop = document.createElement('div');
-        backdrop.className = 'usage-backdrop model-picker-backdrop';
-        backdrop.id = 'modelPickerBackdrop';
-        backdrop.innerHTML = `
-          <div class="usage-modal model-picker-modal" role="dialog" aria-modal="true" aria-labelledby="modelPickerTitle">
-            <div class="usage-header">
-              <h2 id="modelPickerTitle">选择 AI 简介模型 · ${escapeHtml(meta.label)}</h2>
-              <button class="usage-close" id="modelPickerClose" type="button" data-tip="关闭" aria-label="关闭">&times;</button>
-            </div>
-            <div class="usage-body model-picker-body">
-              <p class="model-picker-tip">
-                这里只选择「${escapeHtml(meta.label)}」使用的模型，不会影响另外两个模块。
-                模型是否启用、接口地址与密钥请在「设置 - 大模型管理」中维护。
-              </p>
-              <div class="model-picker-list">
-                ${list.map(m => {
-                  const stateText = m.enabled ? (m.verified ? '已启用 · 已验证' : '已启用') : '未启用';
-                  const stateCls = m.enabled ? (m.verified ? 'ok' : 'warn') : 'off';
-                  const unusable = !m.enabled;
-                  return `
-                    <label class="model-picker-item${m.key === current ? ' active' : ''}${unusable ? ' unusable' : ''}">
-                      <input type="radio" name="modelPickerChoice" value="${escapeHtml(m.key)}" ${m.key === current ? 'checked' : ''} ${unusable ? 'disabled' : ''} />
-                      <span class="model-picker-radio"></span>
-                      <span class="model-picker-copy">
-                        <span class="model-picker-name">${escapeHtml(m.displayName || m.label)}</span>
-                        <span class="model-picker-desc">${escapeHtml(m.builtin ? '内置模型' : '用户自定义（OpenAI 兼容 chat/completions）')}</span>
-                      </span>
-                      <span class="model-picker-state ${stateCls}">${escapeHtml(stateText)}</span>
-                    </label>`;
-                }).join('')}
-              </div>
-            </div>
-            <div class="usage-footer model-picker-footer">
-              <button class="btn btn-secondary" id="modelPickerManage" type="button">去设置</button>
+        const bodyHtml = `
+            <p class="model-picker-tip">
+              这里只选择「${escapeHtml(meta.label)}」使用的模型，不会影响另外两个模块。
+              模型是否启用、接口地址与密钥请在「设置 - 大模型管理」中维护。
+            </p>
+            <div class="model-picker-list">
+              ${list.map(m => {
+                const stateText = m.enabled ? (m.verified ? '已启用 · 已验证' : '已启用') : '未启用';
+                const stateCls = m.enabled ? (m.verified ? 'ok' : 'warn') : 'off';
+                const unusable = !m.enabled;
+                return `
+                  <label class="model-picker-item${m.key === current ? ' active' : ''}${unusable ? ' unusable' : ''}">
+                    <input type="radio" name="modelPickerChoice" value="${escapeHtml(m.key)}" ${m.key === current ? 'checked' : ''} ${unusable ? 'disabled' : ''} />
+                    <span class="model-picker-radio"></span>
+                    <span class="model-picker-copy">
+                      <span class="model-picker-name">${escapeHtml(m.displayName || m.label)}</span>
+                      <span class="model-picker-desc">${escapeHtml(m.builtin ? '内置模型' : '用户自定义（OpenAI 兼容 chat/completions）')}</span>
+                    </span>
+                    <span class="model-picker-state ${stateCls}">${escapeHtml(stateText)}</span>
+                  </label>`;
+              }).join('')}
+            </div>`;
+        const footerHtml = `
+              <button class="btn btn-secondary" data-role="manageBtn" type="button">去设置</button>
               <span class="model-picker-spacer"></span>
-              <button class="btn btn-secondary" id="modelPickerCancel" type="button">取消</button>
-              <button class="btn btn-primary" id="modelPickerSave" type="button">保存</button>
-            </div>
-          </div>
-        `;
-        document.body.appendChild(backdrop);
+              <button class="btn btn-secondary" data-role="cancelBtn" type="button">取消</button>
+              <button class="btn btn-primary" data-role="saveBtn" type="button">保存</button>`;
+
+        // v3.2.0 弹窗统一批次：骨架改由 modal.js 工厂生成（Esc/遮罩/× 关闭 + 焦点陷阱 + 日志统一）
+        pickerChanged = false;
+        pickerCtrl = window.modal.create({
+          id: 'modelPickerBackdrop',
+          title: `选择 AI 简介模型 · ${meta.label}`,
+          backdropClass: 'model-picker-backdrop',
+          modalClass: 'model-picker-modal',
+          bodyClass: 'model-picker-body',
+          bodyHtml,
+          footerClass: 'model-picker-footer',
+          footerHtml,
+          onClose() {
+            pickerCtrl = null;
+            if (openResolve) { openResolve(pickerChanged); openResolve = null; }
+          }
+        });
+        const backdrop = pickerCtrl.backdrop;
 
         backdrop.querySelectorAll('.model-picker-item').forEach(item => {
           item.addEventListener('click', () => {
@@ -123,15 +130,13 @@
           });
         });
 
-        backdrop.querySelector('#modelPickerClose').addEventListener('click', () => close(false));
-        backdrop.querySelector('#modelPickerCancel').addEventListener('click', () => close(false));
-        backdrop.addEventListener('click', e => { if (e.target === backdrop) close(false); });
-        backdrop.querySelector('#modelPickerManage').addEventListener('click', () => {
+        backdrop.querySelector('[data-role="cancelBtn"]').addEventListener('click', () => close(false));
+        backdrop.querySelector('[data-role="manageBtn"]').addEventListener('click', () => {
           if (window.api?.modelsWindow?.open) window.api.modelsWindow.open();
           else window.app?.toast('warning', '当前环境不支持打开大模型管理窗口');
         });
 
-        backdrop.querySelector('#modelPickerSave').addEventListener('click', async () => {
+        backdrop.querySelector('[data-role="saveBtn"]').addEventListener('click', async () => {
           const checked = backdrop.querySelector('input[name="modelPickerChoice"]:checked');
           const key = checked ? checked.value : current;
           if (key === current) { close(false); return; }
@@ -152,9 +157,6 @@
             window.app?.toast('error', '保存失败: ' + e.message);
           }
         });
-
-        escHandler = (e) => { if (e.key === 'Escape') close(false); };
-        document.addEventListener('keydown', escHandler);
       });
     });
   }

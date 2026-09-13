@@ -1390,14 +1390,21 @@ check('v2.7.2：启动加速编排 / 透明覆盖层 / postbuild 清旧包', () 
 console.log('[8/8] v2.8.0 批次检查');
 
 check('内嵌壁纸资源与轮换引擎（任务2）', () => {
-  for (const f of ['wp-winter.jpg', 'wp-mountain.jpg', 'wp-gaming.jpg', 'wp-anime.jpg', 'wp-doll.jpg']) {
+  // v3.2.0：预设壁纸下架「山峰 wp-mountain」（连同极光/落日渐变），资产与选择器同步移除
+  for (const f of ['wp-winter.jpg', 'wp-gaming.jpg', 'wp-anime.jpg', 'wp-doll.jpg']) {
     const p = abs('src/assets/bg/' + f);
     if (!fs.existsSync(p)) throw new Error('缺少内嵌壁纸 ' + f);
     if (fs.statSync(p).size > 2 * 1024 * 1024) throw new Error('壁纸体积超 2MB（应压缩）: ' + f);
   }
+  for (const gone of ['wp-mountain.jpg', 'aurora', 'sunset']) {
+    if (fs.existsSync(abs('src/assets/bg/' + gone))) throw new Error('已下架壁纸资产仍存在: ' + gone);
+  }
   const html = fs.readFileSync(abs('src/index.html'), 'utf8');
-  for (const wp of ['wp-winter', 'wp-mountain', 'wp-gaming', 'wp-anime', 'wp-doll']) {
+  for (const wp of ['wp-winter', 'wp-gaming', 'wp-anime', 'wp-doll']) {
     if (!html.includes(`value="${wp}"`)) throw new Error('预设选择器缺少 ' + wp);
+  }
+  for (const gone of ['value="aurora"', 'value="sunset"', 'value="wp-mountain"']) {
+    if (html.includes(gone)) throw new Error('已下架预设仍挂在选择器: ' + gone);
   }
   for (const id of ['wallpaperRotateToggle', 'wallpaperIntervalSelect']) {
     if (!html.includes(`id="${id}"`)) throw new Error('index.html 缺少轮换控件 ' + id);

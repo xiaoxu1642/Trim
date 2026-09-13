@@ -3273,7 +3273,7 @@ const AI_MODELS = {
 };
 
 // 各模块的 AI 简介相互独立：各自记录所选模型与提示词，互不联动
-const AI_SCOPES = ['optimizer', 'startup', 'contextmenu', 'memoryclean'];
+const AI_SCOPES = ['optimizer', 'startup', 'contextmenu', 'memoryclean', 'maintenance'];
 const AI_SCOPE_META = {
   optimizer: {
     label: '电脑优化中心',
@@ -3290,6 +3290,11 @@ const AI_SCOPE_META = {
   memoryclean: {
     label: '内存清理',
     prompt: '请用简体中文简要介绍下面这个 Windows 内存清理操作的作用、原理与需要注意的风险，控制在120字以内，只输出最终结论，不要思考过程与额外话术。'
+  },
+  // v3.2.0：系统维护修复项的联网 AI 解释（维护项点击弹窗内「AI大模型解释」按钮）
+  maintenance: {
+    label: '系统维护',
+    prompt: '请用简体中文简要解释下面这个 Windows 系统维护修复项：它是什么、什么情况下需要执行、执行后预期达到的效果与注意事项，控制在150字以内，只输出最终结论，不要思考过程与额外话术。'
   }
 };
 // 保存自定义模型（以及任一模型）时自动发送的连通性确认消息

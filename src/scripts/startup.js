@@ -366,51 +366,29 @@
   // ==================== 启动项简介 ====================
   // 点击行内「简介」按钮 → 弹窗展示本地内置简介；
   // 联网 AI 简介不会自动请求，需用户再次点击面板中的「获取AI简介」才调用所选大模型。
+  // v3.2.0 弹窗统一批次：骨架改由 modal.js 工厂生成（原手写 backdrop 重复打开会留双实例、无焦点陷阱）
   function showIntro(item) {
     const sourceLabel = (item.source && SOURCE_META[item.source] ? SOURCE_META[item.source].label : '') || item.location || '';
-    const backdrop = document.createElement('div');
-    backdrop.className = 'usage-backdrop startup-intro-backdrop';
-    backdrop.id = 'startupIntroBackdrop';
-    backdrop.innerHTML = `
-      <div class="usage-modal startup-intro-modal" role="dialog" aria-modal="true" aria-labelledby="startupIntroTitle">
-        <div class="usage-header">
-          <h2 id="startupIntroTitle">${escapeHtml(item.name || '未命名')}</h2>
-          <button class="usage-close" id="startupIntroClose" type="button" data-tip="关闭" aria-label="关闭">&times;</button>
-        </div>
-        <div class="usage-body startup-intro-body">
-          <div class="startup-intro-meta">启动项 · ${escapeHtml(sourceLabel)}${item.publisher ? ' · ' + escapeHtml(item.publisher) : ''}</div>
-          <div id="startupIntroMount"></div>
-        </div>
-        <div class="usage-footer startup-intro-footer">
-          <span class="model-picker-spacer"></span>
-          <button class="btn btn-primary" id="startupIntroCloseBtn" type="button">关闭</button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(backdrop);
+    const ctrl = window.modal.create({
+      id: 'startupIntroBackdrop',
+      title: item.name || '未命名',
+      bodyHtml: `
+        <div class="startup-intro-meta">启动项 · ${escapeHtml(sourceLabel)}${item.publisher ? ' · ' + escapeHtml(item.publisher) : ''}</div>
+        <div data-role="introMount"></div>`,
+      bodyClass: 'startup-intro-body',
+      footerHtml: `
+        <span class="model-picker-spacer"></span>
+        <button class="btn btn-primary" data-role="closeBtn" type="button">关闭</button>`,
+      footerClass: 'startup-intro-footer'
+    });
+    ctrl.modal.classList.add('startup-intro-modal');
+    ctrl.footer.querySelector('[data-role="closeBtn"]').addEventListener('click', () => ctrl.close());
 
-    const closeIntro = () => {
-      document.getElementById('startupIntroBackdrop')?.remove();
-      document.removeEventListener('keydown', introKeyHandler);
-    };
-    function introKeyHandler(e) { if (e.key === 'Escape') closeIntro(); }
-    document.addEventListener('keydown', introKeyHandler);
-
-    backdrop.querySelector('#startupIntroClose').addEventListener('click', closeIntro);
-    backdrop.querySelector('#startupIntroCloseBtn').addEventListener('click', closeIntro);
-    backdrop.addEventListener('click', e => { if (e.target === backdrop) closeIntro(); });
-
+    const mount = ctrl.body.querySelector('[data-role="introMount"]');
     if (window.intro?.mountIntroPanel) {
-      window.intro.mountIntroPanel({
-        mount: backdrop.querySelector('#startupIntroMount'),
-        scope: 'startup',
-        name: item.name,
-        company: item.publisher || '',
-        item
-      });
+      window.intro.mountIntroPanel({ mount, scope: 'startup', name: item.name, company: item.publisher || '', item });
     } else {
-      backdrop.querySelector('#startupIntroMount').innerHTML =
-        '<div class="empty-state"><p>简介模块未加载</p></div>';
+      mount.innerHTML = '<div class="empty-state"><p>简介模块未加载</p></div>';
     }
   }
 

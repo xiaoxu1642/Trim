@@ -54,8 +54,7 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
   let pathConfig = {};
   let icons = {};        // groupId -> dataUrl
   let isInitialized = false;
-  let modal = null;      // { backdrop, body, hint }
-  let escHandler = null;
+  let modal = null;      // { ctrl, backdrop, body, hint }
 
   function escapeAttr(s) {
     return String(s || '').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -251,47 +250,37 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
   }
 
   // ==================== 弹窗开关 ====================
+  // v3.2.0 弹窗统一批次：骨架改由 modal.js 工厂生成（Esc/遮罩/× 关闭 + 焦点陷阱统一）
   function openModal() {
     closeModal();
-    const backdrop = document.createElement('div');
-    backdrop.className = 'usage-backdrop path-binding-backdrop';
-    backdrop.id = 'pathBindingBackdrop';
-    backdrop.innerHTML = `
-      <div class="usage-modal path-binding-modal" role="dialog" aria-modal="true" aria-labelledby="pathBindingTitle">
-        <div class="usage-header">
-          <h2 id="pathBindingTitle">安装路径绑定</h2>
-          <button class="usage-close" id="pathBindingClose" type="button" data-tip="关闭" aria-label="关闭">&times;</button>
-        </div>
-        <div class="usage-body pw-body path-binding-body" id="pathBindingBody">
-          <div class="pw-empty">正在加载路径配置…</div>
-        </div>
-        <div class="usage-footer pw-footer">
-          <span class="pw-last-scan" id="pathBindingHint"></span>
+    const ctrl = window.modal.create({
+      id: 'pathBindingBackdrop',
+      title: '安装路径绑定',
+      backdropClass: 'path-binding-backdrop',
+      modalClass: 'path-binding-modal',
+      bodyClass: 'pw-body path-binding-body',
+      bodyHtml: '<div class="pw-empty">正在加载路径配置…</div>',
+      footerClass: 'pw-footer',
+      footerHtml: `
+          <span class="pw-last-scan" data-role="hint"></span>
           <span class="model-picker-spacer"></span>
-          <button class="btn btn-secondary" id="pathBindingScan" type="button">重新扫描</button>
-          <button class="btn btn-primary" id="pathBindingDone" type="button">完成</button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(backdrop);
+          <button class="btn btn-secondary" data-role="scanBtn" type="button">重新扫描</button>
+          <button class="btn btn-primary" data-role="doneBtn" type="button">完成</button>`
+    });
     modal = {
-      backdrop,
-      body: backdrop.querySelector('#pathBindingBody'),
-      hint: backdrop.querySelector('#pathBindingHint')
+      ctrl,
+      backdrop: ctrl.backdrop,
+      body: ctrl.body,
+      hint: ctrl.backdrop.querySelector('[data-role="hint"]')
     };
 
-    backdrop.querySelector('#pathBindingClose').addEventListener('click', closeModal);
-    backdrop.querySelector('#pathBindingDone').addEventListener('click', closeModal);
-    backdrop.addEventListener('click', e => { if (e.target === backdrop) closeModal(); });
-    backdrop.querySelector('#pathBindingScan').addEventListener('click', async e => {
+    ctrl.backdrop.querySelector('[data-role="doneBtn"]').addEventListener('click', closeModal);
+    ctrl.backdrop.querySelector('[data-role="scanBtn"]').addEventListener('click', async e => {
       const btn = e.currentTarget;
       btn.disabled = true;
       btn.textContent = '扫描中…';
       try { await autoScan(false); } finally { btn.disabled = false; btn.textContent = '重新扫描'; }
     });
-
-    escHandler = (e) => { if (e.key === 'Escape') closeModal(); };
-    document.addEventListener('keydown', escHandler);
 
     // 先渲染已保存配置，再后台补齐图标，避免等待图标造成白屏
     renderBody();
@@ -300,9 +289,7 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
   }
 
   function closeModal() {
-    if (escHandler) { document.removeEventListener('keydown', escHandler); escHandler = null; }
-    document.getElementById('pathBindingBackdrop')?.remove();
-    modal = null;
+    if (modal) { modal.ctrl.close(); modal = null; }
   }
 
   async function load() {
@@ -770,9 +757,13 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
       }
       return stored;
     }
-    // applyPresetBg：body[data-preset-bg="aurora|sunset|graphite"] 设置底层渐变墙纸
+    // applyPresetBg：body[data-preset-bg="graphite|wp-*"] 设置底层渐变/实拍墙纸
+    // v3.2.0：白名单校验——已下架预设（aurora/sunset/wp-mountain）残留旧值时静默回落「无」，
+    // 避免 body 挂着无 CSS 定义的 data-preset-bg 造成空白覆盖层
+    const PRESET_BG_VALID = ['graphite', 'wp-winter', 'wp-gaming', 'wp-anime', 'wp-doll'];
     function applyPresetBg(preset) {
-      if (preset) document.body.dataset.presetBg = preset;
+      const v = PRESET_BG_VALID.includes(preset) ? preset : '';
+      if (v) document.body.dataset.presetBg = v;
       else delete document.body.dataset.presetBg;
     }
     const presetBgSelect = document.getElementById('presetBgSelect');
@@ -787,7 +778,8 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
     // ==================== 内置实拍壁纸轮换（v2.8.0） ====================
     // 仅 wp-* 实拍壁纸预设参与轮换（渐变/无背景时计时器空转）；默认 10s，可调/可关；
     // 窗口隐藏时自动暂停（visibilitychange），省电不打扰。状态存 winclean-appearance。
-    const WP_LIST = ['wp-winter', 'wp-mountain', 'wp-gaming', 'wp-anime', 'wp-doll'];
+    // v3.2.0：预设壁纸下架「山峰 wp-mountain」（连同极光/落日渐变），WP_LIST 仅保留在售实拍壁纸
+    const WP_LIST = ['wp-winter', 'wp-gaming', 'wp-anime', 'wp-doll'];
     const wpRotateToggle = document.getElementById('wallpaperRotateToggle');
     const wpIntervalSelect = document.getElementById('wallpaperIntervalSelect');
     let wpTimer = null;

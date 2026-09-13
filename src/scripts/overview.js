@@ -204,14 +204,17 @@
             <button type="button" class="checkup-btn checkup-btn-ignore" data-checkup-ignore="${escapeHtml(c.id)}" data-tip="不再显示该条目（可随时在标题旁恢复）">忽略</button>
           </span>` : '';
       return `
-      <div class="checkup-row" data-status="${escapeHtml(c.status || 'unknown')}">
-        <div class="checkup-row-head">
-          ${checkupStatusBadge(c.status)}
-          <span class="checkup-row-title">${escapeHtml(c.title || '')}</span>
-          <span class="checkup-row-value">${escapeHtml(c.value || '')}</span>
-          <span class="checkup-row-evidence">${escapeHtml(c.evidence || '未验证')}</span>${actions}
+      <div class="checkup-row row-card row-card-top" data-status="${escapeHtml(c.status || 'unknown')}">
+        <div class="checkup-row-main">
+          <div class="checkup-row-head">
+            ${checkupStatusBadge(c.status)}
+            <span class="checkup-row-title">${escapeHtml(c.title || '')}</span>
+            <span class="checkup-row-value">${escapeHtml(c.value || '')}</span>
+            <span class="checkup-row-evidence">${escapeHtml(c.evidence || '未验证')}</span>
+          </div>
+          <p class="checkup-row-detail">${escapeHtml(c.detail || '')}</p>
         </div>
-        <p class="checkup-row-detail">${escapeHtml(c.detail || '')}</p>
+        ${actions}
       </div>`;
     }).join('');
     // 事件绑定：去处理 / 忽略（忽略持久化到 localStorage，重装/清缓存前一直生效）

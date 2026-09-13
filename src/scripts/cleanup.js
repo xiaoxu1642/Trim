@@ -1162,9 +1162,8 @@
 
   // ==================== P3 条目明细弹窗 ====================
   // 枚举单个条目将删除的具体文件清单（只读，最多展示 600 条），支持复制完整清单。
-  let detailEscHandler = null;
+  // v3.2.0 弹窗统一批次：骨架改由 modal.js 工厂生成（Esc/遮罩/× 关闭统一）
   function closeItemDetail() {
-    if (detailEscHandler) { document.removeEventListener('keydown', detailEscHandler); detailEscHandler = null; }
     document.getElementById('itemDetailBackdrop')?.remove();
   }
 
@@ -1172,43 +1171,31 @@
     const result = scanResults.get(id);
     const item = getItemById(id);
     closeItemDetail();
-    const backdrop = document.createElement('div');
-    backdrop.className = 'usage-backdrop';
-    backdrop.id = 'itemDetailBackdrop';
-    backdrop.innerHTML = `
-      <div class="usage-modal" role="dialog" aria-modal="true" aria-labelledby="itemDetailTitle">
-        <div class="usage-header">
-          <h2 id="itemDetailTitle">${escapeHtml((item && item.name) || id)} · 文件明细</h2>
-          <button class="usage-close" id="itemDetailClose" type="button" data-tip="关闭" aria-label="关闭">&times;</button>
-        </div>
-        <div class="usage-body" id="itemDetailBody">
-          <div class="empty-state"><p>正在枚举文件清单…</p></div>
-        </div>
-        <div class="usage-footer pw-footer">
-          <span class="pw-last-scan" id="itemDetailMeta"></span>
+    const ctrl = window.modal.create({
+      id: 'itemDetailBackdrop',
+      title: `${(item && item.name) || id} · 文件明细`,
+      bodyHtml: '<div class="empty-state"><p>正在枚举文件清单…</p></div>',
+      footerClass: 'pw-footer',
+      footerHtml: `
+          <span class="pw-last-scan" data-role="meta"></span>
           <span class="model-picker-spacer"></span>
-          <button class="btn btn-secondary" id="itemDetailCopy" type="button">复制完整清单</button>
-          <button class="btn btn-primary" id="itemDetailDone" type="button">关闭</button>
-        </div>
-      </div>`;
-    document.body.appendChild(backdrop);
-    backdrop.querySelector('#itemDetailClose').addEventListener('click', closeItemDetail);
-    backdrop.querySelector('#itemDetailDone').addEventListener('click', closeItemDetail);
-    backdrop.addEventListener('click', e => { if (e.target === backdrop) closeItemDetail(); });
-    detailEscHandler = (e) => { if (e.key === 'Escape') closeItemDetail(); };
-    document.addEventListener('keydown', detailEscHandler);
+          <button class="btn btn-secondary" data-role="copyBtn" type="button">复制完整清单</button>
+          <button class="btn btn-primary" data-role="doneBtn" type="button">关闭</button>`
+    });
+    const backdrop = ctrl.backdrop;
+    const body = ctrl.body;
+    ctrl.footer.querySelector('[data-role="doneBtn"]').addEventListener('click', closeItemDetail);
 
     (async () => {
       try {
         const resp = await window.api.cleanup.itemDetail(id, (result && result.path) || '');
-        const body = backdrop.querySelector('#itemDetailBody');
-        if (!body) return;
+        if (!document.body.contains(body)) return;
         if (!resp || !resp.success) {
           body.innerHTML = `<div class="empty-state"><p>${escapeHtml((resp && resp.message) || '明细枚举失败')}</p></div>`;
           return;
         }
         const { kind, total, truncated, files } = resp.data;
-        const meta = backdrop.querySelector('#itemDetailMeta');
+        const meta = ctrl.footer.querySelector('[data-role="meta"]');
         if (kind === 'reg') {
           body.innerHTML = `<div class="empty-state"><p>注册表条目（共 ${total} 项键/值），不产生文件清单。</p></div>`;
         } else if (kind === 'dism') {
@@ -1221,7 +1208,7 @@
           ).join('')}</div>`;
         }
         if (meta) meta.textContent = `共 ${total} 个文件${truncated ? '（仅展示前 600 条）' : ''}`;
-        backdrop.querySelector('#itemDetailCopy').addEventListener('click', async () => {
+        ctrl.footer.querySelector('[data-role="copyBtn"]').addEventListener('click', async () => {
           if (!files.length) return;
           try {
             await navigator.clipboard.writeText(files.map(f => f.path).join('\r\n'));
@@ -1231,8 +1218,7 @@
           }
         });
       } catch (e) {
-        const body = backdrop.querySelector('#itemDetailBody');
-        if (body) body.innerHTML = `<div class="empty-state"><p>明细枚举失败: ${escapeHtml(e.message)}</p></div>`;
+        if (document.body.contains(body)) body.innerHTML = `<div class="empty-state"><p>明细枚举失败: ${escapeHtml(e.message)}</p></div>`;
       }
     })();
   }

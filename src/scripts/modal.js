@@ -48,7 +48,7 @@
   }
 
   function infoOf(node) {
-    const title = (node.querySelector('h2') || node.querySelector('.opt-modal-title'))?.textContent?.trim() || '';
+    const title = node.querySelector('h2')?.textContent?.trim() || '';
     return { id: node.id || '', title: title.slice(0, 40) };
   }
 
@@ -94,7 +94,9 @@
 
   // ---------- 统一弹窗骨架工厂 ----------
   // opts: { id, title, bodyHtml, footerHtml, backdropClass, modalClass,
-  //         bodyClass, footerClass, width, onRequestClose(reason)->false 可阻止关闭 }
+  //         bodyClass, footerClass, width, onRequestClose(reason)->false 可阻止关闭,
+  //         iconSvg, metaHtml }（v3.2.0 弹窗统一批次：header 左侧可选图标 + 标题下元信息行，
+  //         供优化中心详情等带徽章头的弹窗复用；iconSvg/metaHtml 为调用方生成的可信 HTML）
   // 返回 { backdrop, modal, body, footer, close() }；关闭时触发 opts.onClose(reason)
   function create(opts = {}) {
     const id = opts.id || 'modal-' + Date.now();
@@ -114,7 +116,11 @@
     const useFooter = opts.footerHtml !== undefined;
     modalEl.innerHTML = `
       <div class="usage-header">
-        <h2 id="${id}Title">${escapeHtml(opts.title || '')}</h2>
+        ${opts.iconSvg ? `<span class="usage-header-icon" aria-hidden="true">${opts.iconSvg}</span>` : ''}
+        <div class="usage-header-titlewrap">
+          <h2 id="${id}Title">${escapeHtml(opts.title || '')}</h2>
+          ${opts.metaHtml ? `<div class="usage-header-meta">${opts.metaHtml}</div>` : ''}
+        </div>
         <button class="usage-close" type="button" data-tip="关闭" aria-label="关闭">&times;</button>
       </div>
       <div class="usage-body ${opts.bodyClass || ''}">${opts.bodyHtml || ''}</div>

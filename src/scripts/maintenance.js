@@ -22,6 +22,182 @@
     idle: '执行', running: '执行中…', ok: '已完成', warn: '部分完成', error: '失败'
   };
 
+  // ==================== 维护项详解弹窗内容（v3.2.0） ====================
+  // 每项三段：是什么 / 什么情况下会用到它 / 用了之后应该达到的效果。
+  // 以任务 id 为键（数据源见 src/scripts-powershell/maintenance-scripts.js）；新增任务时此处需同步补文案，
+  // 未收录的 id 弹窗自动回落为 desc 单段展示，不会开天窗。
+  const MAINT_INFO = {
+    sfc: {
+      what: '运行 Windows 系统文件检查器（sfc /scannow），扫描全部受保护的系统文件，并用本地组件存储中的正确版本替换被篡改或损坏的文件。',
+      when: '系统出现蓝屏、资源管理器崩溃、系统功能报错、DLL 缺失等疑似系统文件损坏的情况。',
+      effect: '受损的系统文件被恢复为微软原始版本，系统稳定性提升。耗时数分钟，结束后会给出「未发现违和 / 已修复 / 无法修复」的明确结论。'
+    },
+    dism: {
+      what: '运行 DISM /RestoreHealth，检查并修复 Windows 组件存储（WinSxS）——它是「系统文件修复 (SFC)」的零件库。',
+      when: 'SFC 报告「无法修复」或修复后问题依旧时，先用 DISM 把零件库修好，再跑一遍 SFC 效果最佳。',
+      effect: '组件存储恢复一致，SFC 的修复能力随之恢复。耗时更长（可能 10 分钟以上），期间可能联网下载健康修复源。'
+    },
+    wu: {
+      what: '停止更新相关服务，重命名 SoftwareDistribution 与 catroot2 缓存目录后重启服务，相当于给 Windows 更新「恢复出厂设置」。',
+      when: '更新长期卡在某个百分比、报错 0x8007xxxx、补丁反复下载失败。',
+      effect: '更新缓存与任务队列清空，下次检查更新将重新拉取；已安装的更新不会被卸载，数据不受影响。'
+    },
+    print: {
+      what: '停止 Print Spooler 打印后台服务，清空卡死的打印任务队列文件，再重启服务。',
+      when: '打印任务卡在队列里删不掉、打印机显示「正在打印」却毫无动静。',
+      effect: '打印队列归零，打印机恢复可响应状态；需要重新下发刚才没打出来的任务。'
+    },
+    store: {
+      what: '运行系统自带的 wsreset.exe，清空 Microsoft Store 应用缓存并自动重启商店。',
+      when: '商店打不开、页面一直转圈、应用下载或更新反复报错。',
+      effect: '商店缓存清空（登录状态保留），多数「商店打不开 / 下载失败」问题得到修复；完成后商店会自动打开，可手动关闭。'
+    },
+    audio: {
+      what: '重启 Windows Audio 与 AudioEndpointBuilder 两个音频核心服务。',
+      when: '突然没声音、耳机/音箱识别异常、任务栏声音图标打叉。',
+      effect: '音频服务栈重新初始化，多数「无声」问题即时恢复；音量大小等个人设置不受影响。'
+    },
+    perfcounters: {
+      what: '运行 lodctr /r，从系统备份清单重新注册性能计数器库。',
+      when: '任务管理器性能页数值空白、性能监视器报「无法收集计数器数据」。',
+      effect: '性能计数器恢复可用，任务管理器/性能监视器重新正常显示 CPU、磁盘、网络等实时数据。'
+    },
+    iconthumb: {
+      what: '删除图标缓存与缩略图缓存数据库，并自动重启资源管理器，让系统重新生成缓存。',
+      when: '桌面/任务栏图标变成白块、文件夹缩略图显示错乱或长期不刷新。',
+      effect: '缓存重建后图标与缩略图恢复正常显示；重建期间桌面会短暂闪烁，文件本身不受任何影响。'
+    },
+    search: {
+      what: '停止 Windows Search 服务，清空旧索引数据库后重启服务，索引将在后台自动重建。',
+      when: '开始菜单/文件搜索无结果、搜出早已删除的旧文件、索引长期卡在「正在编制索引」。',
+      effect: '搜索索引从零重建（耗时取决于文件数量），搜索结果恢复准确与实时。'
+    },
+    dns: {
+      what: '执行 ipconfig /flushdns，清空本机 DNS 解析缓存。',
+      when: '网站换了服务器但你仍打不开、总是访问到旧页面、解析到了错误地址。',
+      effect: '本地解析缓存立即清空，下次访问会重新向 DNS 服务器查询并拿到最新地址，秒级完成、零风险。'
+    },
+    netstack: {
+      what: '重置 Winsock 目录与 TCP/IP 协议栈参数并刷新 DNS，把网络底层配置恢复到系统默认状态。',
+      when: '网络异常的「大招」：能连 Wi-Fi 却上不了网、代理/加速器残留劫持、各类疑难断网。',
+      effect: '被软件篡改的 LSP 与协议参数归零，网络栈恢复干净状态；需重启电脑完全生效，并重新输入 Wi-Fi 密码连接。'
+    },
+    net_response: {
+      what: '关闭 Windows 多媒体播放时的网络节流（NetworkThrottlingIndex 拉满），并把系统响应性设为 0。',
+      when: '后台看视频/听音乐时网速被系统压低、游戏延迟因节流策略升高。',
+      effect: '系统不再在播放场景主动限制网络吞吐，网络反馈更快；普通浏览感知有限，游戏、直播、下载场景更明显。'
+    },
+    tf_net_tcp: {
+      what: '通过 netsh 与注册表批量调整 TCP 全局参数：关闭自动调优/ECN/时间戳，启用 RSS、CTCP 拥塞算法等。',
+      when: '追求极限低延迟的游戏、竞技或下载场景，愿意用少量兼容性换取网络性能。',
+      effect: 'TCP 连接的延迟与吞吐参数得到优化；个别老旧网络设备或 VPN 可能不兼容，出现异常可通过还原点回退。'
+    },
+    tf_net_tcpip: {
+      what: '写入 Tcpip 服务注册表参数：TTL=64、关闭 SACK 与 Nagle 算法、MaxUserPort 拉满、TIME_WAIT 缩短到 30 秒等。',
+      when: '高并发连接场景（大量下载任务、本地服务）出现端口耗尽、连接建立偏慢。',
+      effect: '连接复用更激进、握手更干脆；家用日常感知不大，所有改动均为可逆的注册表参数。'
+    },
+    tf_net_lanman: {
+      what: '调整 SMB 服务器（LanmanServer 文件共享服务）的会话参数：空闲会话永不断开、关闭 Oplocks 等。',
+      when: '局域网共享或 NAS 传输频繁断连、小文件传输速度明显偏慢。',
+      effect: '共享会话更稳定，减少频繁断开重连；关闭 Oplocks 后个别场景的共享文件一致性保障会降低。'
+    },
+    tf_net_nic: {
+      what: '遍历所有网卡，把高级属性统一切到「低延迟」档：关闭节能、绿色以太网、WoL、中断调节与流控，RSS 双队列、缓冲区拉大。',
+      when: '网游、竞技等对网络延迟抖动极度敏感的场景，可以接受功耗略微增加。',
+      effect: '网卡对数据包「即来即走」，延迟与抖动明显变小；笔记本的功耗与发热会略有增加。'
+    },
+    tf_net_weakhost: {
+      what: '对所有网卡（含隐藏网卡）启用 WeakHost 发送/接收模型，替代默认的强主机模型。',
+      when: '多网卡（以太网 + Wi-Fi + 虚拟网卡）环境下出现路由异常、部分网段不通。',
+      effect: '多网卡间的路由收发更灵活，跨网段访问更顺；网络隔离安全性轻微降低，单网卡环境收益有限。'
+    },
+    net_qos_scheduler: {
+      what: '将组策略 NonBestEffortLimit 设为 0，取消 Windows 默认预留的 QoS 保留带宽（PSched 策略）。',
+      when: '大流量下载、直播推流时感觉带宽总被系统「吃掉」一截。',
+      effect: '应用可用的带宽上限不再被系统预留削减；企业、校园、VPN 或域策略环境可能被上层配置覆盖。'
+    },
+    net_disable_netbios: {
+      what: '把所有网卡接口的 NetBIOS over TCP/IP 关闭（NetbiosOptions=2）。',
+      when: '内网没有老式共享需求、确认没有老设备依赖 NetBIOS，想消除它的广播与安全暴露面。',
+      effect: '名称解析改走纯 DNS，内网广播与 NetBIOS 攻击面减少；LAN 游戏、老式 NAS/共享可能依赖它，关闭前请确认。'
+    },
+    net_disable_lmhosts: {
+      what: '关闭 LMHOSTS 文件名称查找（EnableLMHOSTS=0）。',
+      when: '没有使用 LMHOSTS 静态解析文件的老式需求，想清理历史遗留的名称解析链路。',
+      effect: '名称解析链路更干净、更少干扰；依赖 LMHOSTS 文件的老系统共享会受影响。'
+    }
+  };
+
+  // 维护项详解弹窗：统一弹窗工厂（modal.js）生成三段式内容，
+  // 底部「AI大模型解释」走 maintenance scope 的联网解释，「开始本项修复」复用既有确认+执行链路。
+  function openMaintDetail(task) {
+    if (!window.modal || typeof window.modal.create !== 'function') {
+      window.app?.toast?.('warning', '弹窗组件未就绪，请稍后重试');
+      return;
+    }
+    const info = MAINT_INFO[task.id] || null;
+    const section = (title, text) => `
+      <div class="maint-detail-block">
+        <div class="maint-detail-title">${escapeHtml(title)}</div>
+        <div class="maint-detail-text">${escapeHtml(text)}</div>
+      </div>`;
+    const bodyHtml = `
+      <div class="maint-detail-head">
+        <span class="maint-detail-cat">${escapeHtml(task.category || '系统维护')}</span>
+        ${task.admin ? '<span class="maint-admin-tag" data-tip="需要管理员权限">管理员</span>' : ''}
+      </div>
+      ${info ? section('是什么', info.what) + section('什么情况下会用到它', info.when) + section('用了之后应该达到的效果', info.effect)
+             : section('是什么', task.desc || '暂无说明')}
+      <div class="maint-detail-ai" data-role="aiBox">
+        <div class="maint-detail-ai-hint">点击「AI大模型解释」后，由所选大模型联网补充解释（需在「设置 → 大模型管理」启用模型）</div>
+      </div>`;
+    const footerHtml = `
+      <button class="btn btn-secondary" data-role="aiBtn" type="button">AI大模型解释</button>
+      <span class="model-picker-spacer"></span>
+      <button class="btn btn-primary" data-role="runBtn" type="button">开始本项修复</button>`;
+    const ctrl = window.modal.create({
+      id: 'maintDetailModal-' + task.id,
+      title: task.title,
+      bodyHtml,
+      footerHtml,
+      bodyClass: 'maint-detail-body'
+    });
+    const aiBox = ctrl.body.querySelector('[data-role="aiBox"]');
+    const aiBtn = ctrl.footer.querySelector('[data-role="aiBtn"]');
+    aiBtn.addEventListener('click', async () => {
+      if (!window.api?.aidesc) {
+        aiBox.innerHTML = '<div class="intro-ai-fail">当前环境不支持联网 AI 解释</div>';
+        return;
+      }
+      aiBtn.disabled = true;
+      aiBtn.textContent = '解释生成中…';
+      aiBox.innerHTML = '<div class="intro-ai-skeleton"><span></span><span></span></div>';
+      try {
+        // scope=maintenance：主进程按系统维护专属提示词生成，缓存按任务标题隔离
+        const resp = await window.api.aidesc.get(task.title, task.category || '系统维护', false, 'maintenance');
+        if (resp && resp.success && resp.data && resp.data.desc) {
+          aiBox.innerHTML = `
+            <div class="intro-ai-text">${escapeHtml(resp.data.desc)}</div>
+            <div class="intro-ai-meta">来源：${escapeHtml(resp.data.source || 'AI 大模型')}${resp.data.cached ? ' · 缓存' : ''}</div>`;
+        } else if (resp && resp.message === 'disabled') {
+          aiBox.innerHTML = '<div class="intro-ai-fail">所选大模型尚未启用，请到「设置 → 功能入口 → 大模型管理」启用后重试。</div>';
+        } else {
+          aiBox.innerHTML = `<div class="intro-ai-fail">${escapeHtml((resp && resp.message) || '暂时无法获取解释，请稍后重试')}</div>`;
+        }
+      } catch (e) {
+        aiBox.innerHTML = `<div class="intro-ai-fail">获取失败：${escapeHtml(e.message)}</div>`;
+      } finally {
+        aiBtn.disabled = false;
+        aiBtn.textContent = 'AI大模型解释';
+      }
+    });
+    ctrl.footer.querySelector('[data-role="runBtn"]').addEventListener('click', () => {
+      ctrl.close();
+      runTask(task.id);
+    });
+  }
+
   function visibleTasks() {
     if (activeCat === '全部') return tasks;
     return tasks.filter(t => t.category === activeCat);
@@ -98,6 +274,14 @@
         const card = cb.closest('.maint-card');
         if (card) card.classList.toggle('selected', cb.checked);
         updateBatchbar();
+      });
+    });
+    // v3.2.0：点击卡片主体（非按钮/复选框）→ 弹出本项详解弹窗（是什么/何时用/预期效果 + AI 解释 + 开始修复）
+    el.querySelectorAll('.maint-card').forEach(card => {
+      card.addEventListener('click', (e) => {
+        if (e.target.closest('button, input, label')) return;
+        const task = tasks.find(t => t.id === card.dataset.id);
+        if (task) openMaintDetail(task);
       });
     });
   }

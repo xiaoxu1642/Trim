@@ -5,8 +5,7 @@
   'use strict';
 
   let loading = false;
-  let backdrop = null;   // 当前弹窗遮罩
-  let escHandler = null;
+  let backdrop = null;   // 当前弹窗遮罩（v3.2.0：骨架由 modal.js 工厂创建）
 
   function q(sel) { return backdrop ? backdrop.querySelector(sel) : null; }
 
@@ -158,16 +157,8 @@
 
   function open() {
     close();
-    backdrop = document.createElement('div');
-    backdrop.className = 'usage-backdrop rt-sr-backdrop';
-    backdrop.id = 'sysRestoreBackdrop';
-    backdrop.innerHTML = `
-      <div class="usage-modal rt-sr-modal" role="dialog" aria-modal="true" aria-labelledby="srTitle">
-        <div class="usage-header">
-          <h2 id="srTitle">系统还原点管理</h2>
-          <button class="usage-close" type="button" data-tip="关闭" aria-label="关闭">&times;</button>
-        </div>
-        <div class="usage-body rt-sr-body">
+    // v3.2.0 弹窗统一批次：骨架改由 modal.js 工厂生成（body 内部结构与 id 引用 q() 不变）
+    const bodyHtml = `
           <div class="summary-cards rt-sr-cards">
             <div class="summary-card">
               <div class="summary-icon" style="--icon-bg: linear-gradient(135deg, #0EA5E9, #0284C7)">
@@ -205,9 +196,8 @@
             <div class="restore-list" id="restoreList">
               <div class="empty-state"><p>暂无还原点</p></div>
             </div>
-          </div>
-        </div>
-        <div class="usage-footer">
+          </div>`;
+    const footerHtml = `
           <span class="pw-last-scan">系统还原点用于系统异常时一键回退，建议优化前先创建</span>
           <span class="model-picker-spacer"></span>
           <button class="btn btn-secondary" id="btnRestoreRefresh" type="button">
@@ -218,26 +208,29 @@
             <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
             创建还原点
           </button>
-          <button class="btn btn-primary" id="btnSrClose" type="button">完成</button>
-        </div>
-      </div>`;
-    document.body.appendChild(backdrop);
+          <button class="btn btn-primary" id="btnSrClose" type="button">完成</button>`;
+    const ctrl = window.modal.create({
+      id: 'sysRestoreBackdrop',
+      title: '系统还原点管理',
+      backdropClass: 'rt-sr-backdrop',
+      modalClass: 'rt-sr-modal',
+      bodyClass: 'rt-sr-body',
+      bodyHtml,
+      footerHtml,
+      onClose() { backdrop = null; }
+    });
+    backdrop = ctrl.backdrop;
 
-    backdrop.querySelector('.usage-close').addEventListener('click', close);
-    backdrop.querySelector('#btnSrClose').addEventListener('click', close);
-    backdrop.addEventListener('click', e => { if (e.target === backdrop) close(); });
-    backdrop.querySelector('#btnRestoreRefresh').addEventListener('click', () => load());
-    backdrop.querySelector('#btnRestoreCreate').addEventListener('click', () => create());
-
-    escHandler = (e) => { if (e.key === 'Escape') close(); };
-    document.addEventListener('keydown', escHandler);
+    ctrl.footer.querySelector('#btnSrClose').addEventListener('click', close);
+    ctrl.footer.querySelector('#btnRestoreRefresh').addEventListener('click', () => load());
+    ctrl.footer.querySelector('#btnRestoreCreate').addEventListener('click', () => create());
 
     load();
   }
 
   function close() {
-    if (escHandler) { document.removeEventListener('keydown', escHandler); escHandler = null; }
-    if (backdrop) { backdrop.remove(); backdrop = null; }
+    // v3.2.0：骨架由 modal.js 工厂创建，close 即销毁（Esc/遮罩由工厂接管）
+    if (backdrop) { const el = backdrop; backdrop = null; el.remove(); }
   }
 
   function init() {

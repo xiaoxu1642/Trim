@@ -29,6 +29,8 @@
     if (!sidebar) return;
     const collapsed = sidebar.classList.toggle('collapsed');
     setSidebarCollapsed(collapsed);
+    // v3.2.0（侧边岛滑块）：折叠剧变菜单项尺寸/位置，滑块坐标必须立即重算（瞬切不动画）
+    window.liquidBar?.refreshAll?.(false);
   }
 
   // Motion.Lab ripple-click：统一提供轻量按压反馈，采用事件委托覆盖动态创建的弹窗按钮。
@@ -95,6 +97,9 @@
         submenu.style.maxHeight = '';
       }
     }
+    // v3.2.0（侧边岛滑块）：子菜单展开/收起推开下方菜单项，滑块坐标立即重算（瞬切不动画，
+    // 选项切换的滑动动画由点击 .nav-item 的 click 捕获另行触发）
+    window.liquidBar?.refreshAll?.(false);
   }
 
   function toggleNavSub(key) {

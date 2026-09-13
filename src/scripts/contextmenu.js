@@ -10,7 +10,7 @@
   let hasScanned = false;
   let iconMap = {};        // clsid -> dataUrl
   let detailItem = null;   // 当前详情弹窗展示的条目
-  let detailTrap = null;   // 详情弹窗焦点陷阱（ds.focusTrap）
+  let ctxModalCtrl = null; // v3.2.0：详情弹窗工厂 ctrl（焦点陷阱/Esc 由工厂统一管理）
   let kanbanMasonry = null; // 瀑布流布局引擎（resize 防抖 + FLIP）
 
   // 11 个分类定义（顺序固定）
@@ -284,6 +284,8 @@
   }
 
   // ==================== 详情弹窗 ====================
+  // v3.2.0 弹窗统一批次：骨架改由 modal.js 工厂生成（ctx-detail-* 保留为内容样式），
+  // Esc/遮罩关闭、焦点陷阱、打开关闭日志均由工厂统一接管（ctrl 声明见文件顶部）
   function openDetail(item) {
     closeDetail();
     detailItem = item;
@@ -292,22 +294,15 @@
     const regPath = item.regPath || item.location || '';
     const regJumpable = /^HK(LM|CR|CU|U|CC|PD)/i.test(regPath);
 
-    const backdrop = document.createElement('div');
-    backdrop.className = 'ctx-detail-backdrop';
-    backdrop.id = 'ctxDetailBackdrop';
-    backdrop.innerHTML = `
-      <div class="ctx-detail-modal">
-        <div class="ctx-detail-header">
-          <div class="ctx-detail-icon-wrap" id="ctxDetailIconWrap">${itemIconHtml(item, 40)}</div>
-          <div class="ctx-detail-title-wrap">
-            <div class="ctx-detail-name">${escapeHtml(item.name)}</div>
-            <div class="ctx-detail-badges">${badge}<span class="ctx-detail-cat">${CATEGORY_ICONS[item.category] || ''} ${escapeHtml(item.category || '其他')}</span></div>
-          </div>
-          <button class="ctx-detail-close" id="ctxDetailClose" data-tip="关闭">&times;</button>
-        </div>
-        <div class="ctx-detail-body">
+    ctxModalCtrl = window.modal.create({
+      id: 'ctxDetailBackdrop',
+      iconSvg: `<span class="ctx-detail-icon-wrap" data-role="iconWrap">${itemIconHtml(item, 40)}</span>`,
+      metaHtml: `${badge}<span class="ctx-detail-cat">${CATEGORY_ICONS[item.category] || ''} ${escapeHtml(item.category || '其他')}</span>`,
+      title: item.name,
+      bodyClass: 'ctx-detail-body',
+      bodyHtml: `
           <div class="ctx-detail-grid">
-            <div class="ctx-detail-row"><span class="ctx-detail-label">注册表路径</span><span class="ctx-detail-value mono ${regJumpable ? 'ctx-reg-jump' : ''}" ${regJumpable ? 'id="ctxRegJump" data-tip="点击在注册表编辑器中定位（需要时会自动请求管理员权限）"' : ''}>${escapeHtml(regPath || '--')}</span></div>
+            <div class="ctx-detail-row"><span class="ctx-detail-label">注册表路径</span><span class="ctx-detail-value mono ${regJumpable ? 'ctx-reg-jump' : ''}" ${regJumpable ? 'data-role="regJump" data-tip="点击在注册表编辑器中定位（需要时会自动请求管理员权限）"' : ''}>${escapeHtml(regPath || '--')}</span></div>
              <div class="ctx-detail-row"><span class="ctx-detail-label">所属公司</span><span class="ctx-detail-value">${escapeHtml(item.company || '--')}</span></div>
              ${item.filePath ? `<div class="ctx-detail-row"><span class="ctx-detail-label">组件路径</span><span class="ctx-detail-value mono">${escapeHtml(item.filePath)}</span></div>` : ''}
              ${item.command ? `<div class="ctx-detail-row"><span class="ctx-detail-label">执行命令</span><span class="ctx-detail-value mono">${escapeHtml(item.command)}</span></div>` : ''}
@@ -317,25 +312,23 @@
           </div>
           <div class="ctx-detail-desc">
             <div class="ctx-detail-desc-title">简介</div>
-            <div id="ctxIntroMount"></div>
+            <div data-role="introMount"></div>
           </div>
           <div class="ctx-detail-actions">
-            <button class="ctx-detail-delete" id="ctxDetailDelete" data-tip="备份到桌面后删除此项（不可逆）">备份并删除</button>
-          </div>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(backdrop);
+            <button class="ctx-detail-delete" data-role="deleteBtn" data-tip="备份到桌面后删除此项（不可逆）">备份并删除</button>
+          </div>`
+    });
+    const backdrop = ctxModalCtrl.backdrop;
 
     // B2：详情弹窗无真实图标时，占位符升级为统一的 Trim.ico 兜底图标
     if (window.iconFallback?.applyFallbacks) {
-      window.iconFallback.applyFallbacks(backdrop.querySelector('#ctxDetailIconWrap'));
+      window.iconFallback.applyFallbacks(backdrop.querySelector('[data-role="iconWrap"]'));
     }
 
     // 简介面板：打开即展示本地内置简介；联网 AI 简介须再次点击「获取AI简介」才请求大模型
     if (window.intro?.mountIntroPanel) {
       window.intro.mountIntroPanel({
-        mount: backdrop.querySelector('#ctxIntroMount'),
+        mount: backdrop.querySelector('[data-role="introMount"]'),
         scope: 'contextmenu',
         name: item.name,
         company: item.company,
@@ -343,28 +336,15 @@
       });
     }
 
-    backdrop.querySelector('#ctxDetailClose').addEventListener('click', closeDetail);
     // 详情内删除：先关闭弹窗，再走统一的「备份并删除」确认流程
-    backdrop.querySelector('#ctxDetailDelete').addEventListener('click', () => {
+    backdrop.querySelector('[data-role="deleteBtn"]').addEventListener('click', () => {
       const target = item;
       closeDetail();
       removeItem(target);
     });
-    backdrop.addEventListener('click', e => {
-      if (e.target === backdrop) closeDetail();
-    });
-    document.addEventListener('keydown', detailKeyHandler);
-
-    // 阶段三：详情弹窗接入统一焦点管理（ds.focusTrap）——焦点入弹窗、Tab 陷阱、
-    // closeDetail 时归还触发元素；Esc 关闭沿用上方 detailKeyHandler
-    if (window.ds?.focusTrap) {
-      detailTrap = window.ds.focusTrap(backdrop.querySelector('.ctx-detail-modal'), {
-        initialFocus: '#ctxDetailClose'
-      });
-    }
 
     // 注册表路径：点击打开 regedit 并定位（需要时自动提权）
-    const regJump = backdrop.querySelector('#ctxRegJump');
+    const regJump = backdrop.querySelector('[data-role="regJump"]');
     if (regJump) {
       regJump.addEventListener('click', async e => {
         // 文字被选中时不触发跳转（支持复制路径）
@@ -401,15 +381,9 @@
     return `Windows 系统原生右键菜单项，属于「${cat}」分类的系统内置功能。`;
   }
 
-  function detailKeyHandler(e) {
-    if (e.key === 'Escape') closeDetail();
-  }
-
   function closeDetail() {
-    const backdrop = document.getElementById('ctxDetailBackdrop');
-    if (backdrop) backdrop.remove();
-    document.removeEventListener('keydown', detailKeyHandler);
-    if (detailTrap) { detailTrap.release(); detailTrap = null; }
+    // v3.2.0：骨架由工厂创建，close 即销毁（焦点陷阱/Esc 监听由工厂归还与移除）
+    if (ctxModalCtrl) { ctxModalCtrl.close(); ctxModalCtrl = null; }
     detailItem = null;
   }
 

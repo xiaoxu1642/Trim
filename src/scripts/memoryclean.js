@@ -161,40 +161,37 @@
     memRing.set(p, Math.round(p) + '%', color);
   }
 
-  // ==================== 清理区域表格（点击条目弹简介） ====================
+  // ==================== 清理区域卡片列表（点击条目弹简介） ====================
+  // v3.2.0（列表项卡片样式统一）：由 xtable 四列表格改为 maint-card 同构白卡
+  // （勾选 + 图标块 + 标题/风险徽章/描述 + 操作），外壳样式见 .row-card 共享类。
   // 行内展示名称 + 一句话说明（让清理项更易懂）；点击条目仍弹出详细简介弹窗（保留既有交互）。
+  const MEM_REGION_ICON = '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M15 9H9v6h6V9zm-2 4h-2v-2h2v2zm8-2V9h-2V7c0-1.1-.9-2-2-2h-2V3h-2v2h-2V3H9v2H7c-1.1 0-2 .9-2 2v2H3v2h2v2H3v2h2v2c0 1.1.9 2 2 2h2v2h2v-2h2v2h2v-2h2c1.1 0 2-.9 2-2v-2h2v-2h-2v-2h2zm-4 6H7V7h10v10z"/></svg>';
   function renderRegions() {
     const root = $('memRegionList');
     if (!root) return;
     root.innerHTML = `
-      <div class="xtable">
-        <div class="xtable-head">
-          <div class="xtable-th" style="width:44px">勾选</div>
-          <div class="xtable-th" style="flex:1">清理区域</div>
-          <div class="xtable-th" style="width:90px">风险</div>
-          <div class="xtable-th" style="width:110px">操作</div>
-        </div>
-        ${REGIONS.map(r => `
-          <div class="xtable-row mem-region-row ${r.sysUnavailable ? 'mem-region-disabled' : ''}" data-id="${r.id}" data-tip="点击查看该区域的详细简介">
-            <div class="xtable-td" style="width:44px">
-              <label class="mem-check">
-                <input type="checkbox" data-check="${r.id}" ${r.sysUnavailable ? 'disabled' : ''} ${r.checked ? 'checked' : ''} />
-                <span class="mem-check-box"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></span>
-              </label>
-            </div>
-            <div class="xtable-td" style="flex:1">
-              <div class="mem-region-name">${escapeHtml(r.name)}</div>
+      <div class="mem-region-list">
+        ${REGIONS.map(r => {
+          const riskBadge = r.sysUnavailable
+            ? '<span class="category-risk unused">不可用</span>'
+            : `<span class="category-risk ${r.risk}">${RISK_LABELS[r.risk]}</span>`;
+          const action = r.sysUnavailable
+            ? '<span class="mem-region-na">系统级不可用</span>'
+            : `<button class="btn btn-secondary btn-small mem-region-clean" data-clean="${r.id}" type="button">清理该项</button>`;
+          return `
+          <div class="mem-region-row row-card ${r.sysUnavailable ? 'mem-region-disabled' : ''}" data-id="${r.id}" data-tip="点击查看该区域的详细简介">
+            <label class="mem-check" data-tip="勾选后可清理该区域">
+              <input type="checkbox" data-check="${r.id}" ${r.sysUnavailable ? 'disabled' : ''} ${r.checked ? 'checked' : ''} />
+              <span class="mem-check-box"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></span>
+            </label>
+            <div class="mem-region-icon" aria-hidden="true">${MEM_REGION_ICON}</div>
+            <div class="maint-card-body">
+              <div class="mem-region-title"><span class="mem-region-name">${escapeHtml(r.name)}</span>${riskBadge}</div>
               <div class="mem-region-desc">${escapeHtml(r.desc)}</div>
             </div>
-            <div class="xtable-td" style="width:90px">${r.sysUnavailable
-              ? '<span class="category-risk unused">不可用</span>'
-              : `<span class="category-risk ${r.risk}">${RISK_LABELS[r.risk]}</span>`}</div>
-            <div class="xtable-td" style="width:110px">
-              ${r.sysUnavailable
-                ? '<span class="mem-region-na">系统级不可用</span>'
-                : `<button class="btn btn-secondary btn-small mem-region-clean" data-clean="${r.id}" type="button">清理该项</button>`}
-            </div>
-          </div>`).join('')}
+            <div class="row-card-actions">${action}</div>
+          </div>`;
+        }).join('')}
       </div>`;
 
     // 勾选状态（跳过系统级不可用项）
@@ -235,49 +232,31 @@
   }
 
   // ==================== 区域简介弹窗（复用启动项管理交互） ====================
+  // v3.2.0 弹窗统一批次：骨架改由 modal.js 工厂生成
   function showRegionIntro(region) {
-    const backdrop = document.createElement('div');
-    backdrop.className = 'usage-backdrop';
-    backdrop.id = 'memRegionIntroBackdrop';
-    backdrop.innerHTML = `
-      <div class="usage-modal" role="dialog" aria-modal="true" aria-labelledby="memRegionIntroTitle">
-        <div class="usage-header">
-          <h2 id="memRegionIntroTitle">${escapeHtml(region.name)}</h2>
-          <button class="usage-close" type="button" data-tip="关闭" aria-label="关闭">&times;</button>
-        </div>
-        <div class="usage-body">
-          <div class="startup-intro-meta">内存清理区域 · ${RISK_LABELS[region.risk]}</div>
-          <div id="memRegionIntroMount"></div>
-        </div>
-        <div class="usage-footer">
-          <span class="model-picker-spacer"></span>
-          <button class="btn btn-primary" id="memRegionIntroClose" type="button">关闭</button>
-        </div>
-      </div>`;
-    document.body.appendChild(backdrop);
+    const ctrl = window.modal.create({
+      id: 'memRegionIntroBackdrop',
+      title: region.name,
+      bodyHtml: `
+        <div class="startup-intro-meta">内存清理区域 · ${escapeHtml(RISK_LABELS[region.risk])}</div>
+        <div data-role="introMount"></div>`,
+      footerHtml: `
+        <span class="model-picker-spacer"></span>
+        <button class="btn btn-primary" data-role="closeBtn" type="button">关闭</button>`
+    });
+    ctrl.footer.querySelector('[data-role="closeBtn"]').addEventListener('click', () => ctrl.close());
 
-    const closeIntro = () => {
-      document.getElementById('memRegionIntroBackdrop')?.remove();
-      document.removeEventListener('keydown', escHandler);
-    };
-    function escHandler(e) { if (e.key === 'Escape') closeIntro(); }
-    document.addEventListener('keydown', escHandler);
-
-    backdrop.querySelector('.usage-close').addEventListener('click', closeIntro);
-    backdrop.querySelector('#memRegionIntroClose').addEventListener('click', closeIntro);
-    backdrop.addEventListener('click', e => { if (e.target === backdrop) closeIntro(); });
-
+    const mount = ctrl.body.querySelector('[data-role="introMount"]');
     if (window.intro?.mountIntroPanel) {
       window.intro.mountIntroPanel({
-        mount: backdrop.querySelector('#memRegionIntroMount'),
+        mount,
         scope: 'memoryclean',
         name: region.name,
         company: '内存清理',
         item: { id: region.id, name: region.name, group: '内存清理', title: region.name }
       });
     } else {
-      backdrop.querySelector('#memRegionIntroMount').innerHTML =
-        '<div class="empty-state"><p>简介模块未加载</p></div>';
+      mount.innerHTML = '<div class="empty-state"><p>简介模块未加载</p></div>';
     }
   }
 

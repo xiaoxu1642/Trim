@@ -526,91 +526,22 @@
     }
   }
 
-  // ==================== 详情弹窗 ====================
-  let modalOverlay = null;
-  let modalBox = null;
-  let modalDoc = null; // 渲染在主 document 还是 shadow
+  // ==================== 详情弹窗（v3.2.0 弹窗统一批次：迁移到 modal.js 工厂） ====================
+  // 旧 opt-modal-* 自建骨架已删除；现在走 window.modal.create() 统一三段式
+  // （usage-backdrop > usage-modal，含唯一 id / 焦点陷阱 / Esc 与遮罩关闭 / IPC 日志）。
+  // 图1 专属视觉保留：齿轮图标 accent 着色、优缺点绿红双列、footer 左侧内存档位提示位。
+  let optModal = null;     // 当前弹窗 ctrl（modal.create 返回值）
   let activeOption = null;
 
-  function ensureModal() {
-    if (modalOverlay) return;
-    modalOverlay = document.createElement('div');
-    modalOverlay.className = 'opt-modal-backdrop';
-    modalOverlay.setAttribute('role', 'dialog');
-    modalOverlay.setAttribute('aria-modal', 'true');
-    modalOverlay.innerHTML = `
-      <div class="opt-modal-shell">
-        <div class="opt-modal" role="document">
-          <button type="button" class="opt-modal-close" aria-label="关闭">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
-          </button>
-          <div class="opt-modal-head">
-            <div class="opt-modal-headline">
-              <span class="opt-modal-icon"><svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">${GEAR_ICON}</svg></span>
-              <div class="opt-modal-titlewrap">
-                <h2 class="opt-modal-title"></h2>
-                <div class="opt-modal-meta"></div>
-              </div>
-            </div>
-          </div>
-          <div class="opt-modal-body">
-            <div class="opt-modal-notice" style="display:none"></div>
-            <p class="opt-modal-desc"></p>
-            <p class="opt-modal-effect-hint"></p>
-            <div class="opt-modal-grid">
-              <div class="opt-modal-col pros">
-                <div class="opt-modal-col-label">优点</div>
-                <p class="opt-modal-col-text opt-modal-col-pros"></p>
-              </div>
-              <div class="opt-modal-col cons">
-                <div class="opt-modal-col-label">缺点</div>
-                <p class="opt-modal-col-text opt-modal-col-cons"></p>
-              </div>
-            </div>
-            <div class="opt-modal-section">
-              <div class="opt-modal-section-title">详细操作</div>
-              <div class="opt-modal-steps"></div>
-            </div>
-          </div>
-          <div class="opt-modal-footer">
-            <div class="opt-modal-mem"></div>
-            <div class="opt-modal-btns">
-              <button class="btn btn-opt-ai opt-modal-ai">AI 生成优缺点</button>
-              <button class="btn btn-secondary opt-modal-restore">还原</button>
-              <button class="btn btn-accent opt-modal-run">立即执行</button>
-            </div>
-          </div>
-        </div>
-      </div>`;
-    document.body.appendChild(modalOverlay);
-
-    modalOverlay.addEventListener('click', (e) => {
-      // 点击遮罩空白处（shell 外）关闭
-      if (e.target === modalOverlay || e.target.classList.contains('opt-modal-shell')) {
-        closeModal();
-      }
-    });
-    modalOverlay.querySelector('.opt-modal-close').addEventListener('click', closeModal);
-  }
-
   function openModal(o, notice) {
-    ensureModal();
+    // 重复打开（如执行后刷新按钮态）先关旧实例，保证唯一 id 与事件不叠加
+    if (optModal) { optModal.close(); optModal = null; }
     activeOption = o;
     const accent = GROUP_ACCENT[displayGroup(o)] || 'var(--accent)';
     const stepCount = (o.steps || []).length;
-    if (accent.startsWith('#')) {
-      modalOverlay.style.setProperty('--accent', accent);
-      modalOverlay.style.setProperty('--accent-text', '#FFFFFF'); // 分类色均较深，白字 ≥ 4.5:1
-    } else {
-      modalOverlay.style.removeProperty('--accent');
-      modalOverlay.style.removeProperty('--accent-text'); // accent 兜底时沿用主题自动前景
-    }
-    modalOverlay.querySelector('.opt-modal-icon').style.background = accent + '18';
-    modalOverlay.querySelector('.opt-modal-icon').style.color = accent;
-    modalOverlay.querySelector('.opt-modal-title').textContent = o.title || o.id;
-    modalOverlay.querySelector('.opt-modal-meta').innerHTML =
-      riskBadge(o.risk) + effectBadge(o.effect) + `<span class="opt-modal-count">${stepCount} 步操作</span>`;
-    modalOverlay.querySelector('.opt-modal-desc').textContent = o.desc || '（无描述）';
+    const iconStyle = `style="background:${accent}18;color:${accent}"`;
+    const metaHtml =
+      riskBadge(o.risk) + effectBadge(o.effect) + `<span class="opt-detail-count">${stepCount} 步操作</span>`;
     // v2.6.0（P2-7）：预期效果说明——诚实口径：经验分级，非本机实测数据
     const EFFECT_HINT = {
       '明显': '收益通常可直观感知或量化较大（如后台占用明显减少、空间大幅释放）。',
@@ -618,19 +549,61 @@
       '微小': '收益存在但多数场景难以感知，属于锦上添花。',
       '未验证': '缺乏可靠依据或收益因机型/负载而异，无法给出负责任的结论。'
     };
-    const effEl = modalOverlay.querySelector('.opt-modal-effect-hint');
-    if (effEl) {
-      effEl.textContent = `预期效果（${o.effect || '未验证'}）：${EFFECT_HINT[o.effect] || EFFECT_HINT['未验证']}——此为经验分级，非本机实测数据。`;
+    const effectHint = `预期效果（${o.effect || '未验证'}）：${EFFECT_HINT[o.effect] || EFFECT_HINT['未验证']}——此为经验分级，非本机实测数据。`;
+    const bodyHtml = `
+      <div class="opt-detail-notice" style="display:none"></div>
+      <p class="opt-detail-desc"></p>
+      <p class="opt-detail-effect"></p>
+      <div class="opt-detail-grid">
+        <div class="opt-detail-col pros">
+          <div class="opt-detail-col-label">优点</div>
+          <p class="opt-detail-col-text opt-col-pros"></p>
+        </div>
+        <div class="opt-detail-col cons">
+          <div class="opt-detail-col-label">缺点</div>
+          <p class="opt-detail-col-text opt-col-cons"></p>
+        </div>
+      </div>
+      <div class="opt-detail-section">
+        <div class="opt-detail-section-title">详细操作</div>
+        <div class="opt-detail-steps-wrap"></div>
+      </div>`;
+    const footerHtml = `
+      <div class="opt-detail-mem" style="display:none"></div>
+      <span class="model-picker-spacer"></span>
+      <button class="btn btn-opt-ai opt-btn-ai">AI 生成优缺点</button>
+      <button class="btn btn-secondary opt-btn-restore">还原</button>
+      <button class="btn btn-accent opt-btn-run">立即执行</button>`;
+
+    optModal = window.modal.create({
+      id: 'optDetailModal-' + o.id,
+      title: o.title || o.id,
+      iconSvg: `<span class="opt-detail-icon" ${iconStyle}><svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">${GEAR_ICON}</svg></span>`,
+      metaHtml,
+      bodyHtml,
+      footerHtml,
+      bodyClass: 'opt-detail-body'
+    });
+    // 分类强调色注入弹窗（既有行为：分类色着色 icon/徽章，较深分类色配白字）
+    if (accent.startsWith('#')) {
+      optModal.modal.style.setProperty('--accent', accent);
+      optModal.modal.style.setProperty('--accent-text', '#FFFFFF'); // 分类色均较深，白字 ≥ 4.5:1
+    } else {
+      optModal.modal.style.removeProperty('--accent');
+      optModal.modal.style.removeProperty('--accent-text'); // accent 兜底时沿用主题自动前景
     }
-    modalOverlay.querySelector('.opt-modal-col-pros').textContent = o.pros || '暂缺，可点击下方「AI 生成优缺点」重新生成。';
-    modalOverlay.querySelector('.opt-modal-col-cons').textContent = o.cons || '暂缺，可点击下方「AI 生成优缺点」重新生成。';
-    modalOverlay.querySelector('.opt-modal-steps').innerHTML = renderSteps(o.steps);
+    const $ = (sel) => optModal.modal.querySelector(sel);
+    $('.opt-detail-desc').textContent = o.desc || '（无描述）';
+    $('.opt-detail-effect').textContent = effectHint;
+    $('.opt-col-pros').textContent = o.pros || '暂缺，可点击下方「AI 生成优缺点」重新生成。';
+    $('.opt-col-cons').textContent = o.cons || '暂缺，可点击下方「AI 生成优缺点」重新生成。';
+    $('.opt-detail-steps-wrap').innerHTML = renderSteps(o.steps);
 
     // 安全兜底：已优化项「立即执行」→「立即恢复」；无法推理还原操作时按钮置灰。
     // dynamic 项（svc_mem_gb）例外：不走恢复流，由下方档位联动决定按钮态
     // （当前档位已应用 → 置灰；选择其他档位 → 可立即执行）。
     const isOpt = optimizedIds.has(o.id);
-    const runBtn = modalOverlay.querySelector('.opt-modal-run');
+    const runBtn = $('.opt-btn-run');
     if (isOpt && !o.dynamic) {
       const canRestore = !!o.restoreAvailable && Array.isArray(o.restore) && o.restore.length > 0;
       runBtn.textContent = '立即恢复';
@@ -647,18 +620,15 @@
       runBtn.dataset.mode = 'run';
     }
     // 安全兜底提示条：在按钮态确定后渲染（notice 由上方分支生成）
-    const noticeEl = modalOverlay.querySelector('.opt-modal-notice');
-    if (noticeEl) {
-      if (notice) {
-        noticeEl.textContent = notice;
-        noticeEl.style.display = 'block';
-      } else {
-        noticeEl.style.display = 'none';
-      }
+    const noticeEl = $('.opt-detail-notice');
+    if (notice) {
+      noticeEl.textContent = notice;
+      noticeEl.style.display = 'block';
     }
 
-    // 动态 / 还原
-    const memWrap = modalOverlay.querySelector('.opt-modal-mem');
+    // 动态 / 还原：footer 左侧内存档位提示位（图1 专属视觉，保留）
+    const memWrap = $('.opt-detail-mem');
+    const restoreBtn = $('.opt-btn-restore');
     if (o.dynamic) {
       memWrap.style.display = '';
       memWrap.innerHTML = '<select class="field-input optimizer-mem-select opt-mem-select" data-tip="选择内存大小或重置">' +
@@ -668,14 +638,14 @@
       function updateMemVariant() {
         const gb = sel.value;
         const info = MEM_PROS_CONS[gb] || MEM_PROS_CONS[8];
-        modalOverlay.querySelector('.opt-modal-col-pros').textContent = info.pros;
-        modalOverlay.querySelector('.opt-modal-col-cons').textContent = info.cons;
+        $('.opt-col-pros').textContent = info.pros;
+        $('.opt-col-cons').textContent = info.cons;
         // 步骤区：显示当档位对应的执行说明
         const label = (gb === 'default') ? '重置为默认值' : (gb + ' GB');
-        modalOverlay.querySelector('.opt-modal-steps').innerHTML =
+        $('.opt-detail-steps-wrap').innerHTML =
           `<ol class="opt-detail-steps"><li><span class="opt-detail-step-label">SVCHost 拆分阈值 ${label}</span>` +
           `<code class="opt-detail-step-note">reg add HKLM\\SYSTEM\\ControlSet001\\Control /v SvcHostSplitThresholdInKB /t REG_DWORD /d … /f</code></li></ol>`;
-        modalOverlay.querySelector('.opt-modal-count').textContent = '1 步操作';
+        $('.opt-detail-count').textContent = '1 步操作';
       }
       // 档位联动按钮态：当前已应用的档位 → 置灰（无后续操作）；
       // 选择其他档位 → 启用「立即执行」，可直接应用。
@@ -714,28 +684,65 @@
       }
     } else {
       memWrap.style.display = 'none';
-      memWrap.innerHTML = '';
     }
-    const restoreBtn = modalOverlay.querySelector('.opt-modal-restore');
     restoreBtn.style.display = o.restore ? '' : 'none';
 
-    const aiBtn = modalOverlay.querySelector('.opt-modal-ai');
+    const aiBtn = $('.opt-btn-ai');
     aiBtn.disabled = false;
     aiBtn.textContent = 'AI 生成优缺点';
 
-    document.body.style.overflow = 'hidden';
-    modalOverlay.classList.add('open');
+    // 弹窗按钮：立即执行（未优化）/ 立即恢复（已优化灰项）/ 还原 / AI
+    // （v3.2.0：每次 open 重建 DOM，事件绑定随实例走；还原入口 restoreOption 为模块级共用）
+    runBtn.addEventListener('click', async () => {
+      if (!activeOption) return;
+      const opt = activeOption;
+      if (runBtn.dataset.mode === 'restore') {
+        // 立即恢复：优先按备份还原
+        closeOptModal();
+        const ok = await restoreOption(opt);
+        if (!ok) {
+          // 还原未能执行：展示简介 + 提示
+          openModal(opt, '还原未能执行。您已完成优化，该项暂不提供恢复功能');
+        }
+        return;
+      }
+      const go = await confirmHazard(opt);
+      if (!go) return;
+      // 立即执行后自动关闭弹窗
+      closeOptModal();
+      // 执行前检查系统还原点（警示/风险确认；用户最终拒绝则不执行）
+      if (!(await ensureRestorePoint())) return;
+      if (opt.dynamic) {
+        const selEl = optModal?.modal?.querySelector('.opt-mem-select');
+        const gbVal = selEl ? selEl.value : 8;
+        // 本会话立即记录已应用档位：重开弹窗时该档位按钮置灰
+        svcAppliedGb = gbVal;
+        // B11：与 runBatch 对齐 —— await + try/catch，避免浮动 Promise 变成
+        // unhandled rejection（用户侧表现为「点击后毫无反应」）
+        try {
+          await runOptionActive({ gb: gbVal }, opt);
+        } catch (e) {
+          window.app?.toast('error', '优化执行失败: ' + (e.message || e));
+        }
+      } else {
+        try {
+          await runOptionActive({}, opt);
+        } catch (e) {
+          window.app?.toast('error', '优化执行失败: ' + (e.message || e));
+        }
+      }
+    });
+    restoreBtn.addEventListener('click', async () => {
+      const opt = activeOption;
+      closeOptModal();
+      await restoreOption(opt);
+    });
+    aiBtn.addEventListener('click', genAdviceActive);
   }
 
-  function closeModal() {
-    if (!modalOverlay) return;
-    modalOverlay.classList.remove('open');
-    document.body.style.overflow = '';
+  function closeOptModal() {
+    if (optModal) { optModal.close(); optModal = null; }
     activeOption = null;
-  }
-
-  function onEscape(e) {
-    if (e.key === 'Escape' && modalOverlay && modalOverlay.classList.contains('open')) closeModal();
   }
 
   // ==================== 执行 & AI ====================
@@ -790,9 +797,9 @@
           markOptimizedIfApplicable(opt);
         }
         // 若弹窗还开着（还原时）则刷新按钮态；若已关闭则刷新列表灰态
-        if (activeOption && activeOption.id === opt.id && modalOverlay && modalOverlay.classList.contains('open')) {
+        // （v3.2.0：activeOption 在弹窗关闭时置空，存在即代表弹窗开着）
+        if (activeOption && activeOption.id === opt.id) {
           // 重新打开以刷新按钮态（已优化 ↔ 未优化）
-          const savedScroll = document.body.style.overflow;
           openModal(opt);
         } else {
           applyOptimizedStyles();
@@ -871,15 +878,16 @@
       window.app?.toast('warning', '当前为预览模式，无法调用 AI');
       return;
     }
-    const btn = modalOverlay.querySelector('.opt-modal-ai');
+    const btn = optModal?.modal?.querySelector('.opt-btn-ai');
+    if (!btn) return;
     btn.disabled = true;
     const prev = btn.textContent;
     btn.textContent = '生成中…';
     try {
       const resp = await window.api.optimizer.genAdvice(activeOption.id);
       if (resp && resp.success && resp.data) {
-        if (resp.data.pros) { modalOverlay.querySelector('.opt-modal-col-pros').textContent = resp.data.pros; activeOption.pros = resp.data.pros; }
-        if (resp.data.cons) { modalOverlay.querySelector('.opt-modal-col-cons').textContent = resp.data.cons; activeOption.cons = resp.data.cons; }
+        if (resp.data.pros) { optModal.modal.querySelector('.opt-col-pros').textContent = resp.data.pros; activeOption.pros = resp.data.pros; }
+        if (resp.data.cons) { optModal.modal.querySelector('.opt-col-cons').textContent = resp.data.cons; activeOption.cons = resp.data.cons; }
         window.app?.toast('success', '已通过 ' + (resp.data.source || 'AI') + ' 生成优缺点');
       } else {
         window.app?.toast('error', (resp && resp.message) || 'AI 生成失败');
@@ -1106,8 +1114,7 @@
     };
     setTimeout(checkAdmin, 400);
     setTimeout(checkAdmin, 1200);
-
-    document.addEventListener('keydown', onEscape);
+    // v3.2.0：弹窗 Esc 关闭已由 modal.js 工厂统一接管，无需模块自绑 keydown
   }
 
   function showAdminWarning() {
@@ -1175,54 +1182,8 @@
       openModal(o);
     });
 
-    // 弹窗按钮：立即执行（未优化）/ 立即恢复（已优化灰项）/ 还原 / AI
-    ensureModal();
-    // 还原入口 restoreOption 已提升到模块级（弹窗与 stale 横幅共用，见文件上方定义）
-    modalOverlay.querySelector('.opt-modal-run').addEventListener('click', async () => {
-      if (!activeOption) return;
-      const opt = activeOption;
-      if (modalOverlay.querySelector('.opt-modal-run').dataset.mode === 'restore') {
-        // 立即恢复：优先按备份还原
-        closeModal();
-        const ok = await restoreOption(opt);
-        if (!ok) {
-          // 还原未能执行：展示简介 + 提示
-          openModal(opt, '还原未能执行。您已完成优化，该项暂不提供恢复功能');
-        }
-        return;
-      }
-      const go = await confirmHazard(opt);
-      if (!go) return;
-      // 立即执行后自动关闭弹窗
-      closeModal();
-      // 执行前检查系统还原点（警示/风险确认；用户最终拒绝则不执行）
-      if (!(await ensureRestorePoint())) return;
-      if (opt.dynamic) {
-        const sel = modalOverlay.querySelector('.opt-mem-select');
-        const gbVal = sel ? sel.value : 8;
-        // 本会话立即记录已应用档位：重开弹窗时该档位按钮置灰
-        svcAppliedGb = gbVal;
-        // B11：与 runBatch 对齐 —— await + try/catch，避免浮动 Promise 变成
-        // unhandled rejection（用户侧表现为「点击后毫无反应」）
-        try {
-          await runOptionActive({ gb: gbVal }, opt);
-        } catch (e) {
-          window.app?.toast('error', '优化执行失败: ' + (e.message || e));
-        }
-      } else {
-        try {
-          await runOptionActive({}, opt);
-        } catch (e) {
-          window.app?.toast('error', '优化执行失败: ' + (e.message || e));
-        }
-      }
-    });
-    modalOverlay.querySelector('.opt-modal-restore').addEventListener('click', async () => {
-      const opt = activeOption;
-      closeModal();
-      await restoreOption(opt);
-    });
-    modalOverlay.querySelector('.opt-modal-ai').addEventListener('click', genAdviceActive);
+    // v3.2.0：弹窗按钮（立即执行/恢复/还原/AI）绑定已随 openModal 实例化，init 不再预绑
+    // （还原入口 restoreOption 仍为模块级，弹窗与 stale 横幅共用，见文件上方定义）
 
     const elevateBtn = document.getElementById('btnOptimizerElevate');
     if (elevateBtn) {

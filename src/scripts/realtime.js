@@ -682,37 +682,27 @@
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
   }
 
+  // v3.2.0 弹窗统一批次：报告弹窗骨架改由 modal.js 工厂生成（Esc/遮罩/× 关闭统一）
   function openReportModal(report, savedName) {
     closeReportBackdrops();
-    const backdrop = document.createElement('div');
-    backdrop.className = 'usage-backdrop rt-report-backdrop';
-    backdrop.id = 'rtReportBackdrop';
-    backdrop.innerHTML = `
-      <div class="usage-modal rt-report-modal" role="dialog" aria-modal="true">
-        <div class="usage-header">
-          <h2>网速记录报告</h2>
-          <button class="usage-close" type="button" data-tip="关闭" aria-label="关闭">&times;</button>
-        </div>
-        <div class="usage-body rt-report-body">
+    const ctrl = window.modal.create({
+      id: 'rtReportBackdrop',
+      title: '网速记录报告',
+      backdropClass: 'rt-report-backdrop',
+      modalClass: 'rt-report-modal',
+      bodyClass: 'rt-report-body',
+      bodyHtml: `
           ${reportStatBody(report)}
-          <p class="rt-report-note">${savedName ? '报告已保存至缓存目录 realtime-reports（保留 7 天）。' : '当前环境无法保存，仅展示本次记录。'}</p>
-        </div>
-        <div class="usage-footer">
+          <p class="rt-report-note">${savedName ? '报告已保存至缓存目录 realtime-reports（保留 7 天）。' : '当前环境无法保存，仅展示本次记录。'}</p>`,
+      footerHtml: `
           <span class="pw-last-scan"></span>
           <span class="model-picker-spacer"></span>
-          <button class="btn btn-primary rt-close-btn" type="button">关闭</button>
-        </div>
-      </div>`;
-    document.body.appendChild(backdrop);
-    backdrop.querySelector('.usage-close').addEventListener('click', closeReportBackdrops);
-    backdrop.querySelector('.rt-close-btn').addEventListener('click', closeReportBackdrops);
-    backdrop.addEventListener('click', e => { if (e.target === backdrop) closeReportBackdrops(); });
-    const esc = e => { if (e.key === 'Escape') closeReportBackdrops(); };
-    document.addEventListener('keydown', esc);
-    backdrop._esc = esc;
+          <button class="btn btn-primary rt-close-btn" type="button">关闭</button>`
+    });
+    ctrl.footer.querySelector('.rt-close-btn').addEventListener('click', () => ctrl.close());
     // 渲染图表（等待布局完成）
     requestAnimationFrame(() => {
-      const canvas = backdrop.querySelector('.rt-report-canvas');
+      const canvas = ctrl.backdrop.querySelector('.rt-report-canvas');
       drawReportChart(canvas, report.samples || []);
     });
   }
@@ -726,16 +716,13 @@
       } catch (e) { /* 忽略 */ }
     }
     closeReportBackdrops();
-    const backdrop = document.createElement('div');
-    backdrop.className = 'usage-backdrop rt-report-backdrop';
-    backdrop.id = 'rtReportsBackdrop';
-    backdrop.innerHTML = `
-      <div class="usage-modal rt-report-modal" role="dialog" aria-modal="true">
-        <div class="usage-header">
-          <h2>历史网速报告</h2>
-          <button class="usage-close" type="button" data-tip="关闭" aria-label="关闭">&times;</button>
-        </div>
-        <div class="usage-body rt-report-body">
+    const ctrl = window.modal.create({
+      id: 'rtReportsBackdrop',
+      title: '历史网速报告',
+      backdropClass: 'rt-report-backdrop',
+      modalClass: 'rt-report-modal',
+      bodyClass: 'rt-report-body',
+      bodyHtml: `
           ${reports.length ? reports.map(r => `
             <div class="rt-report-row" data-name="${escapeAttr(r.name)}">
               <div class="rt-report-row-main">
@@ -744,22 +731,15 @@
               </div>
               <button class="btn btn-secondary btn-small rt-row-open" type="button">查看</button>
               <button class="btn btn-secondary btn-small rt-row-del" type="button">删除</button>
-            </div>`).join('') : '<div class="empty-state"><p>暂无记录。点击实时网速页右上角「记录数据」，停止后自动生成报告。</p></div>'}
-        </div>
-        <div class="usage-footer">
+            </div>`).join('') : '<div class="empty-state"><p>暂无记录。点击实时网速页右上角「记录数据」，停止后自动生成报告。</p></div>'}`,
+      footerHtml: `
           <span class="pw-last-scan">共 ${reports.length} 份 · 超 7 天自动清理</span>
           <span class="model-picker-spacer"></span>
           <button class="btn btn-secondary rt-clear-all" type="button">清空全部</button>
-          <button class="btn btn-primary rt-close-btn" type="button">关闭</button>
-        </div>
-      </div>`;
-    document.body.appendChild(backdrop);
-    const escHandler = e => { if (e.key === 'Escape') close(); };
-    const close = () => { document.removeEventListener('keydown', escHandler); backdrop.remove(); };
-    document.addEventListener('keydown', escHandler);
-    backdrop.querySelector('.usage-close').addEventListener('click', close);
-    backdrop.querySelector('.rt-close-btn').addEventListener('click', close);
-    backdrop.addEventListener('click', e => { if (e.target === backdrop) close(); });
+          <button class="btn btn-primary rt-close-btn" type="button">关闭</button>`
+    });
+    const backdrop = ctrl.backdrop;
+    ctrl.footer.querySelector('.rt-close-btn').addEventListener('click', () => ctrl.close());
     // 查看详情
     backdrop.querySelectorAll('.rt-row-open').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -790,10 +770,8 @@
   }
 
   function closeReportBackdrops() {
-    document.querySelectorAll('.rt-report-backdrop').forEach(el => {
-      if (el._esc) document.removeEventListener('keydown', el._esc);
-      el.remove();
-    });
+    // v3.2.0：工厂弹窗关闭即销毁 DOM，此处兜底清理残留在文档中的报告弹窗
+    document.querySelectorAll('.rt-report-backdrop').forEach(el => el.remove());
   }
 
   function init() {
