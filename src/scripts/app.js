@@ -628,15 +628,15 @@
     document.getElementById('btnGitHub')?.addEventListener('click', () => {
       try { window.api?.app?.openExternal('https://github.com/xiaoxu1642/Trim'); } catch (_) {}
     });
-    // v3.1.0：蓝奏云备用下载渠道——先复制提取码（剪贴板写入需窗口在前台，须先于 openExternal）再打开链接
-    document.getElementById('btnLanzou')?.addEventListener('click', async () => {
+    // v3.1.0：123 云盘备用下载渠道——先复制提取码（剪贴板写入需窗口在前台，须先于 openExternal）再打开链接
+    document.getElementById('btn123Pan')?.addEventListener('click', async () => {
       try {
-        await navigator.clipboard.writeText('8cpu');
-        window.app?.toast?.('success', '提取码 8cpu 已复制');
+        await navigator.clipboard.writeText('1642');
+        window.app?.toast?.('success', '提取码 1642 已复制');
       } catch (e) {
-        window.app?.toast?.('warning', '提取码复制失败，请在网盘页手动输入 8cpu');
+        window.app?.toast?.('warning', '提取码复制失败，请在网盘页手动输入 1642');
       }
-      try { window.api?.app?.openExternal('https://wwbhm.lanzouq.com/b0rbf8kli'); } catch (_) {}
+      try { window.api?.app?.openExternal('https://1813260438.share.123pan.cn/123pan/AzxUVv-APFIh?pwd=1642#'); } catch (_) {}
     });
     const usageBackdrop = document.getElementById('usageBackdrop');
     usageBackdrop?.addEventListener('click', (e) => {

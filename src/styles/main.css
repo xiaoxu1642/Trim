@@ -2078,7 +2078,7 @@ body.lg-mode-frost .maint-tab.active .maint-tab-count {
 .about-row-copy { min-width: 0; }
 .about-row-copy strong { display: block; margin-bottom: 3px; font-size: var(--fs-secondary); font-weight: calc(600 * var(--font-weight-scale, 1)); color: var(--fg-primary); }
 .about-row-copy p { margin: 0; color: var(--fg-tertiary); font-size: var(--fs-meta); line-height: 1.6; user-select: text; }
-/* v3.1.0：一行多个操作按钮（检查更新行的蓝奏云 + 检查更新） */
+/* v3.1.0：一行多个操作按钮（检查更新行的 123云盘 + 检查更新） */
 .about-row-actions { display: flex; gap: 8px; flex: none; }
 @media (max-width: 720px) {
   .about-row { align-items: flex-start; flex-direction: column; gap: 10px; }
