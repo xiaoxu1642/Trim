@@ -648,6 +648,9 @@
           return;
         }
         item.raf = requestAnimationFrame(draw);
+        // 火眼眼审查 2026-09-14（MED）：后台/失焦时暂停 shimmer 重绘（rAF 先行续排保证
+        // 恢复可见后自动续跑），不再空耗 GPU/CPU
+        if (document.hidden) return;
         if (now - item.last < 33) return; // ~30fps 足够
         item.last = now;
         const w = canvas.width, h = canvas.height;

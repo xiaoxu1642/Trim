@@ -75,12 +75,23 @@ function decryptSettings(settings, safeStorage) {
   return transformSecrets(settings, value => decryptSecret(value, safeStorage));
 }
 
+// 火眼眼审查 2026-09-14（LOW）：统一脱敏出口——发往渲染层前把全部已配置密钥字段
+// 替换为掩码（与 main.js API_KEY_MASK 同值），IPC 返回密钥相关数据时强制过一遍，
+// 防个别处理点遗忘手工掩码泄露明文。空值保持空串（表示「未配置」，不伪装成已配置）；
+// 幂等：已是掩码的值重复调用结果不变。
+const SECRET_MASK = '••••••••';
+function maskSettings(settings) {
+  return transformSecrets(settings, value => (value ? SECRET_MASK : value));
+}
+
 module.exports = {
   SECRET_PREFIX,
+  SECRET_MASK,
   atomicWriteFile,
   atomicWriteJson,
   encryptSecret,
   decryptSecret,
   encryptSettings,
-  decryptSettings
+  decryptSettings,
+  maskSettings
 };

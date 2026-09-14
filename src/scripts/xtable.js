@@ -193,6 +193,7 @@
     const overscan = Math.max(4, opts.overscan || 8);
     let visibleStart = -1, visibleEnd = -1;
     let pending = false;
+    let rafId = 0;
     let spacer = null;
     let windowEl = null;
     const total = () => rows.length;
@@ -217,7 +218,7 @@
     const scheduleRender = () => {
       if (pending) return;
       pending = true;
-      requestAnimationFrame(renderWindow);
+      rafId = requestAnimationFrame(renderWindow);
     };
 
     spacer = document.createElement('div');
@@ -250,6 +251,11 @@
         renderWindow();
       },
       destroy() {
+        // 火眼眼审查 2026-09-14（LOW）：容器可能比虚拟列表活得更久，destroy 时
+        // 补齐 scroll 监听解绑并取消挂起的 rAF，避免闭包与 spacer 泄漏
+        if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+        pending = false;
+        container.removeEventListener('scroll', scheduleRender);
         window.removeEventListener('resize', scheduleRender);
       }
     };

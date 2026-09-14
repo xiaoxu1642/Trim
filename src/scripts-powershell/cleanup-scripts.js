@@ -35,12 +35,18 @@ const { RULE_PATH_EVAL_PS } = require('../main/ps-rule-path-eval');
 const PROTECT = require('../main/ps-protect-path');
 // 🟡1：数据目录规则读取侧复验 ed25519 签名，与写入侧 main.js cleanup:update-rules 共用同一实现。
 const RULES_SIG = require('../main/rules-signature');
+// 火眼眼审查 2026-09-14（MED）：规则库防回滚水位线——验签只证「内容出自发布方」，
+// 不证「是最新一份」；能写数据目录者可重放一份旧但合法签名的规则集，重新引入已下线的
+// 危险删除目标。本模块在每次成功采用更高版本后记录 rulesVersion 水位线，读侧与更新侧
+// 低于水位线（或低于内置版本）的已验签规则一律拒绝（fail-closed，只升不降）。
+const SECURITY = require('../main/security');
 
 const RULES_FILE = path.join(__dirname, '..', 'data', 'cleanup-rules.json');
 // 数据目录与 main.js APP_DATA_DIR（%APPDATA%\Trim）保持一致；此处不依赖 electron app
 const DATA_RULES_DIR = path.join(process.env.APPDATA || path.join(require('os').homedir(), 'AppData', 'Roaming'), 'Trim', 'cleanup');
 const DATA_RULES_FILE = path.join(DATA_RULES_DIR, 'rules.json');
 const CUSTOM_RULES_DIR = path.join(DATA_RULES_DIR, 'custom');
+const RULES_WATERMARK_FILE = path.join(DATA_RULES_DIR, 'rules-watermark.json');
 
 let RULES_CACHE = null;
 let RULES_CACHE_SIG = '';
@@ -94,8 +100,34 @@ function applyCustomToggles(rules, parsed, fileLabel) {
   return true;
 }
 
+// 火眼眼审查 2026-09-14（MED）：防回滚水位线读写。水位线只升不降（取历史最大值），
+// 损坏/不可读按 0 处理（不阻断正常流程；规则文件本身仍有验签兜底）。
+function getRulesWatermark() {
+  try {
+    const m = JSON.parse(fs.readFileSync(RULES_WATERMARK_FILE, 'utf8'));
+    const v = Number(m && m.rulesVersion);
+    return Number.isFinite(v) && v > 0 ? v : 0;
+  } catch (e) {
+    return 0;
+  }
+}
+
+function setRulesWatermark(version) {
+  const v = Number(version);
+  if (!Number.isFinite(v) || v <= 0 || v <= getRulesWatermark()) return false;
+  try {
+    SECURITY.atomicWriteJson(RULES_WATERMARK_FILE, { rulesVersion: v, at: new Date().toISOString() });
+    return true;
+  } catch (e) {
+    console.warn('[cleanup] 写规则版本水位线失败:', e.message);
+    return false;
+  }
+}
+
 // 🟡1：读取数据目录规则并复验 ed25519 签名。仅当签名通过且结构合法才返回，否则 null（回退内置规则）。
 // 写入侧 main.js cleanup:update-rules 已在落盘前验签；此处补上读取侧复验，堵住「下载后被本地篡改」的旁路。
+// 火眼眼审查 2026-09-14（MED）：验签通过后另做防回滚比对——低于内置版本（应用自带的更可信）
+// 或低于历史已采用水位线的规则一律拒绝，防止重放旧签名文件重新引入已下线的危险删除目标。
 function readVerifiedDataRules() {
   try {
     if (!fs.existsSync(DATA_RULES_FILE)) return null;
@@ -106,7 +138,17 @@ function readVerifiedDataRules() {
       return null;
     }
     const parsed = JSON.parse(text);
-    return parsed && Array.isArray(parsed.groups) ? parsed : null;
+    if (!parsed || !Array.isArray(parsed.groups)) return null;
+    const v = Number(parsed.rulesVersion) || 0;
+    const builtin = safeReadJson(RULES_FILE);
+    const builtinVersion = Number(builtin && builtin.rulesVersion) || 0;
+    const watermark = getRulesWatermark();
+    const floor = Math.max(builtinVersion, watermark);
+    if (floor > 0 && v < floor) {
+      console.warn(`[cleanup] 数据目录规则版本(${v})低于防回滚下限(${floor})，疑似旧签名文件重放，已回退内置规则`);
+      return null;
+    }
+    return parsed;
   } catch (e) {
     return null;
   }
@@ -392,7 +434,11 @@ function Get-FileKeyDeletable {
   # M2/M3（2026-09-14 重复点审查）：声明了 restartProcesses 的条目（图标/缩略图缓存、打印后台缓存）
   # 会在执行侧临时停止占用进程，因此扫描阶段不做占用探测 —— 否则这些文件会被 explorer/spoolsv 独占，
   # 全部判为 locked 而不进计划清单，执行侧拿不到可删文件（等于清不掉）。
-  $skipLockCheck = (@($Rule.restartProcesses).Count -gt 0)
+  # 陷阱修复（Rust 化对拍发现）：旧写法 @($Rule.restartProcesses).Count 在属性缺失时 @($null).Count
+  # 是 1（架构第十节判空陷阱），导致未声明该键的条目全部被误判为「免探测」，locked 恒 0、
+  # 被占用文件混进计划清单（D7 口径失效）。判空必须先 -not $x。
+  $rp = $Rule.restartProcesses
+  $skipLockCheck = ($null -ne $rp -and (@($rp | Where-Object { $_ }).Count -gt 0))
   $needList = $skipLockCheck -or (-not $useFastSize) -or $hasExcl
   if (-not $needList) {
     foreach ($fk in @($Rule.fileKeys)) {
@@ -1669,10 +1715,12 @@ Write-Output ('@@DETAIL@@' + (@{ kind = 'files'; total = $total; truncated = ($t
 `;
 
 module.exports = {
-  scan(categories, configuredPaths = {}) {
+  // 规则注入（扫描 Rust 化 P3）：rulesOverride 供 test-features 双引擎对拍断言传入合成规则，
+  // 生产链路不传参走 loadRules()（内置 + 数据目录验签合并），注入面不新增信任假设
+  scan(categories, configuredPaths = {}, rulesOverride = null) {
     const catsJson = psEscapeSingle(JSON.stringify(categories || []));
     const pathsJson = psEscapeSingle(JSON.stringify(configuredPaths || {}));
-    const rulesJson = psEscapeSingle(JSON.stringify(loadRules()));
+    const rulesJson = psEscapeSingle(JSON.stringify(rulesOverride || loadRules()));
     return SCAN_SCRIPT
       .replace('\u0024{CATEGORIES_PLACEHOLDER}', () => catsJson)
       .replace('\u0024{CONFIGURED_PATHS_PLACEHOLDER}', () => pathsJson)
@@ -1703,6 +1751,9 @@ module.exports = {
   dataRulesDir() {
     return DATA_RULES_DIR;
   },
+  // 火眼眼审查 2026-09-14（MED）：防回滚水位线（主进程更新落盘成功后抬升）
+  getRulesWatermark,
+  setRulesWatermark,
   // 条目明细（P3）：枚举单个条目将删除的文件清单（只读）；resolvedPath 为扫描时已解析的目录
   detail(id, resolvedPath = '') {
     const rulesJson = psEscapeSingle(JSON.stringify(loadRules()));

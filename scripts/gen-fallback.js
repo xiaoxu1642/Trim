@@ -13,13 +13,15 @@ const OUT = path.join(__dirname, '..', 'src', 'scripts', 'cleanup-fallback.gener
 
 const raw = fs.readFileSync(SRC, 'utf8');
 JSON.parse(raw); // 先校验源是合法 JSON，异常直接抛出终止构建
-// 全量内联（含 _sig）：test 一致性断言按整段比对；渲染层构建分类只读 groups，多余字段无影响
+// 全量内联（含 _sig）：test 一致性断言按整段比对；渲染层构建分类只读 groups，多余字段无影响。
+// 火眼眼审查 2026-09-14（LOW）：以 JSON.parse(字符串字面量) 而非对象字面量直拼——源文本经
+// JSON.stringify 转义后不再作为 JS 代码解析，未来若数据源引入不可信内容也不会注入执行。
 const out = `// 本文件由 scripts/gen-fallback.js 从 src/data/cleanup-rules.json 自动生成（审查 2-2）。
 // 勿手改——修改规则 JSON 后运行 node scripts/gen-fallback.js 重新生成（npm run build 前自动执行）。
 // 用途：cleanup.js 浏览器预览 / IPC 不可用时的分类兜底（经 buildCategoriesFromRules 构建）。
 (function (root) {
   'use strict';
-  root.CLEANUP_RULES_FALLBACK = ${raw.trim()};
+  root.CLEANUP_RULES_FALLBACK = JSON.parse(${JSON.stringify(raw.trim())});
 })(typeof window !== 'undefined' ? window : globalThis);
 `;
 fs.writeFileSync(OUT, out, 'utf8');

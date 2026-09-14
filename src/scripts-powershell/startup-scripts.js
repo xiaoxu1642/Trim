@@ -400,7 +400,7 @@ foreach ($item in @($items)) {
       $regFile = Join-Path $deletedDir ($stamp + '_reg_' + $safe + '.reg')
       $stdPathEsc = $stdPath -replace 'HKEY_LOCAL_MACHINE', 'HKLM'
       $stdPathEsc = $stdPathEsc -replace 'HKEY_CURRENT_USER', 'HKCU'
-      & reg.exe export $stdPathEsc "$regFile" /y | Out-Null
+      & reg.exe export "$stdPathEsc" "$regFile" /y | Out-Null
       if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $regFile)) {
         $failed++; $results += @{ id = $id; name = $name; status = 'error'; message = '注册表备份失败，未执行删除' }; continue
       }

@@ -41,6 +41,9 @@
   var bootReady = false;
   var enterScheduled = false;
   var hardTimer = setTimeout(finish, HARD_EXIT_MS);
+  // 火眼眼审查 2026-09-14（LOW）：启动页是短生命周期节点，window 级监听（boot-ready /
+  // canvas resize）须在 finish 摘除节点时同步解绑，否则闭包与 WebGL 画布残留至窗口关闭
+  var canvasResizeHandler = null;
 
   function nowMs() {
     return (window.performance && performance.now) ? performance.now() : Date.now();
@@ -56,6 +59,9 @@
     if (finished) return;
     finished = true;
     clearTimeout(hardTimer);
+    // 火眼眼审查 2026-09-14（LOW）：节点摘除的同时解绑 window 级监听
+    try { window.removeEventListener('trim:boot-ready', onBootReady); } catch (e) {}
+    try { if (canvasResizeHandler) window.removeEventListener('resize', canvasResizeHandler); } catch (e) {}
     try {
       splash.classList.add('finished');
       if (splash.parentNode) splash.parentNode.removeChild(splash);
@@ -261,6 +267,7 @@
     }
     resize();
     window.addEventListener('resize', resize);
+    canvasResizeHandler = resize; // 供 finish() 在启动页摘除时解绑（火眼眼审查 LOW）
 
     function loop(now) {
       gl.clearColor(1, 1, 1, 1);

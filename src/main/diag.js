@@ -70,8 +70,13 @@ function jsDiag(stage, mutation, errOrDetail) {
 }
 
 // 统一日志格式：[DIAG] op=<操作> stage=.. mutation=.. digest=.. native=.. detail=..
+// 火眼眼审查 2026-09-14（LOW）：先剥离 C0 控制字符与 DEL（\s 只覆盖空白类，
+// 其余 C0 可伪造日志行），再压空白，防日志注入。
 function formatDiag(op, d) {
-  const detail = String(d.detail || '').replace(/\s+/g, ' ').slice(0, 300);
+  const detail = String(d.detail || '')
+    .replace(/[\u0000-\u001F\u007F]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .slice(0, 300);
   return `[DIAG] op=${op} stage=${d.failure_stage} mutation=${d.mutation_state} digest=${d.diagnostic_digest} native=${d.native_error_code} detail=${detail}`;
 }
 

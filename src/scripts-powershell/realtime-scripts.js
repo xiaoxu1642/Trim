@@ -102,9 +102,13 @@ $received = 0
 $latencySum = 0.0
 
 if ($gateway) {
+  # 火眼眼审查 2026-09-14（LOW）：网关地址拼入 WQL 过滤器前转义单引号（' → ''），
+  # 防异常网关值破坏引号边界
+  $gatewayWql = [string]$gateway
+  $gatewayWql = $gatewayWql.Replace("'", "''")
   for ($i = 0; $i -lt $sent; $i++) {
     try {
-      $p = Get-CimInstance -ClassName Win32_PingStatus -Filter ("Address='" + $gateway + "' AND Timeout=600") -ErrorAction Stop
+      $p = Get-CimInstance -ClassName Win32_PingStatus -Filter ("Address='" + $gatewayWql + "' AND Timeout=600") -ErrorAction Stop
       if ($p -and $p.StatusCode -eq 0) {
         $received++
         $latencySum += [double]$p.ResponseTime

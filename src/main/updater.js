@@ -37,7 +37,8 @@ const MIRROR_FILE = 'update-mirror.json'; // 数据目录下的用户镜像偏�
 const CHECK_TIMEOUT_MS = 20000;           // 单线路检查超时（竞速另一条前不再等太久）
 
 // 版本单调比较（审查 H-1 防降级，2026-09-14）：按点分段逐段比较数字，任一段远端 < 当前即降级。
-// 预发布标签（-beta 等）截取主体版本再比；比较失败按「不降级」放行（fail-open，避免误拦真实更新）。
+// 预发布标签（-beta 等）截取主体版本再比；任一段无法解析为有限数字或比较过程异常一律拒绝安装
+// （火眼眼审查 2026-09-14 MED：fail-closed——畸形远端版本不得绕过降级拦截，宁可漏更不可错降）。
 function isVersionNewerOrEqual(remote, current) {
   try {
     const a = String(remote).split('-')[0].split('.').map(Number);
@@ -45,12 +46,12 @@ function isVersionNewerOrEqual(remote, current) {
     const len = Math.max(a.length, b.length);
     for (let i = 0; i < len; i++) {
       const x = a[i] || 0, y = b[i] || 0;
-      if (!Number.isFinite(x) || !Number.isFinite(y)) return true;
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
       if (x > y) return true;
       if (x < y) return false;
     }
     return true;
-  } catch { return true; }
+  } catch { return false; }
 }
 
 let winRef = null;

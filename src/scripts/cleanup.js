@@ -523,15 +523,16 @@
   }
 
   // 渲染单个二级分类（v3.2.1：tableKey 带域前缀——子分类 id 可跨域同名）
+  // v3.3.3：右侧统计两行化——第一行「N/M 项 · 已选 X GB」（真·已选大小），第二行「可选 Y GB」
+  //（该子分组全部项大小）。旧行为把全部项大小拼在「2/5 项」后有歧义，用户会误读为已选大小。
   function renderSubGroup(groupKey, sg) {
-    const sizePart = groupTotalSize(sg.items) > 0 ? ` · ${formatSize(groupTotalSize(sg.items))}` : '';
     return `
       <div class="sub-group" data-sub-group="${sg.id}">
         <div class="sub-group-header" data-sub-toggle="${sg.id}">
           <span class="sub-group-chevron">${chevronSvg()}</span>
           <div class="checkbox" data-sub-checkbox="${sg.id}"></div>
           <span class="sub-group-name">${sg.name}</span>
-          <span style="margin-left:auto;font-size:11px;color:var(--fg-tertiary)" data-sub-meta="${sg.id}">${sg.items.length} 项${sizePart}</span>
+          <span style="margin-left:auto;font-size:11px;color:var(--fg-tertiary);text-align:right;line-height:1.5" data-sub-meta="${sg.id}"><span data-sub-meta-line1="${sg.id}">${sg.items.length} 项</span><span data-sub-meta-line2="${sg.id}" style="display:block"></span></span>
         </div>
         <div class="sub-group-content">
           ${renderTable(groupKey, sg.items, groupKey + ':' + sg.id)}
@@ -609,15 +610,22 @@
         } else {
           cb.classList.add('indeterminate');
         }
-        // 元信息更新（条目数量 + 总占用大小）
+        // 元信息更新（v3.3.3 两行化：第一行数量+已选大小，第二行可选总大小）
         const metaEl = document.querySelector(`[data-sub-meta="${sg.id}"]`);
-        if (metaEl) {
-          const sgSize = sgItems.reduce((s, i) => s + (scanResults.get(i.id)?.size || 0), 0);
-          const sgSelected = sgItems.filter(i => selectedIds.has(i.id)).length;
-          const sizePart = sgSize > 0 ? ` · ${formatSize(sgSize)}` : '';
-          metaEl.textContent = sgSelected > 0
-            ? `${sgSelected}/${total} 项${sizePart}`
-            : `${total} 项${sizePart}`;
+        const line1 = metaEl && metaEl.querySelector(`[data-sub-meta-line1="${sg.id}"]`);
+        const line2 = metaEl && metaEl.querySelector(`[data-sub-meta-line2="${sg.id}"]`);
+        if (line1 && line2) { // 双行结构由 renderSubGroup 渲染，缺失则跳过本条刷新
+          const sgAllSize = sgItems.reduce((s, i) => s + (scanResults.get(i.id)?.size || 0), 0);
+          const sgSelected = sgItems.filter(i => selectedIds.has(i.id));
+          const selSize = sgSelected.reduce((s, i) => s + (scanResults.get(i.id)?.size || 0), 0);
+          if (sgSelected.length > 0) {
+            line1.textContent = selSize > 0
+              ? `${sgSelected.length}/${sgItems.length} 项 · 已选 ${formatSize(selSize)}`
+              : `${sgSelected.length}/${sgItems.length} 项`;
+          } else {
+            line1.textContent = `${sgItems.length} 项`;
+          }
+          line2.textContent = sgAllSize > 0 ? `可选 ${formatSize(sgAllSize)}` : '';
         }
       }
     }

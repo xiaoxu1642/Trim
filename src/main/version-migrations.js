@@ -8,15 +8,17 @@
 const fs = require('fs');
 const path = require('path');
 
-// 读取退役清单；缺失或损坏时返回空数组（迁移逻辑不依赖清单也能按「不在目录即还原」工作）
+// 读取退役清单；缺失或损坏时返回空数组（迁移逻辑不依赖清单也能按「不在目录即还原」工作）。
+// dataDir 形参当前未使用（为未来数据目录级清单预留），保留以稳定导出签名（火眼眼审查 LOW：
+// 原「空 if 死块」已移除，仅留本注释说明）。
 function loadRetiredList(dataDir) {
+  void dataDir;
   const file = path.join(__dirname, '..', 'data', 'retired-optimizations.json');
   try {
     const m = JSON.parse(fs.readFileSync(file, 'utf8'));
     const items = Array.isArray(m.items) ? m.items : [];
     return items.filter(it => it && typeof it.id === 'string');
   } catch (e) {
-    if (typeof dataDir === 'string') { /* dataDir 参数仅为未来数据目录级清单预留 */ }
     return [];
   }
 }

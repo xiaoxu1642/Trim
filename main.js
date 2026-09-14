@@ -102,7 +102,8 @@ function rejectUntrustedRenderer(event) {
   return isTrustedRenderer(event) ? null : { success: false, message: '请求来源不受信任' };
 }
 
-// 审查 1-5：模型 API 地址 SSRF 防护——models:save/test 会携带密钥向任意 URL 发请求，
+// 火眼眼审查 2026-09-14：API 地址 SSRF 防护——models:save/test 与 settings:save 均会持久化
+// 携带密钥的请求地址（后续 aidesc:get / optimizer:genadvice 会以 Authorization 携带密钥出网），
 // 必须拒绝环回/私有/链路本地网段，防止被攻陷的渲染层探测内网或把密钥外带到内网收集端。
 // 判定只覆盖 IP 字面量与 localhost 主机名；域名解析到内网 IP 的 rebinding 不在此防线内。
 // 若将来需要支持本地模型端点（如 Ollama），在此处显式加白名单，不要直接删掉整个校验。
@@ -136,7 +137,8 @@ function isPrivateApiUrl(rawUrl) {
 
 // 审查 1-5：settings:load 返回密钥的统一掩码。渲染层表单回显掩码，主进程在 save/test
 // 侧识别掩码视为「未修改」保留已存真值——明文密钥不再常驻渲染层。
-const API_KEY_MASK = '••••••••';
+// 火眼眼审查 2026-09-14（LOW）：掩码值改由 security.js 单一来源导出（maskSettings 同值）
+const API_KEY_MASK = SECURITY.SECRET_MASK;
 
 // 审查 1-3（全量）：统一 IPC 包装器——除显式只读白名单外，所有通道一律校验请求来源，
 // 「忘记校验」在结构上不再可能。白名单只收确定只读、无子进程副作用、无敏感面的通道；
@@ -1112,9 +1114,6 @@ handleSafe('cleanup:scan', async (event, { categories }) => {
   if (!snapSender.listenerCount('destroyed')) {
     snapSender.once('destroyed', () => cleanupSnapshots.delete(snapSender.id));
   }
-  // 清理扫描读取已保存的路径绑定，让自动发现结果在后续扫描中持续生效。
-  const script = CLEANUP_SCRIPT.scan(categories, loadPathsConfig());
-  const scriptPath = writeTempScript(script);
   const sender = event.sender;
   const total = Array.isArray(categories) ? categories.length : 0;
   const data = [];
@@ -1124,47 +1123,72 @@ handleSafe('cleanup:scan', async (event, { categories }) => {
   const planBuf = new Map();
   const planTruncated = new Set();
   let planTotalRows = 0;
+  // 双引擎共用的行解析器（P1-12）：按行解析 @@ITEM@@/@@PLANFILE@@ 流式结果，逐项增量推送渲染层
+  const onEngineStdout = (chunk) => {
+    scanBuf += chunk;
+    let nl;
+    while ((nl = scanBuf.indexOf('\n')) >= 0) {
+      const line = scanBuf.slice(0, nl).replace(/\r$/, '');
+      scanBuf = scanBuf.slice(nl + 1);
+      if (line.startsWith('@@PLANFILE@@')) {
+        // 计划文件行只进主进程快照（渲染层不消费），受总量防呆上限约束
+        if (planTotalRows >= PLAN_CAP_TOTAL) continue;
+        try {
+          const pf = JSON.parse(line.slice(12));
+          if (pf && typeof pf.id === 'string' && pf.id.length <= 160 && typeof pf.path === 'string' && pf.path.length <= 2000) {
+            let arr = planBuf.get(pf.id);
+            if (!arr) { arr = []; planBuf.set(pf.id, arr); }
+            if (arr.length < PLAN_CAP_PER_ITEM) { arr.push({ path: pf.path, size: Number(pf.size) || 0 }); planTotalRows++; }
+            else if (!planTruncated.has(pf.id)) { planTruncated.add(pf.id); writeLog('warn', `可删文件清单超过 ${PLAN_CAP_PER_ITEM} 条上限: ${pf.id}`); }
+          }
+        } catch (e) {}
+        continue;
+      }
+      if (!line.startsWith('@@ITEM@@')) continue;
+      try {
+        const item = JSON.parse(line.slice(8));
+        if (!item || !item.id) continue;
+        data.push(item);
+        if (sender && !sender.isDestroyed()) {
+          sender.send('cleanup:scan-progress', { done: data.length, total, item });
+        }
+      } catch (e) {}
+    }
+  };
   try {
     writeLog('info', `开始扫描: ${categories.join(', ')}`);
-    const { stderr, code } = await runPowerShellFile(scriptPath, {
-      timeout: 300000,
-      diagOp: 'cleanup.scan',
-      onStdout: (chunk) => {
-        // P1-12：按行解析 @@ITEM@@ 流式结果，逐项增量推送渲染层（真实进度）
-        scanBuf += chunk;
-        let nl;
-        while ((nl = scanBuf.indexOf('\n')) >= 0) {
-          const line = scanBuf.slice(0, nl).replace(/\r$/, '');
-          scanBuf = scanBuf.slice(nl + 1);
-          if (line.startsWith('@@PLANFILE@@')) {
-            // 计划文件行只进主进程快照（渲染层不消费），受总量防呆上限约束
-            if (planTotalRows >= PLAN_CAP_TOTAL) continue;
-            try {
-              const pf = JSON.parse(line.slice(12));
-              if (pf && typeof pf.id === 'string' && pf.id.length <= 160 && typeof pf.path === 'string' && pf.path.length <= 2000) {
-                let arr = planBuf.get(pf.id);
-                if (!arr) { arr = []; planBuf.set(pf.id, arr); }
-                if (arr.length < PLAN_CAP_PER_ITEM) { arr.push({ path: pf.path, size: Number(pf.size) || 0 }); planTotalRows++; }
-                else if (!planTruncated.has(pf.id)) { planTruncated.add(pf.id); writeLog('warn', `可删文件清单超过 ${PLAN_CAP_PER_ITEM} 条上限: ${pf.id}`); }
-              }
-            } catch (e) {}
-            continue;
-          }
-          if (!line.startsWith('@@ITEM@@')) continue;
-          try {
-            const item = JSON.parse(line.slice(8));
-            if (!item || !item.id) continue;
-            data.push(item);
-            if (sender && !sender.isDestroyed()) {
-              sender.send('cleanup:scan-progress', { done: data.length, total, item });
-            }
-          } catch (e) {}
-        }
-      }
+    // 扫描引擎择优（P3，方案 v1.1）：finder.exe 原生引擎优先（无 pwsh 冷启动/Add-Type），
+    // 缺失 / 超时 / 非零退出时回退 PS 引擎（双引擎并存，避免发布现场扫描全挂）
+    let result = await runFinderCleanupScan({
+      categories,
+      configuredPaths: loadPathsConfig(),
+      rulesJson: JSON.stringify(CLEANUP_SCRIPT.rules()),
+      onStdout: onEngineStdout
     });
-    if (code !== 0) {
-      writeLog('error', `扫描失败: ${stderr}`);
-      return { success: false, message: stderr || '扫描失败', data: [] };
+    if (result.code !== 0) {
+      writeLog('warn', `Rust 清理扫描不可用，回退 PS 引擎: ${result.error || result.stderr || '退出码 ' + result.code}`);
+      // 回退前清空 Rust 引擎的半程输出，防止条目/清单混入 PS 结果
+      data.length = 0;
+      planBuf.clear();
+      planTruncated.clear();
+      planTotalRows = 0;
+      scanBuf = '';
+      const script = CLEANUP_SCRIPT.scan(categories, loadPathsConfig());
+      const scriptPath = writeTempScript(script);
+      try {
+        const ps = await runPowerShellFile(scriptPath, {
+          timeout: 300000,
+          diagOp: 'cleanup.scan',
+          onStdout: onEngineStdout
+        });
+        result = { code: ps.code, stderr: ps.stderr };
+      } finally {
+        try { fs.unlinkSync(scriptPath); } catch (e) {}
+      }
+    }
+    if (result.code !== 0) {
+      writeLog('error', `扫描失败: ${result.stderr}`);
+      return { success: false, message: result.stderr || '扫描失败', data: [] };
     }
     // 把可删文件清单并进条目（无清单的条目补空数组，执行/明细侧统一按数组消费）
     for (const item of data) {
@@ -1180,7 +1204,6 @@ handleSafe('cleanup:scan', async (event, { categories }) => {
     return { success: false, message: e.message, data };
   } finally {
     scanBuf = '';
-    try { fs.unlinkSync(scriptPath); } catch (e) {}
   }
 });
 
@@ -1581,8 +1604,10 @@ async function fetchRemoteRulesText(currentVersion, onProgress) {
 }
 
 // 更新规则库：拉取 → 校验 → 原子落盘；下载进度经 cleanup:rules-download-progress 推送渲染层（v3.2.1）
+// 火眼眼审查 2026-09-14（MED）：校验下限取 max(内置, 历史水位线)——数据目录规则被删/失效回退内置后，
+// 水位线仍记住历史已采用的最高版本，防止旧签名文件经更新通道重放（防回滚只升不降）。
 handleSafe('cleanup:update-rules', async (event) => {
-  const currentVersion = Number(CLEANUP_SCRIPT.rules()?.rulesVersion) || 0;
+  const currentVersion = Math.max(Number(CLEANUP_SCRIPT.rules()?.rulesVersion) || 0, CLEANUP_SCRIPT.getRulesWatermark());
   const sender = event.sender;
   try { sender.send('cleanup:rules-download-progress', { percent: 0 }); } catch (_) {}
   const result = await fetchRemoteRulesText(currentVersion, (pct) => {
@@ -1602,6 +1627,8 @@ handleSafe('cleanup:update-rules', async (event) => {
   const tmp = target + '.downloading';
   fs.writeFileSync(tmp, result.text, 'utf8');
   fs.renameSync(tmp, target);
+  // 落盘成功即抬升防回滚水位线（只升不降）；写失败不阻断本次更新，读取侧仍有验签兜底
+  CLEANUP_SCRIPT.setRulesWatermark(result.version);
   writeLog('info', `清理规则库已更新: rulesVersion=${result.version}`);
   return { success: true, rulesVersion: result.version, source: result.source };
 });
@@ -1610,7 +1637,8 @@ handleSafe('cleanup:update-rules', async (event) => {
 // v3.3.0：版本显示三分（当前 / 当前 winapp2 / 云端），一并返回 winapp2Version。
 handleSafe('cleanup:check-rules-version', async () => {
   const rules = CLEANUP_SCRIPT.rules() || {};
-  const currentVersion = Number(rules.rulesVersion) || 0;
+  // 与 cleanup:update-rules 同口径：下限含防回滚水位线（火眼眼审查 2026-09-14 MED）
+  const currentVersion = Math.max(Number(rules.rulesVersion) || 0, CLEANUP_SCRIPT.getRulesWatermark());
   const currentWinapp2Version = rules.winapp2Version != null ? rules.winapp2Version : null;
   const result = await fetchRemoteRulesText(currentVersion, null);
   if (!result.ok) {
@@ -1719,6 +1747,45 @@ function runRustScanner(scanType, args, opts = {}) {
       writeLog('warn', `原生扫描器超时已终止: ${scanType}`);
       finish(reject, new Error(`扫描超时（超过 ${Math.round(ms / 1000)} 秒），请缩小扫描范围后重试`));
     }, ms);
+  });
+}
+
+// Rust 清理扫描引擎（扫描 Rust 化 P3）：finder.exe cleanup 子命令——argv 短参数 +
+// stdin 规则 JSON（60KB 级超 CreateProcessW 32K 命令行上限，方案 v1.1 输入通道）。
+// 行协议与 PS SCAN_SCRIPT 一致（@@ITEM@@/@@PLANFILE@@），致命错误 stderr + exit 2；
+// 不直接向调用方抛错——resolve {code, stderr, error} 由 cleanup:scan 决策 PS 回退。
+function runFinderCleanupScan({ categories, configuredPaths, rulesJson, onStdout, timeoutMs = 300000 }) {
+  return new Promise((resolve) => {
+    const exe = resolveFinderExe();
+    if (!exe) return resolve({ code: -1, stderr: '', error: '未找到原生扫描器 finder.exe' });
+    let child;
+    try {
+      child = spawn(exe, ['cleanup', JSON.stringify(categories), JSON.stringify(configuredPaths)], { windowsHide: true });
+    } catch (e) {
+      return resolve({ code: -1, stderr: String(e.message), error: 'spawn 失败' });
+    }
+    registerBackendChild(child, exe, ['cleanup']);
+    let settled = false;
+    let timer = null;
+    let stderr = '';
+    const finish = (v) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      try { child.kill(); } catch (e) {}
+      resolve(v);
+    };
+    child.on('error', (err) => finish({ code: -1, stderr: String(err.message), error: 'spawn 失败' }));
+    child.stdout.on('data', (d) => {
+      try { onStdout(d.toString('utf8')); } catch (e) {}
+    });
+    child.stderr.on('data', (d) => { stderr += d.toString('utf8'); });
+    child.on('close', (code) => finish({ code: typeof code === 'number' ? code : -1, stderr }));
+    timer = setTimeout(() => finish({ code: -1, stderr, error: `超时（超过 ${Math.round((Number(timeoutMs) || 300000) / 1000)} 秒）` }), Number(timeoutMs) || 300000);
+    // stdin：规则 JSON 全量写入；引擎提前退出（负例 fail-closed）时的 EPIPE 静默处理
+    child.stdin.on('error', () => {});
+    child.stdin.write(rulesJson);
+    child.stdin.end();
   });
 }
 
@@ -3788,6 +3855,9 @@ handleSafe('settings:load', (event) => {
     };
     return acc;
   }, {});
+  // 火眼眼审查 2026-09-14（LOW）：出口统一脱敏兜底——即使上方手工掩码被未来改动遗漏，
+  // 发往渲染层前也强制把全部已配置密钥字段替换为掩码（幂等，不改变空值语义）
+  resp.data = SECURITY.maskSettings(resp.data);
   return resp;
 });
 
@@ -3962,6 +4032,16 @@ handleSafe('settings:save', (event, { settings } = {}) => {
     zhihuPrompt: str('zhihuPrompt') ?? (current.zhihuPrompt || ''),
     zhihuTimeout: settings.zhihuTimeout !== undefined ? clampTimeout(settings.zhihuTimeout, 30) : (current.zhihuTimeout || 30)
   };
+  // 火眼眼审查 2026-09-14（HIGH）：settings:save 与 models:save 同防 SSRF——上面 4 个 URL
+  // 字段最终都会被 aidesc:get / optimizer:genadvice 用来携带密钥出网，与 models 通道一致
+  // 拒绝非 http(s) 与本机/内网地址（掩码语义不变：空值走「保留旧值/默认」分支不校验）。
+  const URL_FIELD_LABELS = { aiApiUrl: 'AI 接口地址', baiduApiUrl: '百度千帆接口地址', metasoApiUrl: '秘塔接口地址', zhihuApiUrl: '知乎直答接口地址' };
+  for (const [field, label] of Object.entries(URL_FIELD_LABELS)) {
+    const v = next[field];
+    if (!v) continue;
+    if (!/^https?:\/\//i.test(v)) return { success: false, message: `${label}格式无效，请以 http(s):// 开头` };
+    if (isPrivateApiUrl(v)) return { success: false, message: `${label}不允许指向本机或内网网段` };
+  }
   // 大模型管理：只接受已知模型字段，并且不能通过通用设置通道绕过验证状态。
   if (settings.models && typeof settings.models === 'object') {
     const currentModels = loadModelsConfig();
@@ -3973,9 +4053,14 @@ handleSafe('settings:save', (event, { settings } = {}) => {
         next.models[modelKey] = currentModel;
         continue;
       }
+      const modelUrl = String(submitted.apiUrl || currentModel.apiUrl || '').trim();
+      if (modelUrl) {
+        if (!/^https?:\/\//i.test(modelUrl)) return { success: false, message: `模型 ${modelDisplayName(modelKey, currentModel)} 接口地址格式无效，请以 http(s):// 开头` };
+        if (isPrivateApiUrl(modelUrl)) return { success: false, message: `模型 ${modelDisplayName(modelKey, currentModel)} 接口地址不允许指向本机或内网网段` };
+      }
       next.models[modelKey] = {
         ...currentModel,
-        apiUrl: String(submitted.apiUrl || currentModel.apiUrl || '').trim(),
+        apiUrl: modelUrl,
         apiKey: String(submitted.apiKey || currentModel.apiKey || '').trim(),
         model: String(submitted.model || currentModel.model || '').trim(),
         prompt: String(submitted.prompt || currentModel.prompt || '').trim(),

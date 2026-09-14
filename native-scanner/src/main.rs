@@ -16,6 +16,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
+// 磁盘清理扫描引擎（P0：pathPs 目录型条目 + dism 占位），方案见
+// D:\KaiFa\文件分析\laji\磁盘清理扫描Rust化方案.md（v1.1）
+mod cleanup_scan;
+
 // ---- 扫描并行参数（P0 批次）----
 /// 目录级分治展开层数。再深单目录已很小，调度开销大于收益。
 const PAR_DEPTH: usize = 3;
@@ -51,7 +55,7 @@ fn eprint_err(e: &std::io::Error, what: &str) {
     eprintln!("[finder-warn] {}: {}", what, e);
 }
 
-fn json_escape(s: &str) -> String {
+pub(crate) fn json_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 8);
     for ch in s.chars() {
         match ch {
@@ -102,7 +106,7 @@ fn progress(n: u64) {
 /// （file_type().is_symlink()==false），须按 FILE_ATTRIBUTE_REPARSE_POINT (0x400) 判定；
 /// 否则自引用联接点（如「Application Data」历史环）会逐层加深重复遍历，扫描卡到超时。
 #[cfg(windows)]
-fn is_reparse(ent: &fs::DirEntry) -> bool {
+pub(crate) fn is_reparse(ent: &fs::DirEntry) -> bool {
     use std::os::windows::fs::MetadataExt;
     ent.metadata()
         .map(|m| (m.file_attributes() & 0x400) != 0)
@@ -110,7 +114,7 @@ fn is_reparse(ent: &fs::DirEntry) -> bool {
 }
 
 #[cfg(not(windows))]
-fn is_reparse(_ent: &fs::DirEntry) -> bool {
+pub(crate) fn is_reparse(_ent: &fs::DirEntry) -> bool {
     false
 }
 
@@ -1106,9 +1110,58 @@ fn del_item(t: &str, path: &Path, kind: &str, status: &str, freed: u64, msg: &st
     let _ = std::io::stdout().write_all(s.as_bytes());
 }
 
+/// 词法规范化（火眼眼审查 2026-09-14 M-1）：剥 `\\?\` / `\\?\UNC\` 前缀、统一分隔符、
+/// 折叠 `.` 与 `..` 组件、合并重复分隔符并小写。仅做字符串层折叠——不触盘、不展开 8.3
+/// 短名（短名/裸盘符 fail-closed 判定由 JS 侧 isProtectedDeletePath 在解析前拦截，
+/// 本函数为纵深防御第二层）。
+fn lexically_normalize(p: &str) -> String {
+    let s = p.trim();
+    let s = if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{}", rest)
+    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        s.to_string()
+    };
+    // 拆出不可折叠的根：盘符（X:）或 UNC（\\server\share）
+    let mut prefix = String::new();
+    let mut body = s.as_str();
+    let b = body.as_bytes();
+    if b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':' {
+        prefix = body[..2].to_string();
+        body = &body[2..];
+    } else if body.starts_with(r"\\") {
+        let mut it = body[2..].split(|c| c == '\\' || c == '/').filter(|c| !c.is_empty());
+        let server = it.next().unwrap_or("");
+        let share = it.next().unwrap_or("");
+        if !server.is_empty() && !share.is_empty() {
+            prefix = format!(r"\\{}\{}", server, share);
+            body = "";
+        }
+    }
+    let mut comps: Vec<&str> = Vec::new();
+    for c in body.split(|c| c == '\\' || c == '/') {
+        if c.is_empty() || c == "." {
+            continue;
+        }
+        if c == ".." {
+            comps.pop(); // 越过根的 .. 由盘符/UNC 前缀 + 根清单兜底判 fail-closed
+            continue;
+        }
+        comps.push(c);
+    }
+    if prefix.is_empty() {
+        comps.join("\\").to_lowercase()
+    } else {
+        format!(r"{}\{}", prefix, comps.join("\\")).to_lowercase()
+    }
+}
+
 /// 对应主进程 isProtectedDeletePath：拒绝磁盘根与系统关键目录。
+/// 火眼眼审查 2026-09-14（M-1）：原实现仅 to_lowercase，`C:\Windows\..\..` 类相对组件
+/// 与 `\\?\` 前缀路径可绕过前缀匹配——先词法规范化再比对。
 fn is_protected_path(p: &str) -> bool {
-    let norm = p.trim_end_matches(|c: char| c == '\\' || c == '/');
+    let norm = lexically_normalize(p);
     if norm.is_empty() {
         return true;
     }
@@ -1116,7 +1169,9 @@ fn is_protected_path(p: &str) -> bool {
     if bytes.len() == 2 && (bytes[0].is_ascii_alphabetic()) && bytes[1] == b':' {
         return true; // 例如 C:
     }
-    let lower = norm.to_lowercase();
+    if bytes.len() == 3 && bytes[1] == b':' && bytes[2] == b'\\' {
+        return true; // 盘符根，例如 C:\
+    }
     // 审查v4-L1：根路径盘符跟随 SystemDrive（与主进程 isProtectedDeletePath 对齐），
     // 原硬编码 C: 在系统目录装于其他盘时不设防
     let sysdrive = std::env::var("SystemDrive")
@@ -1132,10 +1187,10 @@ fn is_protected_path(p: &str) -> bool {
     ];
     for r in &roots {
         let r = r.as_str();
-        if lower == r {
+        if norm == r {
             return true;
         }
-        if let Some(rest) = lower.strip_prefix(r) {
+        if let Some(rest) = norm.strip_prefix(r) {
             if rest.starts_with('\\') || rest.starts_with('/') {
                 return true;
             }
@@ -1169,6 +1224,22 @@ fn delete_one(p: &Path, kind: &str) -> Result<bool, String> {
     permanent_delete(p, kind).map(|_| false)
 }
 
+/// 火眼眼审查 2026-09-14（M-1）：删除目标本身是 reparse point（junction/symlink）时拒绝——
+/// 遍历侧已跳过 reparse 防环，直删入口补同一道闸，防止借链接改写真实删除目标。
+#[cfg(windows)]
+fn is_reparse_target(p: &Path) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+    fs::symlink_metadata(p)
+        .map(|m| m.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(windows))]
+fn is_reparse_target(_p: &Path) -> bool {
+    false
+}
+
 /// 批量删除（文件或目录）：默认移入回收站，替代原 PowerShell Remove-Item 硬删除。
 /// 审查v4-L4：路径保留原始 OsString，保护判定与输出展示用 lossy 字符串即可。
 fn cmd_delete(items: &[(String, OsString)]) {
@@ -1180,6 +1251,11 @@ fn cmd_delete(items: &[(String, OsString)]) {
         if is_protected_path(&sp.to_string_lossy()) {
             fail += 1;
             del_item("delresult", p, kind, "fail", 0, "受保护的系统路径，已拒绝", "rejected");
+            continue;
+        }
+        if is_reparse_target(p) {
+            fail += 1;
+            del_item("delresult", p, kind, "fail", 0, "目标是链接/junction（reparse point），已拒绝", "rejected");
             continue;
         }
         let sz = if kind == "dir" {
@@ -1227,7 +1303,7 @@ fn main() {
     let raw: Vec<OsString> = std::env::args_os().skip(1).collect();
     let args: Vec<String> = raw.iter().map(|a| a.to_string_lossy().to_string()).collect();
     if args.is_empty() {
-        println!("finder <duplicates|bigfiles|empty|appdata|sizes|delete> [args...]");
+        println!("finder <duplicates|bigfiles|empty|appdata|sizes|delete|cleanup> [args...]");
         return;
     }
     match args[0].as_str() {
@@ -1305,6 +1381,13 @@ fn main() {
                 return;
             }
             cmd_sizes(&paths);
+        }
+        "cleanup" => {
+            // 磁盘清理扫描引擎（P0）：argv 短参数 + stdin 规则 JSON（60KB 级，命令行放不下）。
+            // 行协议/退出码与 PS SCAN_SCRIPT 同口径：致命错误 stderr + exit 2（fail-closed）。
+            let code = cleanup_scan::run(&args[1..]);
+            let _ = std::io::Write::flush(&mut std::io::stdout());
+            std::process::exit(code);
         }
         "delete" => {
             // 审查v4-L4：路径取原始 OsString，命令名与格式校验用 lossy 字符串

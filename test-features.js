@@ -1264,6 +1264,194 @@ check('updater 多线路容灾与镜像持久化（P2-8）', () => {
   }
 });
 
+// 火眼眼审查 2026-09-14（代码审查报告-2026-09-14-火眼眼.md）修复回归断言：
+// 防降级 fail-closed / settings:save SSRF / 规则库防回滚水位线 / 统一脱敏 / 防闪与 shimmer
+check('火眼眼审查修复：updater 防降级 fail-closed', () => {
+  const src = fs.readFileSync(abs('src/main/updater.js'), 'utf8');
+  const vfn = (src.match(/function isVersionNewerOrEqual\(remote, current\) \{[\s\S]*?\n\}/) || [])[0];
+  if (!vfn) throw new Error('isVersionNewerOrEqual 缺失');
+  if (!/if \(!Number\.isFinite\(x\) \|\| !Number\.isFinite\(y\)\) return false;/.test(vfn)) {
+    throw new Error('版本段解析失败未 fail-closed（畸形远端版本不得绕过降级拦截）');
+  }
+  if (!/\} catch \{ return false; \}/.test(vfn)) throw new Error('比较异常分支未 fail-closed');
+});
+
+check('火眼眼审查修复：settings:save 全 URL 字段 SSRF 校验', () => {
+  const mainSrc = fs.readFileSync(abs('main.js'), 'utf8');
+  if (!mainSrc.includes('const URL_FIELD_LABELS')) throw new Error('settings:save 缺少 URL 字段校验表');
+  // models[].apiUrl 同样必须过 ^https?:// 与 isPrivateApiUrl 两道闸
+  if (!/const modelUrl = String\(submitted\.apiUrl \|\| currentModel\.apiUrl[\s\S]{0,600}isPrivateApiUrl\(modelUrl\)/.test(mainSrc)) {
+    throw new Error('settings:save 未对 models[].apiUrl 做 isPrivateApiUrl 校验');
+  }
+  if (!/for \(const \[field, label\] of Object\.entries\(URL_FIELD_LABELS\)\)[\s\S]{0,300}isPrivateApiUrl\(v\)/.test(mainSrc)) {
+    throw new Error('settings:save 平铺 URL 字段未做 isPrivateApiUrl 校验');
+  }
+});
+
+check('火眼眼审查修复：规则库防回滚水位线', () => {
+  const cs = fs.readFileSync(abs('src/scripts-powershell/cleanup-scripts.js'), 'utf8');
+  const mainSrc = fs.readFileSync(abs('main.js'), 'utf8');
+  if (!cs.includes('rules-watermark.json')) throw new Error('cleanup-scripts 缺少水位线文件');
+  for (const fn of ['function getRulesWatermark', 'function setRulesWatermark']) {
+    if (!cs.includes(fn)) throw new Error('cleanup-scripts 缺少 ' + fn);
+  }
+  // 读侧：验签通过后仍要拒绝低于 max(内置, 水位线) 的旧签名文件（防重放）
+  if (!/const floor = Math\.max\(builtinVersion, watermark\);[\s\S]{0,200}return null;/.test(cs)) {
+    throw new Error('readVerifiedDataRules 缺少防回滚下限判定');
+  }
+  if (!cs.includes('module.exports = {') || !/getRulesWatermark,\s*\n\s*setRulesWatermark,/.test(cs)) {
+    throw new Error('cleanup-scripts 未导出 getRulesWatermark/setRulesWatermark');
+  }
+  // 主进程侧：更新下限含水位线，落盘成功后抬升
+  if (!mainSrc.includes('CLEANUP_SCRIPT.getRulesWatermark()')) throw new Error('main.js 更新/检测下限未接入水位线');
+  if (!mainSrc.includes('CLEANUP_SCRIPT.setRulesWatermark(result.version)')) throw new Error('更新落盘后未抬升水位线');
+});
+
+check('火眼眼审查修复：统一脱敏出口与渲染层护栏', () => {
+  const sec = fs.readFileSync(abs('src/main/security.js'), 'utf8');
+  const mainSrc = fs.readFileSync(abs('main.js'), 'utf8');
+  const boot = fs.readFileSync(abs('src/scripts/theme-boot.js'), 'utf8');
+  const lg = fs.readFileSync(abs('src/scripts/liquid-glass.js'), 'utf8');
+  if (!sec.includes('function maskSettings') || !sec.includes('maskSettings')) throw new Error('security.js 缺少 maskSettings');
+  if (!mainSrc.includes('const API_KEY_MASK = SECURITY.SECRET_MASK')) throw new Error('API_KEY_MASK 未收敛到 security.js 单一来源');
+  if (!mainSrc.includes('SECURITY.maskSettings(resp.data)')) throw new Error('settings:load 出口未套用统一脱敏');
+  // theme-boot 必须挂 documentElement（head 期 body 为 null，写 body 防闪失效）
+  if (!boot.includes('document.documentElement.classList.add')) throw new Error('theme-boot 未挂 documentElement');
+  if (/\bdocument\.body\.(className|classList)/.test(boot)) throw new Error('theme-boot 不得再写 document.body（head 期无效）');
+  // shimmer 后台暂停
+  if (!/if \(document\.hidden\) return;/.test(lg)) throw new Error('liquid-glass shimmer 缺少 document.hidden 暂停');
+});
+
+// 扫描 Rust 化（P3，方案 v1.1）：双引擎对拍——同一份合成规则分别喂 PS SCAN_SCRIPT 与
+// finder.exe cleanup 子命令，@@ITEM@@/@@PLANFILE@@ 逐字段比对。合成树覆盖：pathPs 统计、
+// 不存在路径隐藏、fileKeys pattern+excludeKeys、独占锁探测（locked 口径）、restartProcesses
+// 免探测、regKeys 计数（含 value='*' 语义）、configuredPaths 覆盖、stdin 负例 fail-closed。
+check('双引擎对拍：cleanup 扫描 PS 与 Rust 逐字段一致（P3）', () => {
+  const { spawn, spawnSync } = require('child_process');
+  const exe = path.join(__dirname, 'native-scanner', 'target', 'release', 'finder.exe');
+  if (!fs.existsSync(exe)) throw new Error('finder.exe 未构建：先执行 cargo build --release（native-scanner）');
+  const c = require(CLEANUP_PS_FILE);
+  if (fs.existsSync(FASTSIZE_DLL)) c.setFastSizeDll(FASTSIZE_DLL); // PS 侧走 ListDeletable 口径（与 Rust 同源）
+
+  const stamp = Date.now();
+  const mk = (n) => path.join(require('os').tmpdir(), `trim-p3-${stamp}-${n}`);
+  const dirA = mk('a'), dirB = mk('b'), dirC = mk('c'), dirD = mk('d'), dirMissing = mk('missing');
+  const mkDir = (d) => fs.mkdirSync(d, { recursive: true });
+  const put = (d, n, size) => fs.writeFileSync(path.join(d, n), Buffer.alloc(size, 0x61));
+  mkDir(dirA); mkDir(path.join(dirA, 'sub')); put(dirA, 'a.txt', 100); put(dirA, 'b.log', 200); put(path.join(dirA, 'sub'), 'c.txt', 50);
+  mkDir(dirB); mkDir(path.join(dirB, 'keep')); put(dirB, 'x.log', 10); put(dirB, 'y.txt', 20); put(path.join(dirB, 'keep'), 'note.txt', 5);
+  mkDir(dirC); put(dirC, 'free.bin', 300); put(dirC, 'lock.bin', 500);
+  mkDir(dirD); put(dirD, 'r.bin', 400);
+
+  // 注册表测试键：1 键 + 2 值 + 1 子键 → Measure-RegRule 计数 = 1 + 2 + 1 = 4
+  const regKey = 'HKCU\\Software\\Trim\\selftest\\Trim_P3_' + stamp;
+  runPs(
+    "reg.exe add '" + regKey + "' /v v1 /d 1 /f | Out-Null\n" +
+    "reg.exe add '" + regKey + "' /v v2 /d 2 /f | Out-Null\n" +
+    "reg.exe add '" + regKey + "\\sub' /v t /d 1 /f | Out-Null\n"
+  );
+
+  // 独占锁持有进程：node fs 无法指定 FileShare.None，用后台 pwsh 持锁（对齐 D7 用例语义）。
+  // spawn 异步持有 + 探针确认锁生效后再跑双引擎，杜绝「锁未生效导致锁定计数为 0」的偶发。
+  const lockPath = path.join(dirC, 'lock.bin');
+  const locker = spawn(psExe(), ['-NoProfile', '-Command',
+    "$h = [System.IO.File]::Open(" + lit(lockPath) + ", 'Open', 'Read', 'None'); Start-Sleep -Seconds 90; $h.Dispose()"],
+    { windowsHide: true, stdio: 'ignore' });
+  const lockState = String(runPs(
+    "try { $h = [System.IO.File]::Open(" + lit(lockPath) + ", 'Open', 'Read', 'None'); $h.Dispose(); Write-Output 'unlocked' } catch { Write-Output 'locked' }\n"
+  )).trim().split(/\r?\n/).pop();
+  if (lockState !== 'locked') throw new Error('独占锁未生效（locker 启动失败），无法验证锁定口径');
+
+  const configured = { p3Cache: dirB }; // configuredPaths 覆盖：pathPs 求值路径存在但被覆盖为 dirB
+  const rules = {
+    version: 1, rulesVersion: 1,
+    groups: [{
+      key: 't', title: 't',
+      items: [
+        { id: 'p3DirA', name: '目录A', risk: 'low', pathPs: "'" + dirA + "'" },
+        { id: 'p3Missing', name: '不存在', risk: 'low', pathPs: "'" + dirMissing + "'" },
+        { id: 'p3Logs', name: '日志', risk: 'low', fileKeys: [{ path: dirB, pattern: '*.log' }], excludeKeys: [{ path: path.join(dirB, 'keep'), type: 'dir' }] },
+        { id: 'p3Locked', name: '锁文件', risk: 'low', fileKeys: [{ path: dirC, pattern: '*' }] },
+        { id: 'p3Restart', name: '免探测', risk: 'low', fileKeys: [{ path: dirD, pattern: '*' }], restartProcesses: [{ name: 'explorer', restart: 'process' }] },
+        { id: 'p3Reg', name: '注册表', risk: 'medium', regKeys: [{ path: regKey }] },
+        { id: 'p3Cache', name: '缓存覆盖', risk: 'low', pathPs: "'" + dirA + "'" }
+      ]
+    }]
+  };
+  const categories = rules.groups[0].items.map(i => i.id);
+  const fields = ['name', 'configuredPath', 'path', 'pathSource', 'pathCandidates', 'autoPath', 'autoSize', 'size', 'fileCount', 'lockedCount', 'regCount', 'risk', 'exists'];
+  const parse = (stdout) => {
+    const items = [], plans = [];
+    for (const line of String(stdout).split(/\r?\n/)) {
+      if (line.startsWith('@@ITEM@@')) items.push(JSON.parse(line.slice(8)));
+      else if (line.startsWith('@@PLANFILE@@')) plans.push(JSON.parse(line.slice(12)));
+    }
+    return { items, plans };
+  };
+  const lit2 = (s) => JSON.stringify(s);
+  try {
+    // PS 引擎（规则注入）
+    const script = c.scan(categories, configured, rules);
+    const file = writeTmpPs(script);
+    let psOut;
+    try {
+      psOut = execFileSync(psExe(), ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', file],
+        { encoding: 'utf8', timeout: 120000, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
+    } finally { try { fs.unlinkSync(file); } catch (e) {} }
+    const ps = parse(psOut);
+    // Rust 引擎（stdin 规则注入）
+    const rs = spawnSync(exe, ['cleanup', JSON.stringify(categories), JSON.stringify(configured)],
+      { encoding: 'utf8', input: JSON.stringify(rules), timeout: 120000, windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
+    if (rs.status !== 0) throw new Error('Rust 引擎退出码 ' + rs.status + ': ' + String(rs.stderr).slice(0, 200));
+    const ru = parse(rs.stdout);
+
+    const m1 = new Map(ps.items.map(i => [i.id, i]));
+    const m2 = new Map(ru.items.map(i => [i.id, i]));
+    // 缺失集合一致：p3Missing 必须双侧都不输出（detect 退化主路径判定）
+    const ids1 = new Set(ps.items.map(i => i.id)), ids2 = new Set(ru.items.map(i => i.id));
+    for (const id of ids1) if (!ids2.has(id)) throw new Error(`Rust 缺少条目 ${id}`);
+    for (const id of ids2) if (!ids1.has(id)) throw new Error(`Rust 多出条目 ${id}`);
+    if (ids1.has('p3Missing')) throw new Error('不存在路径条目未被隐藏');
+    // 逐字段一致
+    for (const id of ids1) {
+      const a = m1.get(id), b = m2.get(id);
+      for (const f of fields) {
+        const va = JSON.stringify(a[f] === undefined ? null : a[f]);
+        const vb = JSON.stringify(b[f] === undefined ? null : b[f]);
+        if (va !== vb) throw new Error(`[${id}] ${f} 不一致: PS=${va} Rust=${vb}`);
+      }
+    }
+    // 口径断言（双侧同验，防「一致地错」）
+    const st = (m) => m.get('p3DirA');
+    if (st(m1).size !== 350 || st(m2).size !== 350) throw new Error(`pathPs 统计口径异常: PS=${st(m1).size} Rust=${st(m2).size}（期望 350）`);
+    if (m1.get('p3Logs').fileCount !== 1 || m2.get('p3Logs').fileCount !== 1) throw new Error('excludeKeys/pattern 过滤口径异常');
+    if (m1.get('p3Locked').lockedCount !== 1 || m2.get('p3Locked').lockedCount !== 1) throw new Error('独占锁探测口径异常（locked 应为 1）');
+    if (m1.get('p3Locked').size !== 300 || m2.get('p3Locked').size !== 300) throw new Error('被占用文件应剔除出 size（期望 300）');
+    if (m1.get('p3Restart').size !== 400 || m2.get('p3Restart').size !== 400) throw new Error('restartProcesses 免探测口径异常（期望 400）');
+    if (m1.get('p3Reg').regCount !== 4 || m2.get('p3Reg').regCount !== 4) throw new Error('注册表计数口径异常（期望 4）');
+    if (m1.get('p3Reg').size !== null || m2.get('p3Reg').size !== null) throw new Error('regKeys size 应为 null');
+    if (m1.get('p3Cache').path !== dirB || m2.get('p3Cache').path !== dirB) throw new Error('configuredPaths 覆盖未生效');
+    if (m1.get('p3Cache').configuredPath !== dirA) throw new Error('configuredPath 应保留求值原路径');
+    // PLANFILE：锁文件条目只含 free.bin
+    const lockRowsPs = ps.plans.filter(p => p.id === 'p3Locked').map(p => p.path).sort();
+    const lockRowsRu = ru.plans.filter(p => p.id === 'p3Locked').map(p => p.path).sort();
+    if (lockRowsPs.length !== 1 || lockRowsRu.length !== 1 || lockRowsPs[0] !== lockRowsRu[0] || !lockRowsRu[0].includes('free.bin')) {
+      throw new Error(`PLANFILE 口径异常: PS=${JSON.stringify(lockRowsPs)} Rust=${JSON.stringify(lockRowsRu)}`);
+    }
+    // stdin 负例：坏 JSON → exit 2（fail-closed，方案 v1.1 红线 5）
+    const neg = spawnSync(exe, ['cleanup', '["p3DirA"]', '{}'], { encoding: 'utf8', input: '{bad', timeout: 30000, windowsHide: true });
+    if (neg.status !== 2) throw new Error('stdin 坏 JSON 应 exit 2，实际 ' + neg.status);
+  } finally {
+    try { locker && typeof locker.pid === 'number' && process.kill(locker.pid); } catch (e) {}
+    try { fs.rmSync(dirA, { recursive: true, force: true }); } catch (e) {}
+    try { fs.rmSync(dirB, { recursive: true, force: true }); } catch (e) {}
+    try { fs.rmSync(dirC, { recursive: true, force: true }); } catch (e) {}
+    try { fs.rmSync(dirD, { recursive: true, force: true }); } catch (e) {}
+    try { fs.rmSync(dirMissing, { recursive: true, force: true }); } catch (e) {}
+    runPs("reg.exe delete '" + regKey + "' /f 2>&1 | Out-Null\n");
+  }
+});
+
 check('v2.6.0 新增 IPC 通道 main/preload 双侧对齐', () => {
   const mainSrc = fs.readFileSync(abs('main.js'), 'utf8');
   const preloadSrc = fs.readFileSync(abs('preload.js'), 'utf8');
