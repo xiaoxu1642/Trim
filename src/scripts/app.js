@@ -191,6 +191,8 @@
     if (pageName === 'settings') { pathbinding.init(); }
     // 默认应用接管（v3.0）：进入页面刷新关联与状态机
     if (pageName === 'defaultapps') window.defaultapps?.load?.();
+    // 运行库修复（v3.3.0）：首次进入自动扫描一次（只读）
+    if (pageName === 'runtimes') window.runtimes?.onEnter?.();
     // 网络检测（v3.0）：进入页面展示上次结果（不自动重跑）
     if (pageName === 'netcheck') window.netcheck?.onEnter?.();
     // 实时网速（已并入网络测速页）：进入网络测速页启动采集，离开停止，避免后台空耗 CPU
@@ -202,7 +204,11 @@
     // 网络测速：仅点击"开始测速"按钮后才加载网页；离开本页回收 iframe 与采样定时器
     if (pageName !== 'netspeed') window.netspeed?.stop?.();
     // 液态玻璃滑块：页面重新显示后重新对齐（隐藏页内的滑块尺寸此前为 0）
-    window.liquidBar?.refreshAll?.(false);
+    // v3.3.0 修复「侧边岛切页无动效」：此处原为 refreshAll(false)，会在 click 捕获排好的
+    // animate=true 落位帧之后把滑块瞬位到终点（lg-no-anim），动画被整体杀掉。
+    // 改为 true：切页时侧边岛坐标必变 → 弹簧滑动；unchanged 的栏（如 cleanupTabs active 未变）
+    // 由方案 A 的坐标判定跳过挤压，隐藏页 0 尺寸栏 placeThumb 自动跳过、待下次刷新。
+    window.liquidBar?.refreshAll?.(true);
   }
 
   // 模态确认：统一代理到 modal.confirm（单一实现），支持 danger 红色二次确认。

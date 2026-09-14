@@ -1692,7 +1692,8 @@
   ],
   "_sig": {
     "alg": "ed25519",
-    "sig": "2z0Ekdnfw9SV3UdFWKBgXSkJaDXJfLJ/psRt/SmhTO+9c8UjPmt5lnRpGCkgykMr5DTK7VVUGlRQ333zz4W3CA=="
-  }
+    "sig": "5P6HKm4b88OopHMks3908+G8WBrepL4h3iTSM3RX8HbSq8yw10Qc/2LFwMNSxfOnnGbTP4FkU6ROuVLQXX33Dw=="
+  },
+  "winapp2Version": 20260914
 };
 })(typeof window !== 'undefined' ? window : globalThis);

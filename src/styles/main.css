@@ -6452,21 +6452,106 @@ body.pv-window {
 .nature-tag.nature-action { color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, transparent); border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
 .nature-tag.nature-history { color: var(--warning); background: color-mix(in srgb, var(--warning) 10%, transparent); border-color: color-mix(in srgb, var(--warning) 35%, transparent); }
 
-/* 维护与特殊操作域：视觉分组但语义隔离（文档 §2.2）——顶部警示条 + 描边强化 */
+/* 维护与特殊操作域：视觉分组但语义隔离（文档 §2.2）——描边强化 + 组头行内提示 */
 .category-group.special-group { border-color: color-mix(in srgb, var(--danger) 30%, var(--border-default)); }
-.special-group-banner {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
-  margin: 8px 12px 0;
-  font-size: 12px;
+.special-inline-note {
+  font-size: 11px;
   line-height: 1.5;
+  margin-left: 10px;
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 6%, transparent);
   border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
-  border-radius: var(--radius-small);
+  border-radius: 8px;
+  padding: 0 8px;
+  white-space: nowrap;
 }
+
+/* ==================== 运行库修复（v3.3.0 第一期） ==================== */
+/* 说明卡：一句话讲清用途 + 覆盖范围 */
+.rt-intro-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-medium);
+  padding: 14px 18px;
+  margin-bottom: 16px;
+}
+.rt-intro-card p { margin: 0; font-size: var(--fs-secondary); line-height: 1.7; color: var(--fg-primary); }
+.rt-intro-card .rt-intro-sub { margin-top: 4px; font-size: var(--fs-meta); color: var(--fg-tertiary); }
+
+/* 雷达图容器：同心轨道 + 三状态节点（token 化，无渐变无发光） */
+.rt-radar-wrap {
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-medium);
+  padding: 12px 12px 6px;
+  margin-bottom: 16px;
+}
+.rt-radar-svg { display: block; width: 100%; max-width: 680px; margin: 0 auto; height: auto; }
+.rt-node-name { font-size: 13px; font-weight: 600; fill: var(--fg-primary); }
+.rt-node-state { font-size: 11.5px; fill: var(--fg-tertiary); }
+.rt-node.ok .rt-node-ring { stroke: var(--success); }
+.rt-node.ok .rt-node-dot { fill: var(--success); }
+.rt-node.warn .rt-node-ring { stroke: var(--warning); }
+.rt-node.warn .rt-node-dot { fill: var(--warning); }
+.rt-node.fail .rt-node-ring { stroke: var(--danger); }
+.rt-node.fail .rt-node-dot { fill: var(--danger); }
+.rt-node.scanning .rt-node-ring { stroke: var(--accent); }
+.rt-node.scanning .rt-node-dot { fill: var(--accent); }
+/* 扫描线匀速旋转；prefers-reduced-motion 下静止（AGENTS §5） */
+.rt-sweep { animation: rt-spin 4s linear infinite; transform-box: view-box; }
+@keyframes rt-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .rt-sweep { animation: none; opacity: 0.25; }
+}
+.rt-summary {
+  text-align: center;
+  font-size: var(--fs-secondary);
+  color: var(--fg-secondary);
+  padding: 8px 0 10px;
+}
+.rt-summary.all-ok { color: var(--success); }
+
+/* 结果条目：状态徽章 + 名称/说明 + 一键修复，展开证据行 */
+.rt-list { display: flex; flex-direction: column; gap: 10px; }
+.rt-item {
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-medium);
+  padding: 14px 16px;
+}
+.rt-item-head { display: flex; align-items: center; gap: 12px; }
+.rt-item-copy { flex: 1 1 auto; min-width: 0; }
+.rt-item-name { font-size: 14px; font-weight: calc(600 * var(--font-weight-scale, 1)); color: var(--fg-primary); }
+.rt-item-desc { font-size: 12px; color: var(--fg-tertiary); margin-top: 2px; line-height: 1.6; }
+.rt-badge {
+  flex: 0 0 auto;
+  font-size: 11px;
+  line-height: 1.6;
+  padding: 0 9px;
+  border-radius: 999px; /* 状态胶囊例外（AGENTS §5 允许） */
+  white-space: nowrap;
+  color: var(--fg-tertiary);
+  background: var(--bg-card-hover);
+  border: 1px solid var(--border-default);
+}
+.rt-badge.ok { color: var(--success); background: color-mix(in srgb, var(--success) 10%, transparent); border-color: color-mix(in srgb, var(--success) 35%, transparent); }
+.rt-badge.warn { color: var(--warning); background: color-mix(in srgb, var(--warning) 12%, transparent); border-color: color-mix(in srgb, var(--warning) 40%, transparent); }
+.rt-badge.fail { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
+.rt-badge.info { color: var(--fg-secondary); }
+.rt-badge.scanning { color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+.rt-item-evidence {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
+}
+.rt-evidence-row {
+  font-family: "Consolas", monospace;
+  font-size: var(--fs-meta);
+  color: var(--fg-secondary);
+  line-height: 1.7;
+  word-break: break-all;
+}
+.rt-no-repair { font-size: var(--fs-meta); color: var(--fg-tertiary); white-space: nowrap; }
 
 /* 设置页：显示容器三项卡片 */
 .appearance-grid {

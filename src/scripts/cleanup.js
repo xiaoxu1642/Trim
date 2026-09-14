@@ -412,10 +412,10 @@
         const subGroups = group.subGroups.filter(sg => sg.items.length > 0);
         const totalItems = subGroups.reduce((s, sg) => s + sg.items.length, 0);
         groupEl.innerHTML = `
-          ${groupKey === 'special' ? '<div class="special-group-banner">以下为不可逆系统操作（动作型维护项），默认不勾选，请确认后再执行</div>' : ''}
           <div class="category-group-header" data-group-toggle="${groupKey}">
             <span class="category-group-icon">${group.icon}</span>
             <span>${group.title}</span>
+            ${groupKey === 'special' ? '<span class="special-inline-note" data-tip="动作型维护项为不可逆系统操作，默认不勾选">不可逆系统操作 · 默认不勾选</span>' : ''}
             <span style="margin-left:auto;font-size:11px;color:var(--fg-tertiary)" data-group-count="${groupKey}">${totalItems} 项 · ${subGroups.length} 分类</span>
           </div>
           <div class="category-group-content" data-group-content="${groupKey}">
@@ -969,10 +969,11 @@
     // 分离常规清理项和文件清理项
     const regularItems = allItems.filter(i => !FILECLEAN_IDS.includes(i.id));
     const fileCleanItems = allItems.filter(i => FILECLEAN_IDS.includes(i.id));
-    // P3：三个执行选项真正接线（此前 force 恒为 true，强制删除/自动重建勾选框形同虚设）
-    const force = !!document.getElementById('optForceDelete')?.checked;
-    const toRecycle = !!document.getElementById('optRecycleBin')?.checked;
-    const autoRebuild = !!document.getElementById('optAutoRebuild')?.checked;
+    // v3.3.0（用户裁定）：执行选项 UI 已移除，固定语义——自动重建目录默认执行；
+    // 强制删除、删除进回收站默认不执行（回收站优先删除逻辑仍在主进程 trashOrUnlink 内）
+    const force = false;
+    const toRecycle = false;
+    const autoRebuild = true;
     setProgress(0, '开始清理...');
 
     let progress = 0;
@@ -1168,14 +1169,15 @@
     });
   }
 
-  // ==================== 规则库版本显示与检测（v3.2.1） ====================
-  // 「更新规则库」右侧（当前版本为：x，云端版本为：y）；首次进入磁盘清理页自动检测远端
-  // （远端验签后只读版本号，不落盘）；有更新 toast 提示；每次会话只自动检测一次
+  // ==================== 规则库版本显示与检测（v3.2.1 / v3.3.0 三段版本） ====================
+  // 「更新规则库」右侧（当前版本为：x，winapp2 版本为：y，云端版本为：z）；
+  // 首次进入磁盘清理页自动检测远端（远端验签后只读版本号，不落盘）；
+  // 有更新 toast 提示；每次会话只自动检测一次
   let versionChecked = false;
 
-  function setVersionInfo(cur, remote) {
+  function setVersionInfo(cur, winapp2, remote) {
     const el = document.getElementById('rulesVersionInfo');
-    if (el) el.textContent = `（当前版本为：${cur ?? '--'}，云端版本为：${remote ?? '--'}）`;
+    if (el) el.textContent = `（当前版本为：${cur ?? '--'}，winapp2 版本为：${winapp2 ?? '--'}，云端版本为：${remote ?? '--'}）`;
   }
 
   function onPageEnter() {
@@ -1184,13 +1186,13 @@
     if (!window.api?.cleanup?.checkRulesVersion) return;
     window.api.cleanup.checkRulesVersion().then((resp) => {
       if (resp && resp.success) {
-        setVersionInfo(resp.currentVersion, resp.remoteVersion);
+        setVersionInfo(resp.currentVersion, resp.currentWinapp2Version, resp.remoteVersion);
         if (resp.hasUpdate) {
           window.app?.toast('info', `规则库有新版本：v${resp.remoteVersion}（当前 v${resp.currentVersion}），可点击「更新规则库」升级`, 6000);
         }
       } else {
-        // 检测失败（网络/源不可达）：云端显示 --，不打扰
-        setVersionInfo(resp?.currentVersion ?? null, null);
+        // 检测失败（网络/源不可达）：云端显示 --，本地版本照常展示，不打扰
+        setVersionInfo(resp?.currentVersion ?? null, resp?.currentWinapp2Version ?? null, null);
       }
     }).catch(() => {});
   }
@@ -1239,7 +1241,7 @@
         window.app?.toast('success', `规则库更新完成（当前版本为：${resp.rulesVersion}）`);
         hiddenIds.clear();
         await loadRulesFromMain();
-        setVersionInfo(resp.rulesVersion, resp.rulesVersion); // 本地已是最新，云端与当前一致
+        setVersionInfo(resp.rulesVersion, resp.rulesVersion, resp.rulesVersion); // 本地已是最新，三值同步
       } else {
         dismissRulesProgressToast();
         window.app?.toast('error', (resp && resp.message) || '规则库更新失败');

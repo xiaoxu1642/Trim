@@ -1068,7 +1068,7 @@ function Remove-PathSafely {
   # skip 分支根本用不到规模，白算一轮（分析文档 D6 顺带点出的「先算后判」）。
   # v2.2 第4批（D10）：中风险并入强制删除门禁；$Risk 信任源来自 $rule.risk（调用方传 $item.risk，同源）
   if ($Risk -in @('high', 'medium') -and -not $Force) {
-    return @{ freed = 0; status = 'skip'; message = '高/中风险项需勾选强制删除'; residual = 0 }
+    return @{ freed = 0; status = 'skip'; message = '高/中风险项按默认策略跳过'; residual = 0 }
   }
   # 检查路径中是否有被保护的进程占用
   $procCheck = Get-Process | Where-Object { $_.Path -like ($Path + '*') } | Select-Object -First 1
@@ -1196,7 +1196,7 @@ foreach ($item in $items) {
     # D10：中风险并入强制删除门禁，信任源统一为 $rule.risk（渲染层红色/黄色确认同源）
     if ([string]$rule.risk -in @('high', 'medium') -and -not $force) {
       $skipped++
-      $details += @{ id = $item.id; name = $item.name; status = 'skip'; freed = 0; message = '高/中风险项需勾选强制删除' }
+      $details += @{ id = $item.id; name = $item.name; status = 'skip'; freed = 0; message = '高/中风险项按默认策略跳过' }
       continue
     }
     # v2.2 第3批（D13）：执行只消费扫描快照里的「可删文件清单」（items.files），不再现场
@@ -1281,7 +1281,7 @@ foreach ($item in $items) {
     # D10：中风险并入强制删除门禁，信任源统一为 $rule.risk
     if ([string]$rule.risk -in @('high', 'medium') -and -not $force) {
       $skipped++
-      $details += @{ id = $item.id; name = $item.name; status = 'skip'; freed = 0; message = '高/中风险项需勾选强制删除' }
+      $details += @{ id = $item.id; name = $item.name; status = 'skip'; freed = 0; message = '高/中风险项按默认策略跳过' }
       continue
     }
     $protected = @()
@@ -1372,7 +1372,7 @@ foreach ($item in $items) {
     # D10：中风险并入强制删除门禁，信任源统一为 $rule.risk（与渲染层分级确认同源）
     if ([string]$rule.risk -in @('high', 'medium') -and -not $force) {
       $skipped++
-      $details += @{ id = $item.id; name = $item.name; status = 'skip'; freed = 0; message = '高/中风险项需勾选强制删除'; residual = 0 }
+      $details += @{ id = $item.id; name = $item.name; status = 'skip'; freed = 0; message = '高/中风险项按默认策略跳过'; residual = 0 }
       continue
     }
     # v2.2 第2批（D18）：回收站模式不经过 Remove-PathSafely（由主进程 trashItem 落地），

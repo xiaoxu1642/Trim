@@ -115,6 +115,17 @@ contextBridge.exposeInMainWorld('api', {
     }
   },
 
+  // 运行库修复（v3.3.0）：collect 只读检测；install 只传 actionId（下载/校验/执行全在主进程）
+  runtimes: {
+    collect: () => ipcRenderer.invoke('runtimes:collect'),
+    install: (actionId) => ipcRenderer.invoke('runtimes:install', { actionId }),
+    onProgress: (callback) => {
+      const handler = (_, data) => callback(data);
+      ipcRenderer.on('runtimes:install-progress', handler);
+      return () => ipcRenderer.removeListener('runtimes:install-progress', handler);
+    }
+  },
+
   // 磁盘清理 · Rust 原生查找器（重复/大文件/空/AppData）
   finder: {
     scan: (scanType, opts = {}) => ipcRenderer.invoke('finder:scan', { scanType, ...opts }),

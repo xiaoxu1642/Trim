@@ -153,6 +153,7 @@ const SIDE_EFFECT_FREE = new Set([
   'memory:info', 'memory:processes',                           // 内存信息/进程列表
   'optimizer:list', 'overview:hardware', 'overview:metrics',   // 优化项清单/硬件信息/指标查询
   'overview:checkup',                                          // 系统体检（v2.6.0 只读诊断）
+  'runtimes:collect',                                          // 运行库只读检测（v3.3.0；install 通道绝不入白名单）
   'updater:get-mirror',                                        // 更新镜像偏好读取（v2.6.0）
   'appearance:get-env', 'diag:dwm-conflict',                   // 环境状态/注入工具检测结果读取（v2.8.0）
   'paths:load', 'realtime:adapters', 'realtime:report-list',   // 路径配置/网络适配器/测速报告列表
@@ -1590,15 +1591,27 @@ handleSafe('cleanup:update-rules', async (event) => {
   return { success: true, rulesVersion: result.version, source: result.source };
 });
 
-// v3.2.1：规则库版本检测（轻量只读）——拉远端并验签后仅读取 rulesVersion，不写盘。
-// 「更新规则库」旁的（当前版本为：x，云端版本为：y）显示与有更新 toast 由渲染层触发。
+// v3.2.1：规则库版本检测（轻量只读）——拉远端并验签后仅读取版本号，不写盘。
+// v3.3.0：版本显示三分（当前 / 当前 winapp2 / 云端），一并返回 winapp2Version。
 handleSafe('cleanup:check-rules-version', async () => {
-  const currentVersion = Number(CLEANUP_SCRIPT.rules()?.rulesVersion) || 0;
+  const rules = CLEANUP_SCRIPT.rules() || {};
+  const currentVersion = Number(rules.rulesVersion) || 0;
+  const currentWinapp2Version = rules.winapp2Version != null ? rules.winapp2Version : null;
   const result = await fetchRemoteRulesText(currentVersion, null);
   if (!result.ok) {
-    return { success: false, currentVersion, message: result.error || '检测失败' };
+    return { success: false, currentVersion, currentWinapp2Version, message: result.error || '检测失败' };
   }
-  return { success: true, currentVersion, remoteVersion: result.version, hasUpdate: result.version > currentVersion, source: result.source };
+  let remoteWinapp2Version = null;
+  try { remoteWinapp2Version = JSON.parse(result.text).winapp2Version ?? null; } catch (_) {}
+  return {
+    success: true,
+    currentVersion,
+    currentWinapp2Version,
+    remoteVersion: result.version,
+    remoteWinapp2Version,
+    hasUpdate: result.version > currentVersion,
+    source: result.source
+  };
 });
 
 // ==================== 磁盘清理 · Rust 原生查找器 IPC ====================
@@ -6015,6 +6028,179 @@ handleSafe('netcheck:repair', async (event, { actionId } = {}) => {
     return { success: !!fix.ok, fix, items: collect.success ? collect.data.items : null, message: fix.message };
   } catch (e) {
     writeLog('error', `网络检测修复异常: ${actionId} -> ${e.message}`);
+    return { success: false, message: e.message };
+  } finally {
+    try { fs.unlinkSync(scriptPath); } catch (e) {}
+  }
+});
+
+// ==================== 运行库修复 IPC（v3.3.0 第一期） ====================
+// 链路完全复刻 netcheck：只读采集 + 白名单化一键安装；安装包下载/校验/执行全在主进程，
+// 渲染层只传 actionId。安全三闸门（方案 §5）：来源白名单（含重定向终点）→ SHA-256+尺寸
+// 双校验 → 红色确认 + 提权握手；任一不过即删除文件并中止，绝不执行。
+const RUNTIMES_SCRIPT = require('./src/scripts-powershell/runtimes-scripts');
+
+const REDIST_CACHE_DIR = path.join(APP_DATA_DIR, 'redist');
+const REDIST_HOST_WHITELIST = new Set([
+  'aka.ms', 'go.microsoft.com', 'download.microsoft.com',
+  'download.visualstudio.microsoft.com', 'www.microsoft.com'
+]);
+const REDIST_MAX_BYTES = 300 * 1024 * 1024; // 单包上限兜底（防白名单主机被挂大文件）
+
+let runtimesSnapshot = null; // 最近一次采集的 items（快照校验依赖）
+
+async function runRuntimesCollect() {
+  const scriptPath = writeTempScript(RUNTIMES_SCRIPT.status());
+  try {
+    const { stdout, code, stderr } = await runPowerShellFile(scriptPath, { timeout: 25000, diagOp: 'runtimes.collect' });
+    if (!stdout.trim()) return { success: false, message: stderr || '运行库检测无输出' };
+    const line = stdout.trim().split('\n').filter(l => l.trim().startsWith('{')).pop();
+    const data = JSON.parse(line);
+    if (!data || !Array.isArray(data.items)) return { success: false, message: '运行库检测结果格式异常' };
+    runtimesSnapshot = data.items;
+    if (code !== 0) writeLog('warn', `运行库检测退出码 ${code}`);
+    return { success: true, data };
+  } catch (e) {
+    return { success: false, message: e.message };
+  } finally {
+    try { fs.unlinkSync(scriptPath); } catch (e) {}
+  }
+}
+
+handleSafe('runtimes:collect', async () => {
+  return runRuntimesCollect();
+});
+
+// 下载运行库安装包：来源白名单（含重定向终点）→ 流式进度 → SHA-256/尺寸双校验 → 原子入缓存
+// 缓存路径 <sha 前 12 位>-<文件名>，使用前重新校验 hash（不信任缓存内容）
+async function downloadRedist(actionId, sender) {
+  const meta = RUNTIMES_SCRIPT.INSTALLERS[actionId];
+  if (!meta) return { ok: false, error: '未知的安装包' };
+  let initialHost = '';
+  try { initialHost = new URL(meta.url).hostname; } catch (_) {}
+  if (!REDIST_HOST_WHITELIST.has(initialHost)) return { ok: false, error: '下载地址主机不在白名单内' };
+
+  const cacheDir = REDIST_CACHE_DIR;
+  fs.mkdirSync(cacheDir, { recursive: true });
+  const cacheName = meta.sha256.slice(0, 12) + '-' + meta.url.split('/').pop().split('?')[0];
+  const cachePath = path.join(cacheDir, cacheName);
+
+  // 缓存命中：复验 hash 后直接复用（不重复下载）
+  if (fs.existsSync(cachePath)) {
+    const buf = fs.readFileSync(cachePath);
+    const hash = require('crypto').createHash('sha256').update(buf).digest('hex');
+    if (hash === meta.sha256 && buf.length === meta.bytes) {
+      try { sender.send('runtimes:install-progress', { phase: 'download', percent: 100, cached: true }); } catch (_) {}
+      return { ok: true, path: cachePath };
+    }
+    // 缓存内容与期望不符：删除脏包重新下载
+    try { fs.unlinkSync(cachePath); } catch (_) {}
+  }
+
+  try { sender.send('runtimes:install-progress', { phase: 'download', percent: 0 }); } catch (_) {}
+  const resp = await fetch(meta.url, { redirect: 'follow' });
+  if (!resp.ok) return { ok: false, error: `下载失败：HTTP ${resp.status}` };
+  // 闸门 1b：重定向终点主机必须仍在白名单内（URL 解析比较，禁字符串 includes）
+  let finalHost = '';
+  try { finalHost = new URL(resp.url).hostname; } catch (_) {}
+  if (!REDIST_HOST_WHITELIST.has(finalHost)) {
+    return { ok: false, error: '下载重定向终点主机不在白名单内，已中止' };
+  }
+  const declared = Number(resp.headers.get('content-length') || 0);
+  if (declared > REDIST_MAX_BYTES) return { ok: false, error: '安装包超过尺寸上限，已中止' };
+
+  const tmpPath = cachePath + '.downloading';
+  const reader = resp.body && typeof resp.body.getReader === 'function' ? resp.body.getReader() : null;
+  if (reader) {
+    const chunks = [];
+    let total = 0;
+    let lastPct = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > REDIST_MAX_BYTES) {
+        try { await reader.cancel(); } catch (_) {}
+        try { fs.unlinkSync(tmpPath); } catch (_) {}
+        return { ok: false, error: '安装包超过尺寸上限，已中止' };
+      }
+      chunks.push(value);
+      const est = declared > 0 ? declared : meta.bytes;
+      const pct = Math.min(99, Math.round((total / est) * 100));
+      if (pct > lastPct) {
+        lastPct = pct;
+        try { sender.send('runtimes:install-progress', { phase: 'download', percent: pct }); } catch (_) {}
+      }
+    }
+    fs.writeFileSync(tmpPath, Buffer.concat(chunks));
+  } else {
+    const buf = Buffer.from(await resp.arrayBuffer());
+    fs.writeFileSync(tmpPath, buf);
+  }
+
+  // 闸门 2：SHA-256 + 尺寸双校验，任一不符 → 删除并中止，绝不执行
+  const buf = fs.readFileSync(tmpPath);
+  const hash = require('crypto').createHash('sha256').update(buf).digest('hex');
+  if (hash !== meta.sha256 || buf.length !== meta.bytes) {
+    try { fs.unlinkSync(tmpPath); } catch (_) {}
+    writeLog('error', `运行库安装包校验未通过: ${actionId}（hash/尺寸不符，已删除）`);
+    return { ok: false, error: '安装包校验未通过（SHA-256 或尺寸不符），已删除并中止' };
+  }
+  fs.renameSync(tmpPath, cachePath);
+  try { sender.send('runtimes:install-progress', { phase: 'download', percent: 100 }); } catch (_) {}
+  return { ok: true, path: cachePath };
+}
+
+handleSafe('runtimes:install', async (event, { actionId } = {}) => {
+  if (typeof actionId !== 'string' || actionId.length > 40) return { success: false, message: '参数不合法' };
+  if (!RUNTIMES_SCRIPT.ALLOWED_ACTIONS.has(actionId)) return { success: false, message: '未知的修复动作' };
+  // 快照校验：该动作必须属于最近一次检测出的待修复项
+  const item = Array.isArray(runtimesSnapshot)
+    ? runtimesSnapshot.find(it => it && it.repair && it.repair.id === actionId)
+    : null;
+  if (!item || !item.repair) return { success: false, message: '该修复动作不在当前检测快照内，请先重新扫描' };
+  // 全部安装动作需要管理员；不走静默提权，交由渲染层 elevate:request 握手
+  if (!(await isAdmin())) return { success: false, needAdmin: true, message: '该修复动作需要管理员权限' };
+
+  const sender = event.sender;
+  try { sender.send('runtimes:install-progress', { phase: 'download', percent: 0 }); } catch (_) {}
+  let localPath = null;
+  if (actionId !== 'netfx35') {
+    const dl = await downloadRedist(actionId, sender);
+    if (!dl.ok) {
+      writeLog('error', `运行库安装包下载失败: ${actionId} -> ${dl.error}`);
+      return { success: false, message: dl.error };
+    }
+    localPath = dl.path;
+  }
+  let script;
+  try {
+    script = RUNTIMES_SCRIPT.repair(actionId, localPath);
+  } catch (e) {
+    return { success: false, message: e.message };
+  }
+  flushLogSync(); // 危险操作前刷盘：静默安装会写入系统运行库
+  const started = Date.now();
+  const scriptPath = writeTempScript(script);
+  try {
+    writeLog('info', `运行库修复开始: ${actionId}`);
+    try { sender.send('runtimes:install-progress', { phase: 'install', percent: 100 }); } catch (_) {}
+    const { stdout, stderr, code } = await runPowerShellFile(scriptPath, { timeout: 600000, diagOp: 'runtimes.install.' + actionId });
+    const line = stdout.trim().split('\n').filter(l => l.trim().startsWith('@@RESULT@@')).pop();
+    const ok = line === '@@RESULT@@ok';
+    // 修复后自动重跑检测，回传最新 items（渲染层直接刷新，不整页重扫）
+    const collect = await runRuntimesCollect();
+    const elapsed = Date.now() - started;
+    if (ok) writeLog('info', `运行库修复完成: ${actionId}（${elapsed}ms）`);
+    else writeLog('warn', `运行库修复未成功: ${actionId} -> ${String(stderr || '').slice(0, 120)}`);
+    return {
+      success: ok,
+      items: collect.success ? collect.data.items : null,
+      summary: collect.success ? collect.data.summary : null,
+      message: ok ? '' : (stderr || '修复未成功，请查看日志')
+    };
+  } catch (e) {
+    writeLog('error', `运行库修复异常: ${actionId} -> ${e.message}`);
     return { success: false, message: e.message };
   } finally {
     try { fs.unlinkSync(scriptPath); } catch (e) {}

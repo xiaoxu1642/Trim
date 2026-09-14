@@ -1105,8 +1105,11 @@ check('D10：PS 侧四处 risk 判断点统一收口 medium 门禁，信任源 $
   // 旧式单 high 门禁不应残留（risk -eq 'high'）
   if (/'-eq\s*'high'/.test(src))
     throw new Error('仍残留旧式 risk -eq high 单点门禁');
-  if (src.includes('message = \'高风险项需勾选强制删除\''))
-    throw new Error('门禁 skip 文案未统一为 高/中风险项需勾选强制删除');
+  // v3.3.0：强制删除勾选框已移除（固定不执行），skip 文案不再引用已删除的 UI
+  if (src.includes('需勾选强制删除'))
+    throw new Error('门禁 skip 文案仍引用已移除的「强制删除」勾选框');
+  if ((src.match(/高\/中风险项按默认策略跳过/g) || []).length !== 4)
+    throw new Error('门禁 skip 文案未统一为 高/中风险项按默认策略跳过');
 });
 
 check('D10：渲染层 risk 分级确认 + modal warning 层级 + confirmWarning 入口（静态）', () => {

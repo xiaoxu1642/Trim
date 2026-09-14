@@ -89,6 +89,12 @@
           </svg>
           <span>系统维护</span>
         </button>
+        <button class="nav-item" data-page="runtimes" data-tip="运行库修复">
+          <svg class="nav-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+            <path d="M9 3v10.55A4 4 0 1 0 11 17V7h8V3H9zm-2 16a2 2 0 1 1 .01-4.01A2 2 0 0 1 7 19zm10-8a2 2 0 1 1 .01-4.01A2 2 0 0 1 17 11z"/>
+          </svg>
+          <span>运行库修复</span>
+        </button>
       </div>
 
       <div class="nav-section">
@@ -284,16 +290,7 @@
             <span>更新规则库</span>
           </button>
           <div class="clean-inline-opts" id="cleanInlineOpts">
-            <span class="rules-version-info" id="rulesVersionInfo" data-tip="当前=本机规则库版本；云端=发布源最新版本（进入本页自动检测）">（当前版本为：--，云端版本为：--）</span>
-            <label class="clean-opt" data-tip="清理时跳过「占用中/被锁定」文件的重试，最大程度清空目标目录（删除操作不可撤销）">
-              <input type="checkbox" id="optForceDelete" /><span>强制删除</span>
-            </label>
-            <label class="clean-opt" data-tip="清理后自动重建被删除的空目录，避免依赖该目录的应用（如微信）因目录缺失而出错">
-              <input type="checkbox" id="optAutoRebuild" checked /><span>自动重建目录</span>
-            </label>
-            <label class="clean-opt" data-tip="文件移入系统回收站而非直接删除，可在回收站还原（注册表项与 DISM 操作不适用，仍为直接执行）">
-              <input type="checkbox" id="optRecycleBin" /><span>删除进回收站</span>
-            </label>
+            <span class="rules-version-info" id="rulesVersionInfo" data-tip="当前=本机规则库版本；winapp2=规则库同步的 WinApp2 基线版本；云端=发布源最新版本（进入本页自动检测）">（当前版本为：--，winapp2 版本为：--，云端版本为：--）</span>
           </div>
         </div>
         <div class="cleanup-toolbar-actions" data-actions-for="cleanup-dups">
@@ -620,6 +617,31 @@
           </div>
         </div>
         <div class="netcheck-list" id="netcheckList"><!-- 检查项行：由 JS 渲染 --></div>
+      </div>
+
+      <!-- 运行库修复页面（v3.3.0 第一期）：只读检测 + 白名单化一键安装 -->
+      <div class="page" id="page-runtimes">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">运行库修复</h1>
+            <p class="page-subtitle">检测系统运行库安装状态，缺失时一键补装 · 全程只读检测</p>
+          </div>
+          <div class="page-actions">
+            <button class="btn btn-primary" id="btnRuntimesScan">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+              开始扫描
+            </button>
+          </div>
+        </div>
+        <div class="rt-intro-card">
+          <p>部分游戏或软件在运行时需要特定运行库支持，当缺失该类文件时，会无法正常启动。</p>
+          <p class="rt-intro-sub">覆盖范围：Microsoft Visual C++ 2015-2022 · .NET Framework 4.x / 3.5 · DirectX 9-12</p>
+        </div>
+        <div class="rt-radar-wrap">
+          <div id="rtRadar"><!-- 雷达图：由 runtimes.js 渲染内联 SVG --></div>
+          <div class="rt-summary" id="rtSummary">尚未扫描 · 点击「开始扫描」检测本机运行库</div>
+        </div>
+        <div class="rt-list" id="runtimesList"><!-- 检测结果条目：由 JS 渲染 --></div>
       </div>
 
       <!-- 内存清理页面 -->
@@ -1470,6 +1492,7 @@
   <script src="scripts/maintenance.js"></script>
   <script src="scripts/defaultapps.js"></script>
   <script src="scripts/netcheck.js"></script>
+  <script src="scripts/runtimes.js"></script>
   <!-- 批次：自动更新接入（依赖 modal.js/ds.js 统一弹窗与进度件，须在 app.js 之前） -->
   <script src="scripts/updater-ui.js"></script>
   <script src="scripts/app.js"></script>
