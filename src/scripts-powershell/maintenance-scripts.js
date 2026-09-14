@@ -69,7 +69,7 @@ if ($LASTEXITCODE -eq 0) { Write-Output '@@RESULT@@ok' } else { Write-TFDiag -St
 `
   },
   dism: {
-    title: '组件存储修复 (DISM)',
+    title: '组件存储修复 (DISM /RestoreHealth)',
     desc: '运行 DISM /RestoreHealth 修复 Windows 组件存储（WinSxS）。常用于 SFC 无法修复时。',
     category: '系统修复',
     admin: true,
@@ -105,20 +105,10 @@ Write-Output '已重启更新服务'
 Write-Output '@@RESULT@@ok'
 `
   },
-  print: {
-    title: '清理打印队列',
-    desc: '清空卡住的打印任务并重启打印后台处理服务（Spooler），修复打印机无响应/任务堆积。',
-    category: '系统修复',
-    admin: true,
-    ps: () => `
-Stop-Service -Name Spooler -Force -ErrorAction SilentlyContinue
-$q = Join-Path $env:WINDIR 'System32\\spool\\PRINTERS'
-if (Test-Path -LiteralPath $q) { Remove-Item -Path (Join-Path $q '*') -Recurse -Force -ErrorAction SilentlyContinue; Write-Output '已清空打印队列文件' }
-Start-Service -Name Spooler -ErrorAction SilentlyContinue
-if ((Get-Service Spooler).Status -eq 'Running') { Write-Output '打印服务已重启' ; Write-Output '@@RESULT@@ok' }
-else { Write-TFDiag -Stage 'maint.print' -Mutation 'partial' -Detail 'Spooler 未能重启'; Write-Output '@@RESULT@@warn' }
-`
-  },
+  // M3（2026-09-14 重复点审查）：原 print「清理打印队列」已下线。
+  // 该能力统一由「磁盘清理」承接，条目路径取本页原实现的真实路径
+  // （C:\Windows\System32\spool\PRINTERS；优化中心旧实现写的 C:\Windows\spool\printers
+  //  在现代 Windows 上并不存在，属空操作）。
   store: {
     title: '重置 Microsoft Store 缓存',
     desc: '运行 wsreset 清理 Microsoft Store 应用缓存，修复商店打不开/下载异常。会关闭商店窗口。',
@@ -158,22 +148,9 @@ Write-Output ($out.Trim())
 if ($LASTEXITCODE -eq 0) { Write-Output '@@RESULT@@ok' } else { Write-TFDiag -Stage 'maint.perfcounters' -Mutation 'partial' -Detail ('lodctr exit=' + $LASTEXITCODE); Write-Output '@@RESULT@@warn' }
 `
   },
-  iconthumb: {
-    title: '重建图标与缩略图缓存',
-    desc: '删除图标/缩略图缓存并重启资源管理器，修复图标错乱、缩略图不显示。桌面会短暂闪烁。',
-    category: '搜索与界面',
-    admin: false,
-    ps: () => `
-$expl = Join-Path $env:LOCALAPPDATA 'Microsoft\\Windows\\Explorer'
-Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
-Get-ChildItem -LiteralPath $expl -Filter 'iconcache*.db' -Force -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
-Get-ChildItem -LiteralPath $expl -Filter 'thumbcache*.db' -Force -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
-Write-Output '已删除图标/缩略图缓存'
-Start-Process explorer.exe
-Write-Output '资源管理器已重启'
-Write-Output '@@RESULT@@ok'
-`
-  },
+  // M2（2026-09-14 重复点审查）：原 iconthumb「重建图标与缩略图缓存」已下线。
+  // 它与「磁盘清理 - 缓存与预读」的 iconCacheFiles / thumbnailCacheFiles 作用于同一目录
+  // （%LOCALAPPDATA%\Microsoft\Windows\Explorer），属功能重复，统一由磁盘清理承接。
   search: {
     title: '重建搜索索引',
     desc: '重置 Windows 搜索索引数据库，修复开始菜单/文件搜索无结果或结果过期。后台重建需一段时间。',
@@ -290,9 +267,11 @@ const NET_MIGRATED = [
             'TCPNoDelay': 'dword:00000001',
             'TcpDelAckTicks': 'dword:00000000'
           },
+          // M1（2026-09-14 重复点审查）：Config\DownloadMode 归「电脑优化中心 - 遥测优化」，
+          // 维护侧不再写入。同一注册表键被两个模块写入时，任一方的「还原」都会误删
+          // 对方写入的键值，故按 reg-ownership 归属表收归单一写入方。
           'HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\DeliveryOptimization\\Config': {
-            'DODownloadMode': 'dword:00000000',
-            'DownloadMode': 'dword:00000000'
+            'DODownloadMode': 'dword:00000000'
           },
           'HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\DeliveryOptimization\\Settings': {
             'DownloadMode': 'dword:00000000'

@@ -7,8 +7,17 @@
 // 2) 状态全部经 'updater:state-changed' 事件推给渲染层，由渲染层统一弹窗服务呈现，主进程不弹原生 dialog；
 // 3) 发现新版不自动下载、下载完成不强制退出：避免偷跑流量与打断清理/测速/大文件扫描任务；
 // 4) 更新源来自打包时自动生成的 resources/app-update.yml（build.publish 配置），不要手写、不要入库；
-// 5) 完整性锚点：latest.yml 内 sha512 由 electron-updater 下载后强校验——镜像只是传输通道，
-//    与规则库更新「任何源都只是通道，内容必须自证可信」同一信任模型，故镜像域名无需额外白名单。
+// 5) 完整性锚点说明（审查 H-1 修订，2026-09-14）：
+//    latest.yml 内 sha512 由 electron-updater 下载后强校验。但 latest.yml 与安装包
+//    来自同一个 url——若镜像被接管，它可同时提供「恶意 latest.yml（写恶意包 sha512）」
+//    与「恶意安装包（sha512 自洽）」，校验照样通过。因此镜像**不是**透明通道，而是
+//    完整信任点；这与规则库更新（锚点是内置在应用里的 ed25519 公钥，通道无法伪造）
+//    的信任模型根本不同。当前完整性 = sha512（由通道提供，可被同源伪造）+ 无 Authenticode
+//    签名校验（package.json 未配 publisherName / 代码签名证书）+ 无防降级。
+//    已落地的缓解：版本单调校验（远端 < 当前则拒绝）。
+//    待办（需发布基础设施配合，本批不改）：① 给安装包做 Authenticode 代码签名并设
+//    publisherName；② 对 latest.yml 加 ed25519 签名（复用规则库密钥体系），验签后才
+//    信任其中的 sha512。在这两项落地前，镜像域名应被视为「需要信任」而非「无需白名单」。
 const { autoUpdater, CancellationToken } = require('electron-updater');
 const { app } = require('electron');
 const fs = require('fs');
@@ -26,6 +35,23 @@ const MIRRORS = [
 const MIRROR_IDS = ['auto', 'github', ...MIRRORS.map(m => m.id)];
 const MIRROR_FILE = 'update-mirror.json'; // 数据目录下的用户镜像偏好
 const CHECK_TIMEOUT_MS = 20000;           // 单线路检查超时（竞速另一条前不再等太久）
+
+// 版本单调比较（审查 H-1 防降级，2026-09-14）：按点分段逐段比较数字，任一段远端 < 当前即降级。
+// 预发布标签（-beta 等）截取主体版本再比；比较失败按「不降级」放行（fail-open，避免误拦真实更新）。
+function isVersionNewerOrEqual(remote, current) {
+  try {
+    const a = String(remote).split('-')[0].split('.').map(Number);
+    const b = String(current).split('-')[0].split('.').map(Number);
+    const len = Math.max(a.length, b.length);
+    for (let i = 0; i < len; i++) {
+      const x = a[i] || 0, y = b[i] || 0;
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return true;
+      if (x > y) return true;
+      if (x < y) return false;
+    }
+    return true;
+  } catch { return true; }
+}
 
 let winRef = null;
 let writeLog = () => {};
@@ -124,11 +150,18 @@ function initUpdater(mainWindow, logger, opts = {}) {
 
   autoUpdater.on('checking-for-update', () => push({ phase: 'checking' }));
   autoUpdater.on('update-available', info => {
-    writeLog('info', `[updater] 发现新版本 ${info.version}（当前 ${info.currentVersion}）`);
+    const cur = String(info.currentVersion || app.getVersion());
+    const remote = String(info.version);
+    if (!isVersionNewerOrEqual(remote, cur)) {
+      writeLog('warn', `[updater] 拒绝降级安装：远端 ${remote} < 当前 ${cur}（防降级，已忽略该次更新）`);
+      push({ phase: 'latest', currentVersion: cur, via: activeMirror, downgradeBlocked: true });
+      return;
+    }
+    writeLog('info', `[updater] 发现新版本 ${remote}（当前 ${cur}）`);
     push({
       phase: 'available',
-      version: info.version,
-      currentVersion: String(info.currentVersion || app.getVersion()),
+      version: remote,
+      currentVersion: cur,
       releaseNotes: normalizeNotes(info.releaseNotes),
       releaseDate: info.releaseDate,
       via: activeMirror

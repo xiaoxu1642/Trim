@@ -16,8 +16,8 @@
       desc: '逐进程收紧内存工作集，系统进程与游戏自动跳过，最常用' },
     { id: 'standbyPriority0', name: '低优先级待机', risk: 'low', checked: true,
       desc: '仅清理 0 优先级待机页，不影响常用缓存，安全' },
-    { id: 'combine', name: '组合内存', risk: 'medium', checked: true,
-      desc: '物理内存页去重，降低页表开销，Win10+ 可用' },
+    { id: 'combine', name: '即时合并物理内存页', risk: 'medium', checked: true,
+      desc: '此刻调用 NtSetSystemInformation(87) 合并物理内存页去重，降低页表开销，Win10+ 可用；与「电脑优化中心 - 关闭 Windows 内存页合并（PageCombining）」不是同一机制，互不影响' },
     { id: 'modified', name: '修改页面列表', risk: 'high', checked: true,
       desc: '脏页写盘后回收，触发磁盘 I/O，可能短暂卡顿' },
     { id: 'standby', name: '待机列表', risk: 'high', checked: true,
@@ -28,8 +28,11 @@
       desc: '压低缓存上限强制回收文件页（当前系统版本不可用）' },
     { id: 'registryCache', name: '注册表缓存', sysUnavailable: true,
       desc: '注册表预读缓存（Win8.1+ 可用，当前系统版本不可用）' },
-    { id: 'stubbornKill', name: '顽固软件专杀', risk: 'medium', checked: true, kind: 'stubborn',
-      desc: '一次性结束 MuMu 模拟器 / 网易 UU 远程 / 抖音 / 剪映 / WPS 金山办公 / 微软电脑管家 的后台常驻与守护进程（含这些软件的前台进程，请先保存工作）' }
+    // N1（2026-09-14 重复点审查）：原「顽固软件专杀」与「电脑优化中心 - 顽固软件策略专杀」
+    // 合并为同一张「顽固软件治理」卡片，分两层：勾选 /「立即结束进程」= 一次性杀进程；
+    // 「阻止开机自启」= 常驻服务改手动 + 删 WPS 更新任务（持久，不提供自动还原）。
+    { id: 'stubbornKill', name: '顽固软件治理', risk: 'medium', checked: true, kind: 'stubborn',
+      desc: '两层处理：①「立即结束进程」一次性结束 MuMu 模拟器 / 网易 UU 远程 / 抖音 / 剪映 / WPS 金山办公 / 微软电脑管家 的后台常驻与守护进程（含前台进程，请先保存工作）；②「阻止开机自启」把这些软件的后台服务改为手动启动，并删除 WPS 更新计划任务、关闭其自动升级（持久生效，不提供自动还原）' }
   ];
 
   const RISK_LABELS = { low: '低风险', medium: '中风险', high: '高风险' };
@@ -175,9 +178,14 @@
           const riskBadge = r.sysUnavailable
             ? '<span class="category-risk unused">不可用</span>'
             : `<span class="category-risk ${r.risk}">${RISK_LABELS[r.risk]}</span>`;
+          // N1（2026-09-14）：顽固软件治理卡片有两层 ——「立即结束进程」走专杀脚本（一次性），
+          // 「阻止开机自启」走后端持久策略脚本
           const action = r.sysUnavailable
             ? '<span class="mem-region-na">系统级不可用</span>'
-            : `<button class="btn btn-secondary btn-small mem-region-clean" data-clean="${r.id}" type="button">清理该项</button>`;
+            : (r.kind === 'stubborn'
+              ? `<button class="btn btn-secondary btn-small mem-region-clean" data-clean="${r.id}" type="button">立即结束进程</button>
+                 <button class="btn btn-secondary btn-small mem-region-block" data-block="${r.id}" type="button" data-tip="把这些软件的后台服务改为手动并删除 WPS 更新任务，持久生效且不自动还原">阻止开机自启</button>`
+              : `<button class="btn btn-secondary btn-small mem-region-clean" data-clean="${r.id}" type="button">清理该项</button>`);
           return `
           <div class="mem-region-row row-card ${r.sysUnavailable ? 'mem-region-disabled' : ''}" data-id="${r.id}" data-tip="点击查看该区域的详细简介">
             <label class="mem-check" data-tip="勾选后可清理该区域">
@@ -206,6 +214,10 @@
     // 单项清理
     root.querySelectorAll('.mem-region-clean').forEach(btn => {
       btn.addEventListener('click', () => runClean([btn.dataset.clean]));
+    });
+    // N1：顽固软件治理第二层 —— 阻止开机自启（持久策略，独立确认）
+    root.querySelectorAll('.mem-region-block').forEach(btn => {
+      btn.addEventListener('click', () => runStubbornBlock());
     });
     // 点击条目主体（非按钮/勾选框）→ 弹窗展示详细简介（本地 + 联网 AI）
     root.querySelectorAll('.mem-region-row').forEach(row => {
@@ -341,6 +353,41 @@
       throw new Error((resp && resp.message) || '专杀失败');
     } catch (e) {
       window.app?.toast('error', '顽固软件专杀失败：' + e.message);
+    }
+  }
+
+  // N1（2026-09-14 重复点审查）：顽固软件治理第二层 —— 阻止开机自启。
+  // 把 MuMu / 网易 UU 远程 / 微软电脑管家的常驻服务改为「手动」并停止，停止 WPS 云文档服务，
+  // 删除 WPS 更新计划任务并关闭其自动升级。属持久策略、不提供自动还原，执行前二次确认。
+  async function runStubbornBlock() {
+    if (!window.api?.memory?.stubbornBlock) {
+      window.app?.toast('warning', '预览模式不支持该操作');
+      return;
+    }
+    const ok = await window.app.confirmDanger(
+      '阻止顽固软件开机自启',
+      '将把这些软件的后台服务启动类型改为「手动」并立即停止：MuMu 模拟器、网易 UU 远程、微软电脑管家。\n' +
+      '同时停止 WPS 云文档服务、删除其更新计划任务并关闭自动升级。\n\n' +
+      '该调整为持久化设置，不提供自动还原；相关软件需要使用时正常打开即可。',
+      '仍然执行',
+      '取消',
+      '会修改服务启动类型并删除 WPS 更新计划任务。'
+    );
+    if (!ok) return;
+    window.app?.toast('info', '正在阻止顽固软件开机自启…');
+    try {
+      const resp = await window.api.memory.stubbornBlock();
+      if (resp && resp.success && resp.data) {
+        const d = resp.data;
+        const svcs = Array.isArray(d.services) ? d.services : [];
+        const tasks = Array.isArray(d.tasks) ? d.tasks : [];
+        window.app?.toast('success', `已处理 ${svcs.length} 个服务` + (tasks.length ? `，删除 ${tasks.length} 个更新任务` : '') + (svcs.length ? `：${svcs.join('、')}` : ''));
+        window.app?.log('info', `顽固软件自启阻断：服务 ${svcs.join('、') || '无'}；任务 ${tasks.join('、') || '无'}`);
+        return;
+      }
+      throw new Error((resp && resp.message) || '执行失败');
+    } catch (e) {
+      window.app?.toast('error', '阻止开机自启失败：' + e.message);
     }
   }
 

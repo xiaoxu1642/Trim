@@ -414,7 +414,7 @@
         groupEl.innerHTML = `
           <div class="category-group-header" data-group-toggle="${groupKey}">
             <span class="category-group-icon">${group.icon}</span>
-            <span>${group.title}</span>
+            <span>${escapeHtml(group.title)}</span>
             ${groupKey === 'special' ? '<span class="special-inline-note" data-tip="动作型维护项为不可逆系统操作，默认不勾选">不可逆系统操作 · 默认不勾选</span>' : ''}
             <span style="margin-left:auto;font-size:11px;color:var(--fg-tertiary)" data-group-count="${groupKey}">${totalItems} 项 · ${subGroups.length} 分类</span>
           </div>
@@ -429,7 +429,7 @@
         groupEl.innerHTML = `
           <div class="category-group-header" data-group-toggle="${groupKey}">
             <span class="category-group-icon">${group.icon}</span>
-            <span>${group.title}</span>
+            <span>${escapeHtml(group.title)}</span>
             <span style="margin-left:auto;font-size:11px;color:var(--fg-tertiary)" data-group-count="${groupKey}">${items.length} 项</span>
           </div>
           <div class="category-group-content" data-group-content="${groupKey}">
@@ -1061,7 +1061,14 @@
         renderCategoryList();
         updateUI();
         const freed = result.totalFreed || 0;
-        window.app?.toast('success', `清理完成！释放 ${formatSize(freed)} 空间`);
+        // 审查 M-3：回收站模式下移入回收站的体积不计入 totalFreed，单独展示
+        const recycledBytes = Number(result.recycledBytes) || 0;
+        const recycledCount = Number(result.recycledCount) || 0;
+        let toastMsg = `清理完成！释放 ${formatSize(freed)} 空间`;
+        if (recycledCount > 0) {
+          toastMsg += `；另有 ${recycledCount} 项（${formatSize(recycledBytes)}）已移入回收站，清空回收站后才会真正释放`;
+        }
+        window.app?.toast('success', toastMsg);
         // P3 残留复查提示：清理后仍有文件/注册表残留的项
         const residualItems = (result.details || []).filter(d => (Number(d.residual) || 0) > 0);
         if (residualItems.length > 0) {
@@ -1338,12 +1345,35 @@
     loadRulesFromMain();
   }
 
+  // C2（2026-09-14 重复点审查）：HDD 上隐藏 Prefetch 清理项 ——
+  // HDD 依赖预读与 Prefetch 缓存，清掉反而拖慢；SSD 上保留（清掉无损失）。
+  // 探测失败或介质未知 → 不隐藏任何条目。
+  function filterRulesByDiskType(groups, dt) {
+    if (!dt || !dt.known || dt.isSsd) return groups;
+    const drop = new Set(['prefetchFiles']);
+    return groups.map(g => {
+      const out = Object.assign({}, g);
+      if (Array.isArray(g.items)) out.items = g.items.filter(it => !drop.has(it.id));
+      if (Array.isArray(g.subGroups)) {
+        out.subGroups = g.subGroups.map(sg => Object.assign({}, sg, {
+          items: Array.isArray(sg.items) ? sg.items.filter(it => !drop.has(it.id)) : sg.items
+        }));
+      }
+      return out;
+    });
+  }
+
   async function loadRulesFromMain() {
     if (!window.api?.cleanup?.rules) return; // 预览模式或旧 preload：沿用 FALLBACK
     try {
-      const resp = await window.api.cleanup.rules();
+      // 磁盘介质探测与规则拉取并行；探测失败不阻塞规则加载
+      const pDisk = window.api.system?.diskType
+        ? window.api.system.diskType().then(r => (r && r.success ? r.data : null)).catch(() => null)
+        : Promise.resolve(null);
+      const [dt, resp] = await Promise.all([pDisk, window.api.cleanup.rules()]);
       if (resp && resp.success && resp.data && Array.isArray(resp.data.groups)) {
-        CATEGORIES = buildCategoriesFromRules(resp.data);
+        const groups = filterRulesByDiskType(resp.data.groups, dt);
+        CATEGORIES = buildCategoriesFromRules(Object.assign({}, resp.data, { groups }));
         ALL_IDS = getAllIds();
         renderCategoryList();
         updateUI();

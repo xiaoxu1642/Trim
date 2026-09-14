@@ -203,6 +203,48 @@ foreach ($p in $processes) {
 [pscustomobject]@{ killed = $killed.Count; failed = $failed.Count; leftover = $leftover } | ConvertTo-Json -Compress
 `;
 
+// ==================== 顽固软件：阻止开机自启（N1，2026-09-14 重复点审查） ====================
+// 从已下线的「电脑优化中心 - 顽固软件策略专杀」迁移而来，与内存清理页合并为同一张
+// 「顽固软件治理」卡片的两层：第一层「立即结束进程」= 上面的 STUBBORN_KILL_SCRIPT（一次性），
+// 本脚本是第二层「阻止开机自启」（持久）。
+// 动作：MuMu / 网易 UU 远程 / 微软电脑管家等常驻服务改为「手动」并停止；停止 WPS 云文档服务；
+// 删除 WPS 更新计划任务并关闭其自动升级。属持久化策略，不提供自动还原（与优化项时代一致）。
+const STUBBORN_BLOCK_SCRIPT = `
+$ErrorActionPreference = 'SilentlyContinue'
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$changed = @()
+$services = @('Edrservice','GameViewerService','MuMuRemoteService','PCManager Service Store')
+foreach ($svc in $services) {
+  $s = Get-Service -Name $svc -ErrorAction SilentlyContinue
+  if (-not $s) { continue }
+  if ($s.Status -eq 'Running') { Stop-Service -Name $svc -Force -ErrorAction SilentlyContinue }
+  Set-Service -Name $svc -StartupType Manual -ErrorAction SilentlyContinue
+  $changed += $svc
+}
+$wc = Get-Service -Name 'wpscloudsvr' -ErrorAction SilentlyContinue
+if ($wc) {
+  if ($wc.Status -eq 'Running') { Stop-Service -Name 'wpscloudsvr' -Force -ErrorAction SilentlyContinue }
+  $changed += 'wpscloudsvr'
+}
+$tasks = @()
+# 审查 M-6（2026-09-14）：Unregister-ScheduledTask 不可逆，删除前先 Export-ScheduledTask
+# 到 %APPDATA%\Trim\backup\tasks\<name>.xml，与 startup/contextmenu 的「删除前备份」纪律对齐。
+$taskBackupDir = Join-Path $env:APPDATA 'Trim\backup\tasks'
+foreach ($taskName in @('WpsUpdateTask_CHENG','WpsUpdateLogonTask_CHENG')) {
+  if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
+    try {
+      if (-not (Test-Path $taskBackupDir)) { New-Item -Path $taskBackupDir -ItemType Directory -Force | Out-Null }
+      Export-ScheduledTask -TaskName $taskName | Out-File -FilePath (Join-Path $taskBackupDir ($taskName + '.xml')) -Encoding UTF8
+    } catch {}
+    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+    $tasks += $taskName
+  }
+}
+$wpsKey = 'HKCU:\\Software\\Kingsoft\\Office\\6.0\\Common\\updateinfo'
+if (Test-Path $wpsKey) { Set-ItemProperty -Path $wpsKey -Name 'UpdateMode' -Value 'close' -ErrorAction SilentlyContinue }
+[pscustomobject]@{ services = @($changed); tasks = @($tasks) } | ConvertTo-Json -Compress
+`;
+
 // ==================== 结束进程 ====================
 function killScript(pid, expectedName = '') {
   const psName = String(expectedName).replace(/'/g, "''");
@@ -231,4 +273,4 @@ if ($null -eq $alive) {
 `;
 }
 
-module.exports = { MEM_INFO_SCRIPT, cleanScript, PROCESSES_SCRIPT, killScript, STUBBORN_KILL_SCRIPT };
+module.exports = { MEM_INFO_SCRIPT, cleanScript, PROCESSES_SCRIPT, killScript, STUBBORN_KILL_SCRIPT, STUBBORN_BLOCK_SCRIPT };

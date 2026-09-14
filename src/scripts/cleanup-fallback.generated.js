@@ -173,6 +173,42 @@
               }
             },
             {
+              "id": "cbsLogs",
+              "name": "CBS 组件安装日志",
+              "risk": "low",
+              "pathPs": "$env:WINDIR + '\\Logs\\CBS'",
+              "evidence": "Windows 组件安装与修复日志（CBS.log；原「电脑优化中心 - PCCleaner 深度清理」携带项，C1 整合，2026-09-14）",
+              "recommended": false,
+              "deleteMode": "contents",
+              "domain": "system",
+              "group": "logs",
+              "nature": "log",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "trim/pccleaner",
+                "importedAt": "2026-09-14"
+              }
+            },
+            {
+              "id": "dismLogs",
+              "name": "DISM 组件服务日志",
+              "risk": "low",
+              "pathPs": "$env:WINDIR + '\\Logs\\DISM'",
+              "evidence": "DISM 组件维护日志（dism.log；原「电脑优化中心 - PCCleaner 深度清理」携带项，C1 整合，2026-09-14）",
+              "recommended": false,
+              "deleteMode": "contents",
+              "domain": "system",
+              "group": "logs",
+              "nature": "log",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "trim/pccleaner",
+                "importedAt": "2026-09-14"
+              }
+            },
+            {
               "id": "windowsDebug",
               "name": "Windows 调试文件",
               "risk": "low",
@@ -334,10 +370,13 @@
                   "pattern": "thumbcache_*.db"
                 }
               ],
-              "requiredStoppedProcesses": [
-                "explorer"
+              "restartProcesses": [
+                {
+                  "name": "explorer",
+                  "restart": "process"
+                }
               ],
-              "evidence": "资源管理器缩略图缓存数据库",
+              "evidence": "资源管理器缩略图缓存数据库。清理时会临时重启资源管理器",
               "recommended": false,
               "deleteMode": "contents",
               "domain": "system",
@@ -360,10 +399,13 @@
                   "pattern": "iconcache_*.db"
                 }
               ],
-              "requiredStoppedProcesses": [
-                "explorer"
+              "restartProcesses": [
+                {
+                  "name": "explorer",
+                  "restart": "process"
+                }
               ],
-              "evidence": "资源管理器图标缓存数据库（与缩略图缓存同目录，按模式区分）",
+              "evidence": "资源管理器图标缓存数据库（与缩略图缓存同目录，按模式区分）。清理时会临时重启资源管理器 —— M2 起该项承接原「系统维护 - 重建图标与缩略图缓存」的能力",
               "recommended": false,
               "domain": "system",
               "group": "caches",
@@ -1669,8 +1711,37 @@
               }
             },
             {
+              "id": "printSpoolCache",
+              "name": "打印后台缓存",
+              "risk": "medium",
+              "fileKeys": [
+                {
+                  "path": "%WINDIR%\\System32\\spool\\PRINTERS",
+                  "pattern": "*"
+                }
+              ],
+              "restartProcesses": [
+                {
+                  "name": "spoolsv",
+                  "restart": "service",
+                  "service": "Spooler"
+                }
+              ],
+              "evidence": "打印假脱机文件（卡住的打印任务）。原「系统维护 - 清理打印队列」与「电脑优化中心 - PCCleaner 深度清理」整合项（2026-09-14）；旧实现写的 C:\\Windows\\spool\\printers 在现代 Windows 上并不存在。清理时会临时停止并重启 Print Spooler 服务（M3 承接原「系统维护 - 清理打印队列」的能力）",
+              "recommended": false,
+              "domain": "special",
+              "group": "actions",
+              "nature": "action",
+              "regenerable": false,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/temp",
+                "importedAt": "2026-09-14"
+              }
+            },
+            {
               "id": "dismComponentCleanup",
-              "name": "DISM 组件清理 (WinSxS /ResetBase)",
+              "name": "组件存储清理 (DISM /ResetBase)",
               "risk": "high",
               "special": "dism",
               "evidence": "压缩组件存储，更新将不可卸载",
@@ -1692,8 +1763,8 @@
   ],
   "_sig": {
     "alg": "ed25519",
-    "sig": "5P6HKm4b88OopHMks3908+G8WBrepL4h3iTSM3RX8HbSq8yw10Qc/2LFwMNSxfOnnGbTP4FkU6ROuVLQXX33Dw=="
+    "sig": "lWMjHNmM6LiKEMrB34UB4nvrO+7XIPV2zbgNARoUMqwVMR8af9piMhPeaD8COukeTF8F1SOGtQ/I43D2diJABg=="
   },
-  "winapp2Version": 20260914
+  "winapp2Version": 260730
 };
 })(typeof window !== 'undefined' ? window : globalThis);

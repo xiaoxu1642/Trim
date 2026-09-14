@@ -152,6 +152,7 @@ const SIDE_EFFECT_FREE = new Set([
   'maintenance:tasks',                                         // 维护任务清单
   'memory:info', 'memory:processes',                           // 内存信息/进程列表
   'optimizer:list', 'overview:hardware', 'overview:metrics',   // 优化项清单/硬件信息/指标查询
+  'system:disk-type',                                          // 系统盘 SSD/HDD 探测（C2，只读）
   'overview:checkup',                                          // 系统体检（v2.6.0 只读诊断）
   'runtimes:collect',                                          // 运行库只读检测（v3.3.0；install 通道绝不入白名单）
   'updater:get-mirror',                                        // 更新镜像偏好读取（v2.6.0）
@@ -418,9 +419,14 @@ function flushLogSync() {
 
 function writeLog(level, message) {
   ensureLogDir();
-  const ts = new Date().toISOString().replace(/T/, ' ').replace(/\..+/, '');
-  const line = `[${ts}] [${level.toUpperCase()}] ${message}\n`;
-  const logFile = path.join(LOG_DIR, `app-${new Date().toISOString().slice(0, 10)}.log`);
+  // 审查 L-1（2026-09-14）：日志时间戳与日志文件名改用本地时间，避免 UTC 与东八区差 8 小时
+  // 导致排查时误判时序（00:00–07:59 产生的日志落进前一天文件）。
+  const pad = n => String(n).padStart(2, '0');
+  const d = new Date();
+  const localStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  const localDate = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const line = `[${localStr}] [${level.toUpperCase()}] ${message}\n`;
+  const logFile = path.join(LOG_DIR, `app-${localDate}.log`);
   logQueue.push({ file: logFile, line });
   if (!logFlushScheduled) {
     logFlushScheduled = true;
@@ -1230,21 +1236,24 @@ handleSafe('cleanup:execute', async (event, { items, force, toRecycle, autoRebui
       return { success: false, message: '解析结果失败', raw: stdout };
     }
     // P3：回收站模式——逐目标 shell.trashItem，改写 recycle 状态为 ok/partial/error
+    // 审查 M-3（2026-09-14）：移入回收站的文件仍占同一卷磁盘空间，磁盘可用空间不变，
+    // 因此不再计入 totalFreed（永久删除才真正释放空间）。改用独立指标 recycledBytes/recycledCount，
+    // 并在 message 中提示「可在系统回收站还原」。
     if (toRecycle && recycleEntries.length > 0) {
       const perItem = new Map();
       for (const entry of recycleEntries) {
         // 审查 1-4：entry.path 来自脚本 stdout 解析，信任级别低于快照校验项，与 finder:delete 对齐拒绝受保护路径
         if (isProtectedDeletePath(entry.path)) {
-          const st0 = perItem.get(entry.id) || { freed: 0, ok: 0, fail: 0 };
+          const st0 = perItem.get(entry.id) || { freed: 0, ok: 0, fail: 0, recycledBytes: 0 };
           st0.fail++;
           perItem.set(entry.id, st0);
           writeLog('warn', `拒绝移入回收站（受保护路径）: ${entry.path}`);
           continue;
         }
-        const st = perItem.get(entry.id) || { freed: 0, ok: 0, fail: 0 };
+        const st = perItem.get(entry.id) || { freed: 0, ok: 0, fail: 0, recycledBytes: 0 };
         try {
           await shell.trashItem(entry.path);
-          st.freed += Number(entry.size) || 0;
+          st.recycledBytes += Number(entry.size) || 0;
           st.ok++;
           // 目录条目可选自动重建（与直接删除模式的 optAutoRebuild 语义一致）
           if (entry.isDir && autoRebuild) {
@@ -1258,17 +1267,23 @@ handleSafe('cleanup:execute', async (event, { items, force, toRecycle, autoRebui
         perItem.set(entry.id, st);
       }
       if (trashFailures.length) lastTrashFailures = trashFailures;
+      let recycledBytes = 0, recycledCount = 0;
       for (const d of data.details || []) {
         if (d.status !== 'recycle') continue;
         const st = perItem.get(d.id);
         if (!st) { d.status = 'ok'; d.freed = 0; d.message = '无可清理目标'; continue; }
-        d.freed = st.freed;
-        if (st.fail === 0) { d.status = 'ok'; d.message = `已移入回收站（${st.ok} 项）`; }
+        d.freed = 0; // 审查 M-3：回收站不计入已释放空间
+        d.recycledBytes = st.recycledBytes;
+        recycledBytes += st.recycledBytes;
+        recycledCount += st.ok;
+        if (st.fail === 0) { d.status = 'ok'; d.message = `已移入回收站（${st.ok} 项，可在系统回收站还原）`; }
         else if (st.ok > 0) { d.status = 'partial'; d.message = `已移入回收站 ${st.ok} 项，${st.fail} 项失败（被占用）`; }
-        else { d.status = 'error'; d.freed = 0; d.message = '移入回收站失败（可能被占用）'; }
+        else { d.status = 'error'; d.message = '移入回收站失败（可能被占用）'; }
       }
-      // 按改写后的明细重算统计
+      // 按改写后的明细重算统计（回收站条目 freed=0，totalFreed 不含其体积）
       data.totalFreed = (data.details || []).reduce((s, d) => s + (Number(d.freed) || 0), 0);
+      data.recycledBytes = recycledBytes;
+      data.recycledCount = recycledCount;
       data.success = (data.details || []).filter(d => d.status === 'ok').length;
       data.failed = (data.details || []).filter(d => d.status === 'error' || d.status === 'partial').length;
       data.skipped = (data.details || []).filter(d => d.status === 'skip').length;
@@ -1834,7 +1849,11 @@ async function trashOrUnlink(target, { allowPermanent = true } = {}) {
   } catch (e) {
     if (!allowPermanent) return { ok: false, recycled: false, message: e.message };
     try {
-      fs.unlinkSync(target);
+      // 审查 M-4（2026-09-14）：永久删除降级统一用 fs.rmSync(recursive)，
+      // 旧实现 fs.unlinkSync 在 Windows 上对目录恒抛 EPERM，导致目录型目标降级静默失败。
+      // 与 cleanup:retry-failed-delete 口径对齐。
+      const isDir = fs.existsSync(target) && fs.lstatSync(target).isDirectory();
+      fs.rmSync(target, { recursive: isDir, force: true });
       return { ok: true, recycled: false };
     } catch (e2) {
       return { ok: false, recycled: false, message: e2.message };
@@ -2248,6 +2267,11 @@ handleSafe('optimizer:run', async (event, { optionId, params = {} } = {}) => {
     } else {
       steps = [];
     }
+  } else if (optionId === 'tf_svc_bulk' && params && params.includeStore === true) {
+    // 商店服务附加分支（2026-09-14 用户需求）：执行 tf_svc_bulk 前渲染层单独弹窗
+    // 询问是否连商店相关服务一并禁用；选择禁用时经 params.includeStore 传入，
+    // 在基础清单后追加商店 5 服务步骤（含更新与下载通道，用户裁定覆盖面）。
+    steps = OPTIMIZER.svcBulkAppendStoreSteps(opt.steps);
   } else {
     steps = params.restore && opt.restore ? opt.restore : opt.steps;
   }
@@ -2292,6 +2316,43 @@ handleSafe('optimizer:run', async (event, { optionId, params = {} } = {}) => {
     const ok = code === 0 && String(stdout || output).includes('@@DONE@@') && failedSteps === 0;
     if (!ok) writeLog('warn', `优化电脑命令退出码 ${code}: ${opt.title}`);
 
+    // 审查 B-2（2026-09-14）：optimizer 的 pwsh 步骤原样注入、不经统一删除出口，此前
+    // tf_onedrive 在 PS 内 Remove-Item -Recurse -Force 裸删用户数据。现约定：步骤可用
+    // @@RECYCLE@@ 协议（与 cleanup:execute 同名同格式，每行 '@@RECYCLE@@' + JSON{id,path,isDir}）
+    // 把删除目标交回主进程走 shell.trashItem（回收站优先、可还原）；PS 侧只做枚举上报，
+    // 不做任何删除。与失败计数协议一致：受保护路径/移入失败只影响 message，不翻转优化项成败。
+    const recycleStat = { ok: 0, fail: 0 };
+    {
+      const seen = new Set();
+      for (const raw of String(stdout || output).split(/\r?\n/)) {
+        const line = raw.trim();
+        if (!line.startsWith('@@RECYCLE@@')) continue;
+        let entry = null;
+        try { entry = JSON.parse(line.slice('@@RECYCLE@@'.length)); } catch (e) { entry = null; }
+        if (!entry || typeof entry.path !== 'string' || !entry.path || seen.has(entry.path)) continue;
+        seen.add(entry.path);
+        if (isProtectedDeletePath(entry.path)) {
+          recycleStat.fail++;
+          writeLog('warn', `优化回收站协议拒绝受保护路径: ${entry.path}`);
+          continue;
+        }
+        try {
+          await shell.trashItem(entry.path);
+          recycleStat.ok++;
+        } catch (e) {
+          recycleStat.fail++;
+          writeLog('warn', `优化项目标移入回收站失败: ${entry.path} -> ${e.message}`);
+        }
+      }
+    }
+    const okMessage = ok
+      ? (recycleStat.ok || recycleStat.fail
+        ? (recycleStat.fail
+          ? `完成（${recycleStat.ok} 个目录已移入回收站，${recycleStat.fail} 个失败）`
+          : `完成（${recycleStat.ok} 个目录已移入回收站，可在系统回收站还原）`)
+        : '完成')
+      : '部分步骤可能失败';
+
     // v2.6.0（P0-1/P0-2）：记账收尾与执行后回读验证
     if (OPT_STATE.ready()) {
       if (isRestoreRun) {
@@ -2307,14 +2368,14 @@ handleSafe('optimizer:run', async (event, { optionId, params = {} } = {}) => {
         OPT_STATE.markApplied(optionId, verify);
         // v2.7.0：执行成功及时回写检测结果（pass=已生效；partial=读回不符视为未生效；unknown 交启动扫描）
         if (verify !== 'unknown') OPT_STATE.setDetectedEntry(optionId, verify === 'pass');
-        return { success: ok, message: ok ? '完成' : '部分步骤可能失败', verify };
+        return { success: ok, message: okMessage, verify };
       } else {
         // 执行失败：转正为 applied+unknown（前序步骤可能已部分生效），
         // 后续由启动扫描对可检测项核对真实状态，还原入口始终可用
         OPT_STATE.markApplied(optionId, 'unknown');
       }
     }
-    return { success: ok, message: ok ? '完成' : '部分步骤可能失败' };
+    return { success: ok, message: okMessage };
   } catch (e) {
     writeLog('error', `优化电脑执行异常: ${e.message}`);
     // 异常路径同样保留记账记录（前序步骤可能已生效），由启动扫描核对
@@ -4052,6 +4113,7 @@ const DEVICE_INFO_SCRIPT = require('./src/scripts-powershell/device-info-scripts
 const DISKBENCH_SCRIPT = require('./src/scripts-powershell/diskbench-scripts');
 const REALTIME_SCRIPT = require('./src/scripts-powershell/realtime-scripts');
 const OVERVIEW_SCRIPT = require('./src/scripts-powershell/overview-scripts');
+const SYSDISK_SCRIPT = require('./src/scripts-powershell/sysdisk-scripts');   // C2：系统盘 SSD/HDD 探测
 
 handleSafe('device:scan', async () => {
   const scriptPath = writeTempScript(DEVICE_INFO_SCRIPT.scan());
@@ -4101,6 +4163,25 @@ handleSafe('overview:hardware', async (event, { refresh = false } = {}) => {
   } catch (e) {
     const cached = loadSystemInfoCache();
     if (cached) return { success: true, data: cached.data, cached: true, cachedAt: cached.timestamp, degraded: true };
+    return { success: false, message: e.message };
+  } finally { try { fs.unlinkSync(scriptPath); } catch (e) {} }
+});
+
+// ==================== 系统盘介质类型（C2，2026-09-14 重复点审查） ====================
+// 供「电脑优化中心」与「磁盘清理」按 SSD/HDD 显隐预读相关选项。系统盘介质不会变化，
+// 进程内缓存一次即可（refresh=true 强制重探）。探测失败返回 success:false，
+// 渲染层按 unknown 处理 —— 两边都不隐藏，避免探测失败反而藏掉用户要用的选项。
+let sysDiskTypeCache = null;
+handleSafe('system:disk-type', async (event, { refresh = false } = {}) => {
+  if (!refresh && sysDiskTypeCache) return { success: true, data: sysDiskTypeCache, cached: true };
+  const scriptPath = writeTempScript(SYSDISK_SCRIPT.scan());
+  try {
+    const { stdout, stderr, code } = await runPowerShellFile(scriptPath, { timeout: 30000 });
+    if (code !== 0) throw new Error(stderr || '系统盘介质探测失败');
+    const data = JSON.parse(stdout.trim());
+    sysDiskTypeCache = data;
+    return { success: true, data, cached: false };
+  } catch (e) {
     return { success: false, message: e.message };
   } finally { try { fs.unlinkSync(scriptPath); } catch (e) {} }
 });
@@ -4776,6 +4857,27 @@ handleSafe('memory:stubborn-kill', async (event) => {
       return { success: true, data: JSON.parse(stdout.trim()) };
     } catch (e) {
       return { success: false, message: '解析专杀结果失败' };
+    }
+  } catch (e) {
+    return { success: false, message: e.message };
+  } finally {
+    try { fs.unlinkSync(scriptPath); } catch (e) {}
+  }
+});
+
+// N1（2026-09-14 重复点审查）：顽固软件「阻止开机自启」—— 原「电脑优化中心 - 顽固软件策略专杀」
+// 迁移至此，与 memory:stubborn-kill（立即结束进程）构成同一张「顽固软件治理」卡片的两层。
+// 属持久化策略（改服务启动类型 / 删更新任务），不提供自动还原，与优化项时代语义一致。
+handleSafe('memory:stubborn-block', async (event) => {
+  const scriptPath = writeTempScript(MEMORY_SCRIPT.STUBBORN_BLOCK_SCRIPT);
+  try {
+    const { stdout, code, timedOut } = await runPowerShellFile(scriptPath, { timeout: 60000 });
+    if (timedOut) return { success: false, message: '顽固软件自启阻断超时' };
+    if (code !== 0) return { success: false, message: '顽固软件自启阻断执行失败' };
+    try {
+      return { success: true, data: JSON.parse(stdout.trim()) };
+    } catch (e) {
+      return { success: false, message: '解析自启阻断结果失败' };
     }
   } catch (e) {
     return { success: false, message: e.message };

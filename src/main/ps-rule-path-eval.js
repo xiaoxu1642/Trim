@@ -28,8 +28,12 @@
 //   是合法态，由调用方按空路径处理，不当作解析失败。
 
 const RULE_PATH_EVAL_PS = `
+$RULE_PATH_MAX_DEPTH = 32
 function Resolve-RulePrim {
   param($St)
+  # 审查 L-7（2026-09-14）：嵌套括号深度上限，防止恶意/异常规则表达式让 PowerShell 栈递归爆掉。
+  $St.depth = [int]$St.depth + 1
+  if ($St.depth -gt $RULE_PATH_MAX_DEPTH) { $St.ok = $false; return }
   $ws = ' ' + [char]9
   while ($St.i -lt $St.s.Length -and $ws.Contains($St.s[$St.i])) { $St.i = $St.i + 1 }
   if ($St.i -ge $St.s.Length) { $St.ok = $false; return }
@@ -101,7 +105,7 @@ function Resolve-RulePath {
   param([string]$Expr)
   if ([string]::IsNullOrEmpty($Expr)) { return [pscustomobject]@{ ok = $false; path = '' } }
   $s = [string]$Expr
-  $st = @{ s = $s; i = 0; ok = $true; val = '' }
+  $st = @{ s = $s; i = 0; ok = $true; val = ''; depth = 0 }
   Resolve-RuleConcat $st
   if (-not $st.ok) { return [pscustomobject]@{ ok = $false; path = '' } }
   $k = [int]$st.i

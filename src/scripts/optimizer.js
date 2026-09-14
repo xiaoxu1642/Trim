@@ -22,9 +22,8 @@
   };
   // 系统服务与内存 按条目拆分到「内存优化」/「系统服务」
   const ITEM_GROUP_OVERRIDE = {
-    prefetch_off: '内存优化', maps_off: '内存优化', svc_mem_gb: '内存优化',
-    mem_compress: '内存优化', tf_mmagent: '内存优化',
-    services_off: '系统服务', tf_svc_bulk: '系统服务', tf_drv_disable: '系统服务'
+    svc_mem_gb: '内存优化', tf_mmagent: '内存优化',
+    tf_svc_bulk: '系统服务', tf_drv_disable: '系统服务'
   };
 
   function displayGroup(o) {
@@ -341,6 +340,17 @@
       root.innerHTML = window.emptyState
         ? window.emptyState({ icon: 'box', title: '该分类下暂无优化项', desc: '尝试切换左侧其它分类，或返回「全部」查看所有优化项目' })
         : '<div class="empty-state"><p>该分类暂无优化项目。</p></div>';
+    }
+    // ancel 对比审查 P1（2026-09-14）：网络栈优化（TCP/拥塞控制/RSS 等）已从优化中心
+    // 迁至维护中心（maintenance-scripts.js），此处加轻量指引避免用户在优化中心找不到。
+    const tip = document.getElementById('optimizerNetHint');
+    if (tip) {
+      tip.innerHTML = `<span class="pw-last-scan" data-tip="网络栈优化已迁至维护中心">网络栈优化（TCP/拥塞控制/RSS/RSC/ECN 等）已移至「系统维护」页</span><button type="button" class="btn btn-ghost btn-xs" id="btnGoMaintenanceNet" data-tip="前往维护中心">前往维护中心</button>`;
+      const btn = tip.querySelector('#btnGoMaintenanceNet');
+      if (btn) btn.addEventListener('click', () => {
+        const nav = document.querySelector('.nav-item[data-page="maintenance"]');
+        if (nav) nav.click();
+      });
     }
     // 瀑布流布局：重新渲染后立即放置；窗口 resize 由 attach 内部防抖 + FLIP 动画重排
     // 注意：布局容器是每次重渲染重建的 .opt-kanban，须用 getter 动态获取
@@ -710,8 +720,11 @@
       if (!go) return;
       // 立即执行后自动关闭弹窗
       closeOptModal();
-      // 执行前检查系统还原点（警示/风险确认；用户最终拒绝则不执行）
-      if (!(await ensureRestorePoint())) return;
+      // tf_svc_bulk：单独弹窗询问是否连商店相关服务一并禁用（用户选择经 params 传递）
+      const includeStore = opt.id === 'tf_svc_bulk' ? await confirmIncludeStoreServices() : false;
+      // 执行前检查系统还原点（警示/风险确认；用户最终拒绝则不执行）。
+      // tf_restore_point 本身就是创建动作，再走检查会「先弹建议创建、再重复创建」，直接放行。
+      if (opt.id !== 'tf_restore_point' && !(await ensureRestorePoint())) return;
       if (opt.dynamic) {
         const selEl = optModal?.modal?.querySelector('.opt-mem-select');
         const gbVal = selEl ? selEl.value : 8;
@@ -726,7 +739,7 @@
         }
       } else {
         try {
-          await runOptionActive({}, opt);
+          await runOptionActive(opt.id === 'tf_svc_bulk' ? { includeStore } : {}, opt);
         } catch (e) {
           window.app?.toast('error', '优化执行失败: ' + (e.message || e));
         }
@@ -870,6 +883,24 @@
       ? '用户在未创建还原点的情况下经风险确认后继续执行优化'
       : '用户拒绝在未创建还原点的情况下执行优化，已中止');
     return go;
+  }
+
+  // tf_svc_bulk 专用：执行前单独弹窗询问是否连商店相关服务一并禁用（用户需求 2026-09-14）。
+  // 点「禁用」= 基础清单 + 商店 5 服务（ClipSVC/InstallService/PushToInstall/wuauserv/DoSvc）；
+  // 点「不禁用」= 按现有方案执行（商店/同步保持默认）。返回 includeStore 布尔。
+  async function confirmIncludeStoreServices() {
+    try {
+      return await window.app.confirmWarning(
+        '禁用商店相关服务',
+        '您是否要禁用商店相关服务，此功能会影响Windows应用商店的使用更新与下载',
+        '禁用',
+        '不禁用',
+        '选择「禁用」将额外禁用 ClipSVC、InstallService、PushToInstall、wuauserv（Windows 更新）、DoSvc（传递优化下载）'
+      );
+    } catch (e) {
+      window.app?.log?.('warn', '商店服务询问弹窗异常（按不禁用处理）: ' + (e && e.message || e));
+      return false;
+    }
   }
 
   async function genAdviceActive() {
@@ -1046,6 +1077,12 @@
       if (!go) { setCardsSelected(false); return; }
     }
 
+    // 批次含「禁用 70+ 非必要服务」时：单独弹窗询问是否连商店相关服务一并禁用（一次询问作用于整批）
+    let batchIncludeStore = false;
+    if (batch.some(o => o.id === 'tf_svc_bulk')) {
+      batchIncludeStore = await confirmIncludeStoreServices();
+    }
+
     // 执行前统一检查系统还原点（未创建/超 5 天弹警示；用户最终拒绝则中止）
     if (!(await ensureRestorePoint())) { setCardsSelected(false); return; }
 
@@ -1058,7 +1095,7 @@
       const opt = batch[i];
       createProgressToast(`${opt.title}（${i + 1}/${batch.length}）`);
       try {
-        const succeeded = await runOptionActive({}, opt);
+        const succeeded = await runOptionActive(opt.id === 'tf_svc_bulk' ? { includeStore: batchIncludeStore } : {}, opt);
         if (succeeded) {
           okCount++;
         }
@@ -1081,11 +1118,32 @@
   }
 
   // ==================== 初始化 ====================
+  // C2（2026-09-14 重复点审查）：按系统盘介质显隐预读相关选项 ——
+  //   SSD 隐藏「加快预读能力改善速度」(perf_prefetcher_fast)：SSD 上 Prefetch 收益低，不该再开预读；
+  //   HDD 隐藏「关闭预读」(prefetch_off)：HDD 依赖预读，关掉反而变慢。
+  //   探测失败或介质未知 → 两边都不隐藏，绝不因探测失败藏掉用户要用的选项。
+  const HIDE_ON_SSD = ['perf_prefetcher_fast'];
+  // 优化中心目录里当前没有「关闭预读」项（历史上曾引用的 prefetch_off 已不在 OPTIONS 中），
+  // 因此 HDD 侧在优化中心无项可隐藏 —— HDD 的预读差异体现在磁盘清理的 Prefetch 条目上。
+  // 将来若新增「关闭预读」项，把其 id 填进这个数组即可。
+  const HIDE_ON_HDD = [];
+  let diskType = null;       // { media, busType, isSsd, known, detector } | null
+  function filterByDiskType(list) {
+    if (!diskType || !diskType.known) return list;
+    const drop = new Set(diskType.isSsd ? HIDE_ON_SSD : HIDE_ON_HDD);
+    return list.filter(o => !drop.has(o.id));
+  }
+
   function init() {
     if (window.api?.optimizer) {
-      window.api.optimizer.list().then(res => {
+      // 磁盘介质探测与目录拉取并行；探测失败不阻塞清单渲染
+      const pDisk = window.api.system?.diskType
+        ? window.api.system.diskType().then(r => (r && r.success ? r.data : null)).catch(() => null)
+        : Promise.resolve(null);
+      Promise.all([pDisk, window.api.optimizer.list()]).then(([dt, res]) => {
+        diskType = dt;
         if (res && res.success && Array.isArray(res.data)) {
-          OPTIONS = res.data;
+          OPTIONS = filterByDiskType(res.data);
           activeCategory = getSavedCategory();
           renderCatNav();
           setCategory(activeCategory);

@@ -2,13 +2,17 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const SECRET_PREFIX = 'dpapi:v1:';
 
+// 审查 L-5（2026-09-14）：临时文件名加入 4 字节随机后缀，避免同一进程同一毫秒
+// 对同一文件并发写时撞名（旧实现 pid+Date.now() 在极端并发下会重名导致 rename 覆盖）。
 function atomicWriteFile(filePath, contents, encoding = 'utf8') {
   const dir = path.dirname(filePath);
   fs.mkdirSync(dir, { recursive: true });
-  const tempPath = path.join(dir, `.${path.basename(filePath)}.${process.pid}.${Date.now()}.tmp`);
+  const rand = crypto.randomBytes(4).toString('hex');
+  const tempPath = path.join(dir, `.${path.basename(filePath)}.${process.pid}.${Date.now()}.${rand}.tmp`);
   let fd;
   try {
     fd = fs.openSync(tempPath, 'w');

@@ -374,8 +374,10 @@ contextBridge.exposeInMainWorld('api', {
   memory: {
     info: () => ipcRenderer.invoke('memory:info'),
     clean: (items) => ipcRenderer.invoke('memory:clean', { items }),
-    // 顽固软件专杀：一次性结束 MuMu/UU/抖音/剪映/WPS/微软电脑管家 后台守护进程
+    // 顽固软件治理（N1，2026-09-14）：第一层「立即结束进程」= stubbornKill（一次性），
+    // 第二层「阻止开机自启」= stubbornBlock（改服务为手动 + 删 WPS 更新任务，持久且不自动还原）
     stubbornKill: () => ipcRenderer.invoke('memory:stubborn-kill'),
+    stubbornBlock: () => ipcRenderer.invoke('memory:stubborn-block'),
     processes: () => ipcRenderer.invoke('memory:processes'),
     kill: (pid) => ipcRenderer.invoke('memory:kill', { pid })
   },
@@ -430,6 +432,12 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.on('optimizer:progress', handler);
       return () => ipcRenderer.removeListener('optimizer:progress', handler);
     }
+  },
+
+  // 系统信息（C2，2026-09-14 重复点审查）：系统盘介质类型（SSD/HDD），
+  // 供优化中心与磁盘清理按硬件显隐预读相关选项（unknown 时两边都不隐藏）
+  system: {
+    diskType: (opts = {}) => ipcRenderer.invoke('system:disk-type', opts)
   },
 
   // 启动项管理：扫描 / 启停 / 删除 / 打开所在位置 / 添加

@@ -52,6 +52,12 @@ function edgePolicyItem(id, title, risk, valueName, regValue, desc) {
 
 // ==================== 选项目录 ====================
 // risk: low / medium / high；title 在卡片上显示；steps 为执行动作；restore 可选（有源还原）
+
+// 审查 B-1（2026-09-14）：O&O ShutUp10++ 1.9.1436 导出的隐私配置模板（base64，原 2382 字节）。
+// 来源：Trim 内置（不再从 ancel1x/... raw/main 第三方可变分支拉取）。如需更新配置，
+// 在 OOSU10++ 中导出 cfg 后用 node -e "console.log(fs.readFileSync(path).toString('base64'))" 重新生成。
+const OOSU_CFG_B64 = 'IyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIw0KIyBUaGlzIGZpbGUgd2FzIGNyZWF0ZWQgd2l0aCBPJk8gU2h1dFVwMTArKyBWMS45LjE0MzYNCiMgYW5kIGNhbiBiZSBpbXBvcnRlZCBvbnRvIGFub3RoZXIgY29tcHV0ZXIuIA0KIw0KIyBEb3dubG9hZCB0aGUgYXBwbGljYXRpb24gYXQgaHR0cHM6Ly93d3cub28tc29mdHdhcmUuY29tL3NodXR1cDEwDQojIFlvdSBjYW4gdGhlbiBpbXBvcnQgdGhlIGZpbGUgZnJvbSB3aXRoaW4gdGhlIHByb2dyYW0uIA0KIw0KIyBBbHRlcm5hdGl2ZWx5IHlvdSBjYW4gaW1wb3J0IGl0IGF1dG9tYXRpY2FsbHkgb3ZlciBhIGNvbW1hbmQgbGluZS4NCiMgU2ltcGx5IHVzZSB0aGUgZm9sbG93aW5nIHBhcmFtZXRlcjogDQojIE9PU1UxMC5leGUgPHBhdGggdG8gZmlsZT4NCiMgDQojIFNlbGVjdGluZyB0aGUgT3B0aW9uIC9xdWlldCBlbmRzIHRoZSBhcHAgcmlnaHQgYWZ0ZXIgdGhlIGltcG9ydCBhbmQgdGhlDQojIHVzZXIgZG9lcyBub3QgZ2V0IGFueSBmZWVkYmFjayBhYm91dCB0aGUgaW1wb3J0Lg0KIw0KIyBXZSBhcmUgYWx3YXlzIGhhcHB5IHRvIGFuc3dlciBhbnkgcXVlc3Rpb25zIHlvdSBtYXkgaGF2ZSENCiMgwqkgMjAxNS0yMDIzIE8mTyBTb2Z0d2FyZSBHbWJILCBCZXJsaW4uIEFsbCByaWdodHMgcmVzZXJ2ZWQuDQojIGh0dHBzOi8vd3d3Lm9vLXNvZnR3YXJlLmNvbS8NCiMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMNCg0KUDAwMQkrDQpQMDAyCSsNClAwMDMJKw0KUDAwNAktDQpQMDA1CSsNClAwMDYJKw0KUDAwOAkrDQpQMDI2CS0NClAwMjcJKw0KUDAyOAktDQpQMDY0CSsNClAwNjUJKw0KUDA2NgkrDQpQMDY3CSsNClAwNzAJKw0KUDA2OQktDQpQMDA5CSsNClAwMTAJKw0KUDAxNQkrDQpQMDY4CSsNClAwMTYJKw0KQTAwMQkrDQpBMDAyCSsNCkEwMDMJKw0KQTAwNAktDQpBMDA2CSsNCkEwMDUJLQ0KUDAwNwktDQpQMDM2CSsNClAwMjUJKw0KUDAzMwktDQpQMDIzCSsNClAwNTYJKw0KUDA1NwkrDQpQMDEyCS0NClAwMzQJLQ0KUDAxMwktDQpQMDM1CS0NClAwNjIJKw0KUDA2MwkrDQpQMDgxCSsNClAwNDcJKw0KUDAxOQkrDQpQMDQ4CS0NClAwNDkJKw0KUDAyMAktDQpQMDM3CSsNClAwMTEJLQ0KUDAzOAkrDQpQMDUwCS0NClAwNTEJKw0KUDAxOAktDQpQMDM5CSsNClAwMjEJLQ0KUDA0MAkrDQpQMDIyCS0NClAwNDEJKw0KUDAxNAktDQpQMDQyCSsNClAwNTIJLQ0KUDA1MwkrDQpQMDU0CS0NClAwNTUJKw0KUDAyOQktDQpQMDQzCSsNClAwMzAJLQ0KUDA0NAkrDQpQMDMxCS0NClAwNDUJKw0KUDAzMgktDQpQMDQ2CSsNClAwNTgJLQ0KUDA1OQkrDQpQMDYwCS0NClAwNjEJKw0KUDAyNAkrDQpTMDAxCS0NClMwMDIJKw0KUzAwMwkrDQpTMDA4CS0NCkUxMDEJKw0KRTIwMQktDQpFMTE1CSsNCkUyMTUJLQ0KRTExOAkrDQpFMjE4CS0NCkUxMDcJKw0KRTIwNwktDQpFMTExCSsNCkUyMTEJLQ0KRTExMgkrDQpFMjEyCS0NCkUxMDkJKw0KRTIwOQktDQpFMTIxCSsNCkUyMjEJLQ0KRTEwMwkrDQpFMjAzCS0NCkUxMjMJKw0KRTIyMwktDQpFMTI0CSsNCkUyMjQJLQ0KRTEyOAkrDQpFMjI4CS0NCkUxMTkJKw0KRTIxOQktDQpFMTIwCSsNCkUyMjAJLQ0KRTEyMgkrDQpFMjIyCS0NCkUxMjUJKw0KRTIyNQktDQpFMTI2CSsNCkUyMjYJLQ0KRTEwNgkrDQpFMjA2CS0NCkUxMjcJKw0KRTIyNwktDQpFMDAxCSsNCkUwMDIJKw0KRTAwMwkrDQpFMDA4CSsNCkUwMDcJLQ0KRTAxMAkrDQpFMDExCS0NCkUwMTIJLQ0KRTAwOQkrDQpFMDA0CSsNCkUwMDUJKw0KRTAxMwkrDQpFMDE0CSsNCkUwMDYJKw0KWTAwMQkrDQpZMDAyCSsNClkwMDMJKw0KWTAwNAkrDQpZMDA1CSsNClkwMDYJKw0KWTAwNwkrDQpDMDEyCSsNCkMwMDIJKw0KQzAxMwktDQpDMDA3CSsNCkMwMDgJLQ0KQzAwOQkrDQpDMDEwCS0NCkMwMTEJKw0KQzAxNAkrDQpDMDE1CS0NCkwwMDEJKw0KTDAwMwkrDQpMMDA0CSsNCkwwMDUJKw0KVTAwMQkrDQpVMDA0CSsNClUwMDUJKw0KVTAwNgktDQpVMDA3CS0NClcwMDEJLQ0KVzAxMQktDQpXMDA0CS0NClcwMDUJKw0KVzAxMAkrDQpXMDA5CS0NClAwMTcJKw0KVzAwNgktDQpXMDA4CS0NCk0wMDYJKw0KTTAxMQkrDQpNMDEwCSsNCk8wMDMJLQ0KTzAwMQkrDQpTMDEyCSsNClMwMTMJKw0KUzAxNAkrDQpLMDAxCSsNCkswMDIJKw0KSzAwNQkrDQpNMDAzCSsNCk0wMTUJKw0KTTAxNgkrDQpNMDE3CS0NCk0wMTgJKw0KTTAxOQktDQpNMDIwCSsNCk0wMjIJKw0KTTAwMQkrDQpNMDA0CSsNCk0wMDUJKw0KTTAyNAkrDQpNMDEyCS0NCk0wMTMJLQ0KTTAxNAktDQpNMDIzCS0NCk4wMDEJLQ0K';
+
 const OPTIONS = [
   // ---------- 启动与响应 ----------
   {
@@ -88,14 +94,12 @@ const OPTIONS = [
       { label: '禁用调试', cmd: 'bcdedit /set debug No' }
     ]
   },
-  {
-    id: 'ssd_opt', group: '启动与响应', title: 'SSD 固态硬盘优化', risk: 'low',
-    desc: 'SSD：启用最后访问时间戳、禁用 8.3 短文件名，减少磁盘元数据开销。',
-    steps: [
-      { label: '启用最后访问时间戳', cmd: 'fsutil behavior set disableLastAccess 0' },
-      { label: '禁用 8.3 短文件名', cmd: 'fsutil behavior set disable8dot3 1' }
-    ]
-  },
+  // 第六大点-A/B（2026-09-14 重复点审查）：原「SSD 固态硬盘优化」(ssd_opt) 已下线。
+  // 它的两步都被别处覆盖，且其中一步与 tf_ntfs 取值相反：
+  //   · fsutil disableLastAccess 0（原描述"启用最后访问时间戳"）与 tf_ntfs 的 disablelastaccess=1
+  //     冲突；且在 SSD 上启用最后访问只会增加元数据写入，与"SSD 优化"目标相反 → 以 tf_ntfs 为准。
+  //   · fsutil disable8dot3 1 与 storage_8dot3_off 完全同值同动作。
+  // 退役登记见 data/retired-optimizations.json。
   {
     id: 'tf_ntfs', group: '启动与响应', title: 'NTFS 文件系统调优', risk: 'medium',
     desc: 'Trim fsutil 五项：memoryusage=2、mftzone=4、disablelastaccess=1、disabledeletenotify=0（开启删除通知/TRIM）、encryptpagingfile=0。',
@@ -204,16 +208,12 @@ const OPTIONS = [
   // ---------- 游戏与多媒体 ----------
   {
     id: 'game_dvr', group: '游戏与多媒体', title: '关闭游戏 DVR 录制', risk: 'low',
-    desc: '关闭 GameDVR/游戏栏后台录制与全屏优化，减少游戏卡顿、闪退与掉帧。',
+    desc: '关闭 GameDVR / 游戏栏后台录制（GameDVR_Enabled / AllowGameDVR / AppCaptureEnabled），减少后台录制带来的性能占用。全屏优化(FSO)相关键已统一由「全屏优化(FSO)行为」负责——本项原先也写 GameDVR_FSEBehaviorMode 等 4 个同域键，与 tf_fso 取值相反（2/0 vs 0/1），执行顺序决定结果，第六大点-A（2026-09-14）已移交。',
     steps: [
       {
-        label: 'GameDVR / 全屏优化配置', reg: regBlock({
+        label: 'GameDVR 录制开关', reg: regBlock({
           'HKEY_CURRENT_USER\\System\\GameConfigStore': {
             'GameDVR_Enabled': 'dword:00000000',
-            'GameDVR_FSEBehaviorMode': 'dword:00000002',
-            'GameDVR_HonorUserFSEBehaviorMode': 'dword:00000000',
-            'GameDVR_DXGIHonorFSEWindowsCompatible': 'dword:00000000',
-            'GameDVR_EFSEFeatureFlags': 'dword:00000000',
             'GameDVR_FSEBehavior': 'dword:00000002'
           },
           'HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows\\GameDVR': {
@@ -323,13 +323,12 @@ const OPTIONS = [
   },
   {
     id: 'tf_gamebar', group: '游戏与多媒体', title: '关闭游戏栏后台捕获', risk: 'low',
-    desc: 'Trim：AppCaptureEnabled=0、PresenceWriter ActivationType=0，关闭后台游戏录制与游戏状态写入器。',
+    desc: 'Trim：PresenceWriter ActivationType=0 并停止 PresenceWriter 服务，关闭游戏栏后台捕获与游戏状态写入器；AppCaptureEnabled 由「关闭游戏 DVR 录制」负责，本项不再重复写入。',
     steps: [
       {
-        label: 'AppCapture / PresenceWriter', reg: regBlock({
-          'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\GameDVR': {
-            'AppCaptureEnabled': 'dword:00000000'
-          },
+        label: 'PresenceWriter 捕获写入器', reg: regBlock({
+          // 第六大点-B（2026-09-14）：AppCaptureEnabled 归「关闭游戏 DVR 录制」(game_dvr)，
+          // 本项不再重复写入该键。
           'HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\WindowsRuntime\\ActivatableClassId\\Windows.Media.Capture.AppCaptureBroadcastContract\\PresenceWriter': {
             'ActivationType': 'dword:00000000'
           },
@@ -342,7 +341,7 @@ const OPTIONS = [
   },
   {
     id: 'tf_fso', group: '游戏与多媒体', title: '全屏优化(FSO)行为', risk: 'low',
-    desc: 'Trim GameConfigStore：GameDVR_DSEBehavior=0、FSEBehaviorMode=0、EFSEFeatureFlags=0、DXGIHonorFSEWindowsCompatible=0、HonorUserFSEBehaviorMode=1（与内置「关闭游戏DVR」取值不同，保持原调优值）。',
+    desc: '全屏优化(FSO)相关键的唯一写入方：GameDVR_DSEBehavior=0、FSEBehaviorMode=0、EFSEFeatureFlags=0、DXGIHonorFSEWindowsCompatible=0、HonorUserFSEBehaviorMode=1。原与「关闭游戏 DVR 录制」同时写这 4 个键且 FSEBehaviorMode / HonorUserFSEBehaviorMode 取值相反，第六大点-A（2026-09-14）起 FSO 键只由本项负责。',
     steps: [
       {
         label: 'FSO GameConfigStore', reg: regBlock({
@@ -481,45 +480,25 @@ const OPTIONS = [
   },
 
   // ---------- 系统服务与内存 ----------
-  {
-    id: 'maps_off', group: '系统服务与内存', title: '禁用下载地图管理器', risk: 'low',
-    desc: '禁用 MapsBroker 地图下载服务。',
-    steps: [
-      { label: 'MapsBroker Start=4', reg: regBlock({
-        'HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\MapsBroker': { 'Start': 'dword:00000004' }
-      }) }
-    ]
-  },
-  {
-    id: 'services_off', group: '系统服务与内存', title: '禁用冗余后台服务', risk: 'high',
-    desc: '停止并禁用 Xbox、遥测(DiagTrack)、推送通知、地理位置等后台服务。',
-    steps: [
-      { label: 'SysMain 超级预读', service: 'SysMain', disable: true },
-      { label: 'DiagTrack 遥测', service: 'DiagTrack', disable: true },
-      { label: 'Xbox 身份验证', service: 'XblAuthManager', disable: true },
-      { label: 'Xbox 游戏存档', service: 'XblGameSave', disable: true },
-      { label: 'Xbox 网络服务', service: 'XboxNetApiSvc', disable: true },
-      { label: '游戏 DVR 服务', service: 'BcastDVRUserService', disable: true },
-      { label: '设备推送', service: 'dmwappushservice', disable: true },
-      { label: '推送通知', service: 'WpnService', disable: true },
-      { label: '地理位置', service: 'lfsvc', disable: true }
-    ]
-  },
+  // 第六大点-B（2026-09-14 重复点审查）：原「禁用下载地图管理器」(maps_off) 与
+  // 「禁用冗余后台服务」(services_off) 已下线，合并进「禁用 70+ 非必要服务」(tf_svc_bulk)：
+  //   · MapsBroker 本就在 tf_svc_bulk 清单内；
+  //   · services_off 的 5 个独有服务（XblAuthManager / XblGameSave / XboxNetApiSvc /
+  //     WpnService / lfsvc）已并入 tf_svc_bulk 清单，其余 4 个（SysMain / DiagTrack /
+  //     BcastDVRUserService / dmwappushservice）本就重复。
+  // 注意机制差异：services_off 用 Stop-Service + Set-Service Disabled，不改变下次开机的
+  // 启动类型；tf_svc_bulk 用注册表 Start=4，两者不等价 —— 合并后统一为 Start=4。
   {
     id: 'svc_mem_gb', group: '系统服务与内存', title: 'SVCHost 内存拆分阈值', risk: 'medium',
     desc: '调整服务宿主进程拆分阈值，减少服务内存碎片（下拉选择内存大小，可重置）。',
     dynamic: true   // 由渲染层传入 gb 参数
   },
+  // 第六大点-B（2026-09-14 重复点审查）：原「禁用内存压缩」(mem_compress) 已下线 ——
+  // 它是「关闭内存压缩与内存页合并」(tf_mmagent) 的子集（后者 = 本项 + PageCombining），
+  // 合并后只保留超集项，避免同一项 Disable-MMAgent 被两个入口各执行一次。
   {
-    id: 'mem_compress', group: '系统服务与内存', title: '禁用内存压缩', risk: 'medium',
-    desc: '关闭 Windows 内存压缩（Memory Compression），释放 CPU 开销。',
-    steps: [
-      { label: 'Disable-MMAgent 内存压缩', pwsh: 'Disable-MMAgent -MemoryCompression' }
-    ]
-  },
-  {
-    id: 'tf_mmagent', group: '系统服务与内存', title: '关闭内存压缩与页合并', risk: 'medium',
-    desc: 'Trim：Disable-MMAgent -MemoryCompression 与 -PageCombining，同时关闭内存压缩和页面合并（比内置项多 PageCombining）。',
+    id: 'tf_mmagent', group: '系统服务与内存', title: '关闭内存压缩与内存页合并', risk: 'medium',
+    desc: '关闭 Windows 内存页合并（PageCombining）与内存压缩：Disable-MMAgent -MemoryCompression -PageCombining（比内置「禁用内存压缩」多 PageCombining）。PageCombining 是 Windows 的持续内存去重机制；「内存清理 - 即时合并物理内存页」是此刻调用 NtSetSystemInformation 整理一次，两者不是同一功能，互不影响。',
     steps: [
       { label: '关闭内存压缩', pwsh: 'Disable-MMAgent -MemoryCompression -ErrorAction SilentlyContinue' },
       { label: '关闭页面合并', pwsh: 'Disable-MMAgent -PageCombining -ErrorAction SilentlyContinue' }
@@ -527,10 +506,10 @@ const OPTIONS = [
   },
   {
     id: 'tf_svc_bulk', group: '系统服务与内存', title: '禁用 70+ 非必要服务', risk: 'high',
-    desc: '批量调整服务启动类型：Windows 应用商店与同步相关服务保持系统默认（不再修改），其余非必要服务全部禁用(Start=4)，并关闭 Edge 预启动/预加载。\n\n禁用(Start=4)服务清单：TapiSrv、FontCache3.0.0.0、WpcMonSvc、SEMgrSvc、PNRPsvc、LanmanWorkstation、WEPHOSTSVC、p2psvc、p2pimsvc、PhoneSvc、Wecsvc、SensorDataService、SensrSvc、perceptionsimulation、StiSvc、WMPNetworkSvc、autotimesvc、edgeupdatem、MicrosoftEdgeElevationService、ALG、QWAVE、IpxlatCfgSvc、icssvc、DusmSvc、MapsBroker、edgeupdate、SensorService、shpamsvc、svsvc、SysMain、MSiSCSI、Netlogon、CscService、ssh-agent、AppReadiness、tzautoupdate、NfsClnt、wisvc、defragsvc、SharedRealitySvc、RetailDemo、lltdsvc、TrkWks、CryptSvc、DiagTrack、diagsvc、DPS、WdiServiceHost、WdiSystemHost、dmwappushsvc、TroubleshootingSvc、DsSvc、FrameServer、FontCache、OSRSS、sedsvc、SENS、TabletInputService、Themes、BcastDVRUserService、CaptureService、diagnosticshub.standardcollector.service、SecurityHealthService。',
+    desc: '批量调整服务启动类型：Windows 应用商店与同步相关服务保持系统默认（不再修改），其余非必要服务全部禁用(Start=4)，并关闭 Edge 预启动/预加载。\n\n执行时会单独弹窗询问是否连商店相关服务一并禁用——含 ClipSVC（许可）、InstallService（安装）、PushToInstall（远程安装）、wuauserv（Windows 更新）、DoSvc（传递优化下载），选择禁用会影响 Windows 应用商店的使用、更新与下载以及系统更新。\n\n禁用(Start=4)服务清单：TapiSrv、FontCache3.0.0.0、WpcMonSvc、SEMgrSvc、PNRPsvc、LanmanWorkstation、WEPHOSTSVC、p2psvc、p2pimsvc、PhoneSvc、Wecsvc、perceptionsimulation、StiSvc、WMPNetworkSvc、autotimesvc、edgeupdatem、MicrosoftEdgeElevationService、ALG、QWAVE、IpxlatCfgSvc、icssvc、DusmSvc、MapsBroker、edgeupdate、SensorService、shpamsvc、svsvc、SysMain、MSiSCSI、Netlogon、CscService、ssh-agent、AppReadiness、tzautoupdate、NfsClnt、wisvc、defragsvc、SharedRealitySvc、RetailDemo、lltdsvc、TrkWks、CryptSvc、DiagTrack、diagsvc、DPS、WdiServiceHost、WdiSystemHost、dmwappushsvc、TroubleshootingSvc、DsSvc、FrameServer、FontCache、OSRSS、sedsvc、SENS、TabletInputService、Themes、BcastDVRUserService、CaptureService、diagnosticshub.standardcollector.service、XblAuthManager、XblGameSave、XboxNetApiSvc、WpnService、lfsvc。',
     steps: [
       { label: '批量禁用非必要服务（商店/同步保持默认）', pwsh: [
-        '$disabled = @("TapiSrv","FontCache3.0.0.0","WpcMonSvc","SEMgrSvc","PNRPsvc","LanmanWorkstation","WEPHOSTSVC","p2psvc","p2pimsvc","PhoneSvc","Wecsvc","SensorDataService","SensrSvc","perceptionsimulation","StiSvc","WMPNetworkSvc","autotimesvc","edgeupdatem","MicrosoftEdgeElevationService","ALG","QWAVE","IpxlatCfgSvc","icssvc","DusmSvc","MapsBroker","edgeupdate","SensorService","shpamsvc","svsvc","SysMain","MSiSCSI","Netlogon","CscService","ssh-agent","AppReadiness","tzautoupdate","NfsClnt","wisvc","defragsvc","SharedRealitySvc","RetailDemo","lltdsvc","TrkWks","CryptSvc","DiagTrack","diagsvc","DPS","WdiServiceHost","WdiSystemHost","dmwappushsvc","TroubleshootingSvc","DsSvc","FrameServer","FontCache","OSRSS","sedsvc","SENS","TabletInputService","Themes","BcastDVRUserService","CaptureService","diagnosticshub.standardcollector.service","SecurityHealthService")',
+        '$disabled = @("TapiSrv","FontCache3.0.0.0","WpcMonSvc","SEMgrSvc","PNRPsvc","LanmanWorkstation","WEPHOSTSVC","p2psvc","p2pimsvc","PhoneSvc","Wecsvc","perceptionsimulation","StiSvc","WMPNetworkSvc","autotimesvc","edgeupdatem","MicrosoftEdgeElevationService","ALG","QWAVE","IpxlatCfgSvc","icssvc","DusmSvc","MapsBroker","edgeupdate","SensorService","shpamsvc","svsvc","SysMain","MSiSCSI","Netlogon","CscService","ssh-agent","AppReadiness","tzautoupdate","NfsClnt","wisvc","defragsvc","SharedRealitySvc","RetailDemo","lltdsvc","TrkWks","CryptSvc","DiagTrack","diagsvc","DPS","WdiServiceHost","WdiSystemHost","dmwappushsvc","TroubleshootingSvc","DsSvc","FrameServer","FontCache","OSRSS","sedsvc","SENS","TabletInputService","Themes","BcastDVRUserService","CaptureService","diagnosticshub.standardcollector.service","XblAuthManager","XblGameSave","XboxNetApiSvc","WpnService","lfsvc")',
         'foreach ($n in $disabled) { $p = "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\$n"; if (Test-Path $p) { New-ItemProperty -Path $p -Name Start -Value 4 -PropertyType DWord -Force | Out-Null; Stop-Service -Name $n -Force -ErrorAction SilentlyContinue } }',
         '$p = "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\wuauserv"; if (Test-Path $p) { New-ItemProperty -Path $p -Name Start -Value 3 -PropertyType DWord -Force | Out-Null }',
         '$p = "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\lfsvc\\Service\\Configuration"; New-Item -Path $p -Force | Out-Null; New-ItemProperty -Path $p -Name Status -Value 0 -PropertyType DWord -Force | Out-Null',
@@ -610,8 +589,8 @@ const OPTIONS = [
         '"\\Microsoft\\Windows\\Media Center\\PvrScheduleTask",',
         '"\\Microsoft\\Windows\\Media Center\\RegisterSearch",',
         '"\\Microsoft\\Windows\\Media Center\\ReindexSearchRoot",',
-        '"\\Microsoft\\Windows\\Office\\OfficeTelemetryAgentFallBack",',
-        '"\\Microsoft\\Windows\\Office\\OfficeTelemetryAgentLogOn",',
+        '"\\Microsoft\\Office\\OfficeTelemetryAgentFallBack",',
+        '"\\Microsoft\\Office\\OfficeTelemetryAgentLogOn",',
         '"\\Microsoft\\Office\\OfficeTelemetryAgentFallBack2016",',
         '"\\Microsoft\\Office\\OfficeTelemetryAgentLogOn2016",',
         '"\\Microsoft\\Windows\\CloudExperienceHost\\CreateObjectTask",',
@@ -631,10 +610,11 @@ const OPTIONS = [
   },
   {
     id: 'power_off', group: '安全与隐私', title: '禁用电源节能', risk: 'medium',
-    desc: '关闭快速启动、USB/PCIe 省电、核心停放与节流（台式机推荐，笔记本会增加耗电）。',
+    desc: '关闭 USB/PCIe 省电、核心停放与节流、电源节流与驱动搜索（台式机推荐，笔记本会增加耗电）。快速启动（HiberbootEnabled）由「关闭休眠与快速启动」负责，本项不再重复写入。',
     steps: [
-      { label: '关闭节能/快速启动', reg: regBlock({
-        'HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power': { 'HiberbootEnabled': 'dword:00000000' },
+      { label: '关闭节能与休眠默认值', reg: regBlock({
+        // 第六大点-B（2026-09-14）：HiberbootEnabled（快速启动）归「关闭休眠与快速启动」(tf_hibern_off)，
+        // 本项不再重复写入同一键。
         'HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Power': { 'HibernateEnabledDefault': 'dword:00000000' },
         'HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Power\\PowerThrottling': { 'PowerThrottlingOff': 'dword:00000001' },
         'HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\DriverSearching': { 'SearchOrderConfig': 'dword:00000000' },
@@ -673,19 +653,14 @@ const OPTIONS = [
   },
   {
     id: 'tf_privacy', group: '安全与隐私', title: '系统隐私设置', risk: 'medium',
-    desc: 'Trim 隐私大项：关闭内容推荐/广告 ID、开始菜单建议、操作中心通知、跨设备同步(CDP)、定制化体验、反馈频次、锁屏建议、错误报告(WER)、实验性体验、TaggedEnergy，并停用 GpuEnergyDrv（麦克风/摄像头权限保留允许）。',
+    desc: 'Trim 隐私大项：关闭开始菜单建议、操作中心通知、跨设备同步(CDP)、搜索建议与 Cortana 同意项、实验性体验、TaggedEnergy，并停用 GpuEnergyDrv（麦克风/摄像头权限保留允许）。\n\n归属划分（第六大点-B，2026-09-14）：内容推荐/商店推广类键归「禁用商店自动更新与推广内容」，云推荐与锁屏聚焦类键归「云推荐内容排查」，广告 ID 归「广告 ID 个性化排查」，遥测策略归「遥测优化」，错误报告归「Windows Error Reporting 策略排查」。本项不再重复写入上述键，只想单项处理时请用对应专项项。',
     steps: [
       { label: '隐私注册表键', reg: regBlock({
-        'HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager': {
-          'ContentDeliveryAllowed': 'dword:00000000', 'OemPreInstalledAppsEnabled': 'dword:00000000',
-          'PreInstalledAppsEnabled': 'dword:00000000', 'PreInstalledAppsEverEnabled': 'dword:00000000',
-          'SilentInstalledAppsEnabled': 'dword:00000000', 'SubscribedContent-310093Enabled': 'dword:00000000',
-          'SubscribedContent-338388Enabled': 'dword:00000000', 'SubscribedContent-338389Enabled': 'dword:00000000',
-          'SubscribedContent-353698Enabled': 'dword:00000000', 'SystemPaneSuggestionsEnabled': 'dword:00000000',
-          'RotatingLockScreenEnabled': 'dword:00000000', 'RotatingLockScreenOverlayEnabled': 'dword:00000000'
-        },
+        // 第六大点-B（2026-09-14 重复点审查）：ContentDeliveryManager 的全部键已移出本项，
+        // 按用途分别归「禁用商店自动更新与推广内容」(tf_store_autoupdate) 与
+        // 「云推荐内容排查」(privacy_cloud_content)，避免同一键被三处重复写入。
         'HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows\\CloudContent': {
-          'DisableWindowsConsumerFeatures': 'dword:00000001', 'DisableSoftLanding': 'dword:00000001',
+          'DisableSoftLanding': 'dword:00000001',
           'DisableWindowsSpotlightFeatures': 'dword:00000001', 'DisableTailoredExperiencesWithDiagnosticData': 'dword:00000001'
         },
         'HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced': {
@@ -697,12 +672,8 @@ const OPTIONS = [
         'HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer': {
           'NoInstrumentation': 'dword:00000001'
         },
-        'HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows\\AdvertisingInfo': {
-          'DisabledByGroupPolicy': 'dword:00000001'
-        },
-        'HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AdvertisingInfo': {
-          'Enabled': 'dword:00000000'
-        },
+        // 第六大点-B：AdvertisingInfo 两键（DisabledByGroupPolicy / Enabled）已归
+        // 「广告 ID 个性化排查」(privacy_advertising_id)。
         'HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Search': {
           'CortanaConsent': 'dword:00000000', 'BingSearchEnabled': 'dword:00000000',
           'DeviceHistoryEnabled': 'dword:00000000', 'HistoryViewEnabled': 'dword:00000000'
@@ -717,17 +688,16 @@ const OPTIONS = [
           'AllowTelemetry': 'dword:00000000', 'AllowDeviceNameInTelemetry': 'dword:00000000',
           'MaxTelemetryAllowed': 'dword:00000000'
         },
-        'HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\DataCollection': {
-          'AllowTelemetry': 'dword:00000000'
-        },
+        // 第六大点-B：CurrentVersion\Policies\DataCollection 的 AllowTelemetry 已归
+        // 「遥测优化」(telemetry_optimize)。
         'HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows\\Windows Error Reporting': {
           'Disabled': 'dword:00000001', 'DontSendAdditionalData': 'dword:00000001',
           'LoggingDisabled': 'dword:00000001', 'AutoApproveOSDumps': 'dword:00000000',
           'DontShowUI': 'dword:00000001'
         },
-        'HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting': {
-          'Disabled': 'dword:00000001'
-        },
+        // 第六大点-B：SOFTWARE\Microsoft\Windows\Windows Error Reporting 的 Disabled 已归
+        // 「Windows Error Reporting 策略排查」(privacy_wer_off)；本项仍保留 Policies 下的
+        // WER 策略组（Disabled / DontSendAdditionalData / LoggingDisabled 等）。
         'HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows\\PreviewBuilds': {
           'AllowBuildPreview': 'dword:00000000'
         },
@@ -890,21 +860,49 @@ const OPTIONS = [
       ].join('\n') }
     ]
   },
+  // C1（2026-09-14 重复点审查）：原「PCCleaner 深度清理」(tf_pccleaner) 已整体下线。
+  // 磁盘清理尚未覆盖的项已整合进 src/data/cleanup-rules.json：
+  //   cbsLogs（C:\Windows\Logs\CBS）、dismLogs（C:\Windows\Logs\DISM）、
+  //   printSpoolCache（C:\Windows\System32\spool\PRINTERS，取系统维护 print 的原正确路径）
+  // 其余路径与磁盘清理现有条目重复（Windows Temp / %TEMP% / Prefetch / 回收站 / Explorer *.db），
+  // 或为现代 Windows 上已不存在的死路径（Windows tmp / history / cookies / recent / spool\printers）。
+  // 全盘递归删 *.tmp/*.log 等模式因无路径边界、扫描需全盘递归，与本模块「逐目录可扫描可排除」
+  // 的模型不兼容，未予整合（见 2026-09-14 审查报告）。
+  // 该项另用裸 Remove-Item 绕过 trashOrUnlink / 删除清单 / confirmDanger，违反项目安全红线。
+  // ---------- 系统精简 ----------
   {
-    id: 'tf_pccleaner', group: '系统精简', title: 'PCCleaner 深度清理', risk: 'medium',
-    desc: 'Trim PCCleaner 完整清单：Windows Temp、Prefetch、%temp%、系统盘 .tmp/._mp/.log/.gid/.chk/.old、回收站、Windows .bak、缩略图 db、CBS/DISM 日志、历史/Cookies/Recent/打印后台缓存（日志文件会一并删除）。',
+    // 对比审查 P0（2026-09-14）：此前 PROS_CONS 有本项文案、main.js optimizer:create-restore
+    // 也按本 id 取脚本，但 OPTIONS 无定义 → 还原点创建链路整体失效（回退保障为空）。
+    id: 'tf_restore_point', group: '系统精简', title: '创建系统还原点', risk: 'low',
+    desc: '为所有已启用系统保护的磁盘创建一个还原点，作为后续高风险优化的回退保障（异常时到「系统设置 → 恢复」或本页「系统还原点管理」回退）。PS7 无 Checkpoint-Computer，走 root\\default SystemRestore WMI 静态方法创建；需管理员权限，且至少一个卷已开启系统保护。',
     steps: [
-      { label: 'Trim 清理路径清单', pwsh: [
-        '$paths = @("C:\\Windows\\Temp","C:\\Windows\\tmp","C:\\Windows\\Prefetch",$env:TEMP,"C:\\Windows\\history","C:\\Windows\\cookies","C:\\Windows\\recent","C:\\Windows\\spool\\printers","C:\\Windows\\Logs\\CBS","C:\\Windows\\Logs\\DISM")',
-        'foreach ($p in $paths) { if (Test-Path $p) { Get-ChildItem -Path $p -Recurse -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue } }',
-        '$patterns = @("*.tmp","*._mp","*.log","*.gid","*.chk","*.old","*.bak","ff*.tmp")',
-        'foreach ($pat in $patterns) { Get-ChildItem -Path $env:SystemDrive -Filter $pat -Recurse -Force -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue }',
-        'Get-ChildItem "$env:LocalAppData\\Microsoft\\Windows\\Explorer" -Include "*.db" -Force -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue',
-        'Clear-RecycleBin -Force -ErrorAction SilentlyContinue'
-      ].join('\n') }
+      {
+        label: '解除还原点创建频率限制',
+        // 用 reg 步骤（而非 pwsh 写注册表）：可进 optimizer-backups 值级备份，
+        // 也让 checkOptimizedInternal / verifyOptionApplied 有逐键比对手段。
+        reg: regBlock({
+          'HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore': {
+            'SystemRestorePointCreationFrequency': 'dword:00000000'
+          }
+        })
+      },
+      {
+        label: '创建还原点', pwsh: [
+          "# EventType 100 = BEGIN_SYSTEM_CHANGE，RestorePointType 0 = APPLICATION_INSTALL",
+          "$null = Invoke-CimMethod -Namespace 'root/default' -ClassName 'SystemRestore' -MethodName 'CreateRestorePoint' -Arguments @{ Description = 'Trim 优化前还原点'; EventType = [uint32]100; RestorePointType = [uint32]0 } -ErrorAction Stop"
+        ].join('\n')
+      }
+    ],
+    // 一键还原：删除本项写入的频率覆写（无该值时系统按默认 24 小时限制工作）；
+    // 还原点本身属系统快照，不提供脚本级撤销。
+    restore: [
+      { label: '还原：移除创建频率覆写', reg: regBlock({
+        'HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore': {
+          'SystemRestorePointCreationFrequency': '-'
+        }
+      }) }
     ]
   },
-  // ---------- 系统精简 ----------
   {
     id: 'tf_appx', group: '系统精简', title: '移除 25 个内置 UWP 应用', risk: 'high',
     desc: 'Trim Debloat：按名称通配移除所有用户下的预装 AppX——3D Builder、Bing 全家桶（资讯/财经/体育/天气）、CommsPhone、Drawboard PDF、Facebook、Getstarted、Messaging、Office Hub、OneNote、人脉、Skype、纸牌合集、Sway、Twitter、闹钟时钟、手机、地图、反馈中心、录音机、邮件日历、Zune（Groove/影视）等。移除后部分应用需从商店重装。',
@@ -939,14 +937,20 @@ const OPTIONS = [
   },
   {
     id: 'tf_onedrive', group: '系统精简', title: '彻底卸载 OneDrive', risk: 'high',
-    desc: 'Trim DisableOneDrive：运行 OneDriveSetup /UNINSTALL，删除 OneDriveTemp、用户/本机/ProgramData 下的 OneDrive 数据目录，清空资源管理器左栏 OneDrive 入口 CLSID 属性（HKCR 与 Wow6432Node 双 hive），并写入禁用文件同步的组策略（DisableFileSync/DisableFileSyncNGSC=1）。',
+    // 对比审查 P0/B-2（2026-09-14）：desc 改为逐条列出删除目标绝对路径；数据目录删除
+    // 不再 PS 内 Remove-Item -Recurse -Force 裸删（绕过统一删除出口、不可逆），改经
+    // @@RECYCLE@@ 协议交回主进程 shell.trashItem（回收站优先，可还原）。
+    desc: 'Trim DisableOneDrive：运行 OneDriveSetup /UNINSTALL，将 OneDrive 数据目录移入回收站（可在系统回收站还原）：C:\\OneDriveTemp、%USERPROFILE%\\OneDrive（注意：其中是您自己的文档/桌面/照片等同步内容）、%LOCALAPPDATA%\\Microsoft\\OneDrive、%PROGRAMDATA%\\Microsoft OneDrive；再清空资源管理器左栏 OneDrive 入口 CLSID 属性（HKCR 与 Wow6432Node 双 hive），并写入禁用文件同步的组策略（DisableFileSync/DisableFileSyncNGSC=1）。',
     steps: [
       { label: '运行 OneDrive 卸载器', pwsh: [
         '$setup = Join-Path $env:SystemRoot "SYSWOW64\\ONEDRIVESETUP.EXE"',
         'if (Test-Path $setup) { Start-Process -FilePath $setup -ArgumentList "/UNINSTALL" -Wait -NoNewWindow }'
       ].join('\n') },
-      { label: '删除 OneDrive 数据目录', pwsh: [
-        '@("C:\\OneDriveTemp", "$env:USERPROFILE\\OneDrive", "$env:LOCALAPPDATA\\Microsoft\\OneDrive", "$env:PROGRAMDATA\\Microsoft OneDrive") | ForEach-Object { if (Test-Path $_) { Remove-Item $_ -Recurse -Force -ErrorAction SilentlyContinue } }'
+      { label: '上报 OneDrive 数据目录（主进程移入回收站）', pwsh: [
+        // 只枚举存在性并上报，不执行任何删除；体积测量省略（OneDrive 目录可达数 GB，
+        // 递归统计会显著拖慢执行，回收站消息不依赖体积）。
+        '$odDirs = @("$env:SystemDrive\\OneDriveTemp", "$env:USERPROFILE\\OneDrive", "$env:LOCALAPPDATA\\Microsoft\\OneDrive", "$env:PROGRAMDATA\\Microsoft OneDrive")',
+        "foreach ($d in $odDirs) { if (Test-Path -LiteralPath $d) { Write-Output ('@@RECYCLE@@' + (@{ id = 'tf_onedrive'; path = $d; isDir = $true } | ConvertTo-Json -Compress)) } }"
       ].join('\n') },
       {
         label: 'OneDrive 入口 / 策略', reg: regBlock({
@@ -963,17 +967,35 @@ const OPTIONS = [
     ]
   },
   {
+    // 审查 B-1（2026-09-14）加固：① cfg 不再从第三方仓库的可变分支（ancel1x/... raw/main）拉取，
+    //   改为本文件内置 base64（来源 O&O ShutUp10++ 1.9.1436 导出模板）；
+    //   ② OOSU10.exe 固定 O&O 官方直链并做 SHA-256 校验（附 Authenticode 签名校验）；
+    //   ③ 所有落点改在用户临时目录，执行完自动清理，不再污染 C:\ANCELOOSUIMPORT.cfg；
+    //   ④ desc 明确「配置由 Trim 内置」「将下载并校验 OOSU10.exe」。
     id: 'tf_oosu', group: '系统精简', title: 'OOSU 隐私工具静默导入', risk: 'medium',
-    desc: 'Trim RunOOSU：下载 O&O ShutUp10 便携版到临时目录，并下载 ANCELOOSUIMPORT.cfg 配置到 C 盘，静默导入配置后退出（需要联网下载，配置由 Trim 官方仓库提供）。',
+    desc: 'Trim RunOOSU：联网从 O&O 官方下载 OOSU10.exe 并校验 SHA-256/Authenticode 签名（校验失败即中止，不执行），使用 Trim 内置的隐私配置模板静默导入（不再从第三方仓库拉取配置），导入完成后自动清理临时文件。需要联网；配置会批量关闭大量隐私与遥测项，可能改变部分系统默认行为。',
     steps: [
-      { label: '下载 OOSU 与配置', pwsh: [
-        '$oosu = Join-Path $env:TEMP "OOSU10.exe"',
-        'Invoke-WebRequest "https://dl5.oo-software.com/files/ooshutup10/OOSU10.exe" -OutFile $oosu -UseBasicParsing',
-        'Invoke-WebRequest "https://github.com/ancel1x/Ancels-Performance-Batch/raw/main/bin/ANCELOOSUIMPORT.cfg" -OutFile "C:\\ANCELOOSUIMPORT.cfg" -UseBasicParsing'
-      ].join('\n') },
-      { label: '静默导入配置', pwsh: [
-        '$oosu = Join-Path $env:TEMP "OOSU10.exe"',
-        'if (Test-Path $oosu) { Start-Process -FilePath $oosu -ArgumentList "C:\\ANCELOOSUIMPORT.cfg" -Wait }'
+      { label: '下载校验 OOSU10.exe 并静默导入内置配置', pwsh: [
+        '$oosuUrl = "https://dl5.oo-software.com/files/ooshutup10/OOSU10.exe"',
+        '$expect = "1AD8CDC324A79AC37A50858FDDCD28EB7491459114F0DA514C4750B08B115103"',
+        '$oosu = Join-Path $env:TEMP ("OOSU10_" + [guid]::NewGuid().ToString("N") + ".exe")',
+        '$cfg  = Join-Path $env:TEMP ("OOSU_cfg_" + [guid]::NewGuid().ToString("N") + ".cfg")',
+        'try {',
+        '  Invoke-WebRequest $oosuUrl -OutFile $oosu -UseBasicParsing',
+        '  $got = (Get-FileHash -LiteralPath $oosu -Algorithm SHA256).Hash',
+        '  if ($got -ne $expect) { Write-Error ("SHA256 校验失败：实际 " + $got + "，期望 " + $expect); return }',
+        '  $sig = Get-AuthenticodeSignature -LiteralPath $oosu',
+        '  if ($sig.Status -ne "Valid") { Write-Error ("Authenticode 签名无效：" + $sig.Status); return }',
+        '  $b64 = "' + OOSU_CFG_B64 + '"',
+        '  [IO.File]::WriteAllBytes($cfg, [Convert]::FromBase64String($b64))',
+        '  Start-Process -FilePath $oosu -ArgumentList $cfg -Wait -NoNewWindow',
+        '} catch {',
+        '  Write-Error ("OOSU 执行失败: " + $_.Exception.Message)',
+        '  return',
+        '} finally {',
+        '  Remove-Item -LiteralPath $oosu -Force -ErrorAction SilentlyContinue',
+        '  Remove-Item -LiteralPath $cfg  -Force -ErrorAction SilentlyContinue',
+        '}'
       ].join('\n') }
     ]
   },
@@ -1248,59 +1270,20 @@ const OPTIONS = [
       }
     ]
   },
-  {
-    id: 'always_unload_dll', group: '桌面体验', title: '总是从内存中卸载无用的 DLL', risk: 'medium',
-    desc: 'AlwaysUnloadDLL=1，资源管理器关闭引用后立即从内存卸载 DLL，降低常驻内存占用；该键值为传统优化项，现代 Windows 上部分组件不再读取。',
-    steps: [
-      {
-        label: 'AlwaysUnloadDLL="1"', reg: regBlock({
-          'HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer': { 'AlwaysUnloadDLL': '"1"' }
-        })
-      }
-    ]
-  },
-  {
-    id: 'clear_recent_docs_on_exit', group: '桌面体验', title: '退出时清除最近打开的文件历史', risk: 'low',
-    desc: 'ClearRecentDocsOnExit=1，注销/关机时自动清空"最近打开的文件"记录，保护使用隐私；开始菜单的最近文件列表将不再保留。',
-    steps: [
-      {
-        label: 'ClearRecentDocsOnExit=1', reg: regBlock({
-          'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer': { 'ClearRecentDocsOnExit': 'dword:00000001' }
-        })
-      }
-    ]
-  },
+  // N3（2026-09-14 重复点审查）：原「总是从内存中卸载无用的 DLL」(always_unload_dll) 已下线。
+  // 它与「内存清理 - 进程工作集」目标重叠（都为降低常驻内存占用），且该键值为传统优化项，
+  // 现代 Windows 上部分组件已不再读取，收益存疑。退役登记见 data/retired-optimizations.json。
+  // C3（2026-09-14 重复点审查）：原「退出时清除最近打开的文件历史」已下线。
+  // 它与「磁盘清理 - 隐私历史」的 explorerRecentDocs（清 RecentDocs 注册表树）与
+  // recentFiles（清 %APPDATA%\Microsoft\Windows\Recent）目标相同，只保留磁盘清理那一套。
   // ---------- 任务调度（对齐 Trim BuildTasksModule） ----------
-  {
-    id: 'tasks_disable_ceip', group: '任务调度', title: 'CEIP Consolidator 任务排查', risk: 'medium',
-    desc: '停用 \\Microsoft\\Windows\\Customer Experience Improvement Program\\Consolidator 计划任务；需确认客户体验数据、诊断反馈取舍。',
-    steps: [
-      { label: '停用 Consolidator 任务', pwsh: 'Disable-ScheduledTask -TaskPath "\\Microsoft\\Windows\\Customer Experience Improvement Program\\" -TaskName "Consolidator" -ErrorAction SilentlyContinue' }
-    ],
-    restore: [
-      { label: '启用 Consolidator 任务', pwsh: 'Enable-ScheduledTask -TaskPath "\\Microsoft\\Windows\\Customer Experience Improvement Program\\" -TaskName "Consolidator" -ErrorAction SilentlyContinue' }
-    ]
-  },
-  {
-    id: 'tasks_disable_usb_ceip', group: '任务调度', title: 'USB CEIP 任务排查', risk: 'medium',
-    desc: '停用 \\Microsoft\\Windows\\Customer Experience Improvement Program\\UsbCeip 计划任务；需确认 USB 设备体验数据取舍。',
-    steps: [
-      { label: '停用 UsbCeip 任务', pwsh: 'Disable-ScheduledTask -TaskPath "\\Microsoft\\Windows\\Customer Experience Improvement Program\\" -TaskName "UsbCeip" -ErrorAction SilentlyContinue' }
-    ],
-    restore: [
-      { label: '启用 UsbCeip 任务', pwsh: 'Enable-ScheduledTask -TaskPath "\\Microsoft\\Windows\\Customer Experience Improvement Program\\" -TaskName "UsbCeip" -ErrorAction SilentlyContinue' }
-    ]
-  },
-  {
-    id: 'tasks_disable_disk_diag', group: '任务调度', title: '磁盘诊断数据采集任务排查', risk: 'medium',
-    desc: '停用 \\Microsoft\\Windows\\DiskDiagnostic\\DiskDiagnosticDataCollector 计划任务；需确认磁盘健康诊断、可靠性数据取舍。',
-    steps: [
-      { label: '停用磁盘诊断采集', pwsh: 'Disable-ScheduledTask -TaskPath "\\Microsoft\\Windows\\DiskDiagnostic\\" -TaskName "DiskDiagnosticDataCollector" -ErrorAction SilentlyContinue' }
-    ],
-    restore: [
-      { label: '启用磁盘诊断采集', pwsh: 'Enable-ScheduledTask -TaskPath "\\Microsoft\\Windows\\DiskDiagnostic\\" -TaskName "DiskDiagnosticDataCollector" -ErrorAction SilentlyContinue' }
-    ]
-  },
+  // 第六大点-B（2026-09-14 重复点审查）：原「CEIP Consolidator 任务排查」「USB CEIP 任务排查」
+  // 「磁盘诊断数据采集任务排查」三项已下线 —— 它们的目标任务（Consolidator / UsbCeip /
+  // Microsoft-Windows-DiskDiagnosticDataCollector）都已被「遥测优化」(telemetry_optimize) 的
+  // 任务清单覆盖，属批量项与专项项重复，合并后保留批量项。
+  // 附带修正：原 tasks_disable_disk_diag 写的任务名 DiskDiagnosticDataCollector 缺
+  // 「Microsoft-Windows-」前缀（本机实测真实名为 Microsoft-Windows-DiskDiagnosticDataCollector），
+  // 该项在旧实现里必然静默失败。
   {
     id: 'tasks_disable_defrag', group: '任务调度', title: '计划碎片整理触发排查', risk: 'medium',
     desc: '停用 \\Microsoft\\Windows\\Defrag\\ScheduledDefrag 计划任务；可能影响 HDD 整理或 SSD/TRIM 维护节奏，需保留恢复路径。',
@@ -1341,42 +1324,15 @@ const OPTIONS = [
       { label: '启用 SettingSync 后台同步', pwsh: 'Enable-ScheduledTask -TaskPath "\\Microsoft\\Windows\\SettingSync\\" -TaskName "BackgroundUploadTask" -ErrorAction SilentlyContinue' }
     ]
   },
-  {
-    id: 'tasks_disable_office_telemetry', group: '任务调度', title: 'Office Telemetry 登录任务排查', risk: 'medium',
-    desc: '停用 \\Microsoft\\Office\\OfficeTelemetryAgentLogOn 计划任务；需确认 Office 登录、诊断、遥测或企业策略不依赖它。',
-    steps: [
-      { label: '停用 Office Telemetry 登录', pwsh: 'Disable-ScheduledTask -TaskPath "\\Microsoft\\Office\\" -TaskName "OfficeTelemetryAgentLogOn" -ErrorAction SilentlyContinue' }
-    ],
-    restore: [
-      { label: '启用 Office Telemetry 登录', pwsh: 'Enable-ScheduledTask -TaskPath "\\Microsoft\\Office\\" -TaskName "OfficeTelemetryAgentLogOn" -ErrorAction SilentlyContinue' }
-    ]
-  },
-  {
-    id: 'tasks_stubborn_strategy', group: '任务调度', title: '顽固软件策略专杀', risk: 'medium',
-    desc: '将 MuMu 模拟器 / 网易 UU 远程 / 微软电脑管家 等后台常驻服务的启动类型改为「手动」并立即停止，同时停止 WPS 云文档服务、删除 WPS 更新计划任务并关闭其自动升级，从源头阻止顽固软件后台自启与残留保活。',
-    steps: [
-      { label: '停止并改为手动（Edrservice / GameViewerService / MuMuRemoteService / PCManager Service Store）', pwsh: [
-        "$services = @('Edrservice', 'GameViewerService', 'MuMuRemoteService', 'PCManager Service Store')",
-        "foreach ($svc in $services) {",
-        "  $s = Get-Service -Name $svc -ErrorAction SilentlyContinue",
-        "  if (-not $s) { continue }",
-        "  if ($s.Status -eq 'Running') { Stop-Service -Name $svc -Force -ErrorAction SilentlyContinue }",
-        "  Set-Service -Name $svc -StartupType Manual -ErrorAction SilentlyContinue",
-        "}"
-      ].join('\n') },
-      { label: '停止 WPS 云文档服务（保持 Disabled）', pwsh: [
-        "$wc = Get-Service -Name 'wpscloudsvr' -ErrorAction SilentlyContinue",
-        "if ($wc -and $wc.Status -eq 'Running') { Stop-Service -Name 'wpscloudsvr' -Force -ErrorAction SilentlyContinue }"
-      ].join('\n') },
-      { label: '删除 WPS 更新计划任务并关闭自动升级', pwsh: [
-        "foreach ($taskName in @('WpsUpdateTask_CHENG', 'WpsUpdateLogonTask_CHENG')) {",
-        "  if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) { Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue }",
-        "}",
-        "$wpsKey = 'HKCU:\\Software\\Kingsoft\\Office\\6.0\\Common\\updateinfo'",
-        "if (Test-Path $wpsKey) { Set-ItemProperty -Path $wpsKey -Name 'UpdateMode' -Value 'close' -ErrorAction SilentlyContinue }"
-      ].join('\n') }
-    ]
-  },
+  // 第六大点-B（2026-09-14 重复点审查）：原「Office Telemetry 登录任务排查」已下线 ——
+  // 目标任务 OfficeTelemetryAgentLogOn 已被「遥测优化」(telemetry_optimize) 覆盖。
+  // 注意：telemetry_optimize 里原有的 \Microsoft\Windows\Office\OfficeTelemetryAgentLogOn
+  // 与 FallBack 两条多了一层 Windows（真实路径为 \Microsoft\Office\），同批已修正。
+  // N1（2026-09-14 重复点审查）：原「顽固软件策略专杀」(tasks_stubborn_strategy) 已下线 ——
+  // 它与「内存清理 - 顽固软件治理」是同一批目标（MuMu / 网易 UU 远程 / 微软电脑管家 / WPS）
+  // 的两个层次，现合并到内存清理页那张卡片：「立即结束进程」+「阻止开机自启」。
+  // 脚本已迁移为 src/scripts-powershell/memory-scripts.js 的 STUBBORN_BLOCK_SCRIPT，
+  // IPC 通道为 memory:stubborn-block。
   // ---------- 外设调优新增（对齐 Trim BuildPeripheralModule） ----------
   {
     id: 'peripheral_inactive_scroll', group: '外设调优', title: '关闭非活动窗口滚动', risk: 'medium',
@@ -1821,8 +1777,10 @@ const OPTIONS = [
     steps: [{ label: '停用 Edge Update Machine Core', pwsh: 'Get-ScheduledTask -TaskName "MicrosoftEdgeUpdateTaskMachineCore" -ErrorAction SilentlyContinue | Disable-ScheduledTask -ErrorAction SilentlyContinue' }],
     restore: [{ label: '重新启用 Edge Update Machine Core', pwsh: 'Get-ScheduledTask -TaskName "MicrosoftEdgeUpdateTaskMachineCore" -ErrorAction SilentlyContinue | Enable-ScheduledTask -ErrorAction SilentlyContinue' }]
   },
-  edgePolicyItem('edge_game_assistant_overlay_off', '禁用 Edge 游戏助手覆盖层', 'low', 'HubsSidebarEnabled', 'dword:00000000',
-    '游戏专项：关闭 Edge 游戏助手游戏内覆盖层。与「禁用 Edge 边栏」共用 HubsSidebarEnabled 策略键值，执行时写入 HubsSidebarEnabled=0，还原时删除该键值。'),
+  // 第六大点-B（2026-09-14 重复点审查）：原「禁用 Edge 游戏助手覆盖层」
+  // (edge_game_assistant_overlay_off) 已下线 —— 它的唯一动作就是写 HubsSidebarEnabled=0，
+  // 与「禁用 Edge 边栏」(edge_sidebar_off) 完全相同（Edge 并未提供独立的游戏助手策略键），
+  // 属纯重复项。需要该效果时直接用「禁用 Edge 边栏」。
 
   // ==================== 优化总表补全（对照 old\优化总表.md 差异评估采纳项） ====================
 
@@ -1969,7 +1927,10 @@ const OPTIONS = [
 
   // 磁盘与文件系统补漏（总表 108/109/110，3 项）
   {
-    id: 'tf_disk_extra3', group: '系统调校', title: 'NTFS 加密与保留存储精简', risk: 'low',
+    // M6（2026-09-14 重复点审查）：全项目有三处 DISM 入口，标题统一带「DISM + 具体参数」
+    // 以便用户区分——本项为 /Set-ReservedStorageState（释放保留存储），
+    // 系统维护 dism 为 /RestoreHealth（修复），磁盘清理 dismComponentCleanup 为 /ResetBase（清理）。
+    id: 'tf_disk_extra3', group: '系统调校', title: 'NTFS 加密与保留存储精简 (DISM /Set-ReservedStorageState)', risk: 'low',
     desc: '禁用 NTFS 文件系统级加密（NtfsDisableEncryption，不影响 BitLocker/BitLocker To Go）、开始菜单搜索仅限索引位置（Start_SearchFiles=0，减少全盘扫描）、禁用更新保留存储（DISM 释放约 7 GB 保留空间）。',
     steps: [
       { label: '禁用 NTFS 加密 + 搜索仅限索引位置', reg: regBlock({
@@ -1994,14 +1955,13 @@ const OPTIONS = [
     steps: [
       { label: '商店自动更新关闭 + 推广内容屏蔽', reg: regBlock({
         'HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\WindowsStore': { 'AutoDownloadSetting': 'dword:00000002' },
+        // 第六大点-B（2026-09-14）：SubscribedContent-310093 / -338388 与 SystemPaneSuggestionsEnabled
+        // 归「云推荐内容排查」(privacy_cloud_content)，本项只负责商店自动更新与预装/推广应用开关。
         'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager': {
           'ContentDeliveryAllowed': 'dword:00000000',
           'OemPreInstalledAppsEnabled': 'dword:00000000',
           'PreInstalledAppsEnabled': 'dword:00000000',
-          'SilentInstalledAppsEnabled': 'dword:00000000',
-          'SubscribedContent-310093Enabled': 'dword:00000000',
-          'SubscribedContent-338388Enabled': 'dword:00000000',
-          'SystemPaneSuggestionsEnabled': 'dword:00000000'
+          'SilentInstalledAppsEnabled': 'dword:00000000'
         }
       }) }
     ],
@@ -2012,10 +1972,7 @@ const OPTIONS = [
           'ContentDeliveryAllowed': '-',
           'OemPreInstalledAppsEnabled': '-',
           'PreInstalledAppsEnabled': '-',
-          'SilentInstalledAppsEnabled': '-',
-          'SubscribedContent-310093Enabled': '-',
-          'SubscribedContent-338388Enabled': '-',
-          'SystemPaneSuggestionsEnabled': '-'
+          'SilentInstalledAppsEnabled': '-'
         }
       }) }
     ]
@@ -2030,6 +1987,25 @@ function memorySteps(gb) {
     label: `SVCHost 拆分阈值 ${gbName}`,
     cmd: `reg add "HKLM\\SYSTEM\\ControlSet001\\Control" /v SvcHostSplitThresholdInKB /t REG_DWORD /d ${kb} /f`
   }];
+}
+
+// ==================== tf_svc_bulk 商店服务附加分支 ====================
+// 用户在执行前经单独弹窗选择「是否禁用商店相关服务」：
+//   是 → main.js 用本函数在基础清单后追加商店 5 服务步骤（基础步骤在前把 wuauserv
+//        置 Start=3，本步骤在后覆盖为 4，顺序即语义）；
+//   否 → 原样执行基础清单（商店/同步保持默认，既有行为不变）。
+// 覆盖面为用户裁定（2026-09-14）：商店本体 + 更新下载通道。
+const STORE_TOGGLE_SERVICES = ['ClipSVC', 'InstallService', 'PushToInstall', 'wuauserv', 'DoSvc'];
+function svcBulkAppendStoreSteps(baseSteps) {
+  const steps = Array.isArray(baseSteps) ? JSON.parse(JSON.stringify(baseSteps)) : [];
+  steps.push({
+    label: '禁用商店相关服务（ClipSVC/InstallService/PushToInstall/wuauserv/DoSvc，经用户弹窗确认）',
+    pwsh: [
+      `$storeSvc = @("${STORE_TOGGLE_SERVICES.join('","')}")`,
+      'foreach ($n in $storeSvc) { $p = "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\$n"; if (Test-Path $p) { New-ItemProperty -Path $p -Name Start -Value 4 -PropertyType DWord -Force | Out-Null; Stop-Service -Name $n -Force -ErrorAction SilentlyContinue } }'
+    ].join('\n')
+  });
+  return steps;
 }
 
 // ==================== 脚本生成器 ====================
@@ -2083,7 +2059,6 @@ const PROS_CONS = {
   'tf_net_nic': { pros: '批量关闭网卡节能并开启低延迟相关属性，降低网络唤醒与传输抖动。', cons: '关闭节能会让网卡功耗略升，老旧网卡可能不支持部分高级属性。' },
   'tf_net_weakhost': { pros: '开启 WeakHost 收发可改善多网卡下的本地访问与回流场景。', cons: '轻微降低网络隔离安全性，仅建议在明确需要时启用。' },
   'bcd_opt': { pros: '禁用系统合成计时器等启动项，可缩短启动与唤醒延迟。', cons: '属于启动配置修改，失误可能影响启动，需管理员权限。' },
-  'ssd_opt': { pros: '关闭磁盘索引并启用 TRIM 等，利于 SSD 寿命与随机读写性能。', cons: '关闭索引后文件搜索变慢，个别选项需要管理员权限方可生效。' },
   'tf_bcd_full': { pros: '一次性写入禁用动态时钟、关闭整页交换等全套启动参数，降低启动延迟。', cons: 'BCD 修改风险高，参数不当可能导致无法启动，务必事先备份。' },
   'tf_microcode_del': { pros: '删除 CPU 微码更新 DLL，减少启动与运行时的一处校验开销。', cons: '移除微码补丁会重新暴露已知 CPU 漏洞与稳定性修复，安全风险较大。' },
   'tf_ntfs': { pros: '关闭 8.3 短名与末次访问时间戳、增大内存使用，可提升文件系统吞吐。', cons: '8.3 名称关闭会让个别老软件找不到文件，NTFS 改动一般不可逆。' },
@@ -2103,11 +2078,8 @@ const PROS_CONS = {
   'tf_resource_policy': { pros: '解除系统资源策略限制，释放被节流的 CPU/内存额度。', cons: '绕开系统配额保护，失控进程可能占满系统资源。' },
   'tf_ifeo_perf': { pros: '为进程写入 IFEO CPU/IO 优先级，常驻程序与游戏更跟手。', cons: 'IFEO 针对特定进程，路径或名称变更后失效，全局生效存在风险。' },
   'tf_ifeo_wipe': { pros: '清空 IFEO 调试项，排除被劫持或调试器附加的隐患。', cons: '可能一并删除系统或游戏反作弊所需的兼容性条目。' },
-  'prefetch_off': { pros: '关闭预读减少磁盘后台 IO，机械盘老机可能更流畅省资源。', cons: '应用冷启动变慢，固态硬盘上收益有限。' },
-  'maps_off': { pros: '禁用下载地图管理器服务，节省内存并减少后台更新。', cons: '离线地图与系统更新相关功能可能受影响。' },
-  'services_off': { pros: '一次性停用多组冗余后台服务，降低内存占用与后台 IO。', cons: '可能影响依赖这些服务的外设或系统功能，需选择性使用。' },
+  // 'prefetch_off'（关闭预读）条目已移除：该优化项已不在 OPTIONS 中，属历史孤儿映射
   'svc_mem_gb': { pros: '按内存档位调整 SVCHost 拆分阈值，减少服务进程内存碎片。', cons: '阈值与内存不匹配时反而增加进程切换开销。' },
-  'mem_compress': { pros: '禁用内存压缩可减少 CPU 压缩/解压开销。', cons: '内存压力大时更易写入页面文件，低内存机器可能变卡。' },
   'tf_mmagent': { pros: '关闭内存压缩与页合并，进一步压低 CPU 后台开销。', cons: '物理内存不足时稳定性下降，可能出现更高硬盘写入。' },
   'tf_svc_bulk': { pros: '批量禁用 70+ 非必要服务，显著释放内存并减少后台活动。', cons: '高度激进，可能破坏打印机、蓝牙、商店等功能，风险较高。' },
   'tf_drv_disable': { pros: '禁用高风险驱动服务，减少内核攻击面与运行时开销。', cons: '可能影响硬件识别或安全软件，需要谨慎选择。' },
@@ -2131,7 +2103,6 @@ const PROS_CONS = {
   'tf_dev_disable': { pros: '禁用 HPET/ME 等冗余设备，减少中断与延迟。', cons: '可能影响设备管理、虚拟化或系统稳定性，风险较高。' },
   'tf_dev_audio': { pros: '禁用板载/HDMI 声卡控制器，消除多余音频设备。', cons: '板载与 HDMI 音频将不可用，仅适用独立 USB 声卡用户。' },
   'tf_dev_printer': { pros: '禁用打印队列根设备，无打印需求者减少后台开销。', cons: '之后无法打印，需要打印时须重新启用该设备。' },
-  'tf_pccleaner': { pros: '深度清理 Temp/Prefetch/日志/CBS/DISM 等，释放空间更彻底。', cons: '会删除 CBS/DISM 日志影响故障排查，误删系统盘 .log/.bak 存在风险。' },
   'tf_appx': { pros: '移除 25 个预装 UWP 应用，释放磁盘并减少后台活动。', cons: '部分应用移除后需从商店重装，个别系统集成可能异常。' },
   'tf_cortana': { pros: '禁用 Cortana 与网页搜索，减少后台联网与隐私追踪。', cons: '失去 Cortana 语音助手与任务栏网页搜索能力。' },
   'tf_onedrive': { pros: '彻底卸载 OneDrive 并清理数据目录，释放空间、减少同步。', cons: '云端文件不再自动同步，恢复需重新安装并登录。' },
@@ -2139,8 +2110,6 @@ const PROS_CONS = {
   'explorer_foreground_speed': { pros: '前台程序立即获得焦点与刷新优先级，点击窗口后界面响应更跟手。', cons: '极少数依赖焦点抢占提示的后台弹窗可能更频繁地抢到前台。' },
   'explorer_autorestart': { pros: 'explorer.exe 崩溃后自动拉起，桌面与任务栏无需手动重启。', cons: '崩溃发生时重启过程会有短暂桌面黑屏闪烁。' },
   'explorer_refresh_policy': { pros: '按完整信息刷新文件列表，新建/重命名后图标即时显示。', cons: '禁用简化标识列表在个别网络环境下可能略微增加刷新开销。' },
-  'always_unload_dll': { pros: '无引用的 DLL 立即卸载，降低资源管理器常驻内存。', cons: '传统优化项，现代 Windows 部分组件不再读取，收益有限。' },
-  'clear_recent_docs_on_exit': { pros: '注销/关机自动清空最近文件记录，保护使用隐私。', cons: '开始菜单最近文件列表不再保留，快速回访文件不便。' },
   'perf_shutdown_fast': { pros: '缩短等待应用退出的超时，关机/注销明显更快。', cons: '个别未保存工作的应用可能被更快结束，建议先保存再关机。' },
   'perf_service_shutdown_fast': { pros: '缩短服务停止超时，关机不再卡在"正在关闭"。', cons: '个别服务可能来不及保存状态，数据库类服务需注意。' },
   'perf_remote_assist_off': { pros: '禁用远程协助入口，减少攻击面与后台监听。', cons: '无法再使用"请求远程协助"功能。' },
@@ -2162,9 +2131,7 @@ const PROS_CONS = {
   'edge_rewards_hide': { pros: '隐藏 Rewards 积分入口，界面更简洁。', cons: '使用 Microsoft Rewards 攒积分的用户需要重新开启。' },
   'edge_sxs_service_off': { pros: '关闭 EdgeUpdate 的 SxsService 后台组件，减少后台活动。', cons: '依赖该组件的 Edge 并行版本功能不可用（多数用户无感知）。' },
   'edge_update_task_disable': { pros: '停止 Edge 自动更新检查，消除后台更新占用。', cons: '浏览器安全补丁不再自动安装，必须定期手动更新。' },
-  'edge_game_assistant_overlay_off': { pros: '游戏中不再被 Edge 游戏助手覆盖层干扰。', cons: '与「禁用 Edge 边栏」共用同一策略键，两者只能一起生效/还原。' },
   'privacy_permissions_tune': { pros: '一次精调 20+ 项应用权限与数据收集开关，输入习惯、活动历史、通讯录等不再被收集。', cons: '应用可能失去文档/日历/联系人访问权限，剪贴板历史被启用，个别权限需手动在设置中恢复。' },
-  'tasks_stubborn_strategy': { pros: '将 MuMu/UU 远程/微软电脑管家等顽固软件后台服务改为手动并停止，删除 WPS 更新计划任务并关闭自动升级，从源头杜绝其后台自启与残留保活。', cons: '为一次性策略专杀，不提供自动还原；相关软件需使用时须手动打开并自行管理服务。' },
   'tf_ai_off': { pros: '策略级关闭 Copilot/Recall/Click to Do/AI Agent 全家桶并禁用 AgentRuntime 服务，释放后台内存与 CPU，隐私零上传。', cons: '无法使用 Windows 内置 AI 功能（Copilot、Recall 等），系统更新后部分策略可能被重置需重新执行。' },
   'tf_perf_misc': { pros: '启动延迟归零、禁用窗口摇晃与失效快捷方式全盘解析，桌面响应更跟手。', cons: '个别依赖 Aero Shake 的使用习惯失效；禁用链接解析后指向网络位置的失效快捷方式打开更慢。' },
   'tf_privacy_extra': { pros: '补漏关闭 Chrome/Firefox/VS 遥测、许可验证上报、新闻兴趣流与步骤记录器，第三方数据外发通道进一步收窄。', cons: '浏览器与 VS 的官方反馈/体验改进计划退出，个别企业环境可能检测策略与预期不符。' },
@@ -2221,7 +2188,6 @@ OPTIONS.forEach(o => {
 //   未验证 = 缺乏可靠依据或收益因机型/负载而异，无法给出负责任的结论
 const EFFECT_MAP = {
   bcd_opt: '微小',
-  ssd_opt: '一般',
   tf_ntfs: '一般',
   tf_hibern_off: '一般',
   tf_core_misc: '一般',
@@ -2236,10 +2202,7 @@ const EFFECT_MAP = {
   tf_gpu_latency: '微小',
   tf_ifeo_perf: '未验证',
   tf_ifeo_wipe: '一般',
-  maps_off: '微小',
-  services_off: '一般',
   svc_mem_gb: '一般',
-  mem_compress: '微小',
   tf_mmagent: '微小',
   tf_svc_bulk: '明显',
   tf_drv_disable: '微小',
@@ -2258,7 +2221,6 @@ const EFFECT_MAP = {
   tf_dev_disable: '一般',
   tf_dev_audio: '微小',
   tf_dev_printer: '微小',
-  tf_pccleaner: '明显',
   tf_appx: '明显',
   tf_cortana: '一般',
   tf_onedrive: '一般',
@@ -2283,17 +2245,10 @@ const EFFECT_MAP = {
   explorer_foreground_speed: '一般',
   explorer_autorestart: '一般',
   explorer_refresh_policy: '一般',
-  always_unload_dll: '微小',
-  clear_recent_docs_on_exit: '一般',
-  tasks_disable_ceip: '一般',
-  tasks_disable_usb_ceip: '一般',
-  tasks_disable_disk_diag: '一般',
   tasks_disable_defrag: '未验证',
   tasks_disable_silent_cleanup: '一般',
   tasks_disable_winbackup: '微小',
   tasks_disable_settingsync: '一般',
-  tasks_disable_office_telemetry: '一般',
-  tasks_stubborn_strategy: '明显',
   peripheral_inactive_scroll: '一般',
   peripheral_winkey_off: '明显',
   peripheral_mouse_trails: '微小',
@@ -2337,7 +2292,6 @@ const EFFECT_MAP = {
   edge_rewards_hide: '一般',
   edge_sxs_service_off: '微小',
   edge_update_task_disable: '微小',
-  edge_game_assistant_overlay_off: '一般',
   tf_ai_off: '一般',
   tf_perf_misc: '一般',
   tf_privacy_extra: '一般',
@@ -2349,4 +2303,4 @@ const EFFECT_MAP = {
 // 注入预期效果；未登记的项（未来新增）默认「未验证」——诚实兜底，宁可不标好话
 OPTIONS.forEach(o => { o.effect = EFFECT_MAP[o.id] || '未验证'; });
 
-module.exports = { OPTIONS, MEMORY_KB, memorySteps, buildScript };
+module.exports = { OPTIONS, MEMORY_KB, memorySteps, svcBulkAppendStoreSteps, STORE_TOGGLE_SERVICES, buildScript };

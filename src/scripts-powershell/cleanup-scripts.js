@@ -23,7 +23,7 @@
 //
 // 「规则库在线更新（P2）」：主进程把更新后的规则写到数据目录 cleanup\rules.json，
 // loadRules() 读取优先级 = 数据目录 rules.json > 内置 JSON > 空；custom\*.json
-// 为用户自定义规则（同名 id 覆盖生效规则，新 id 追加到同 key 分组）。
+// 为用户自定义开关（仅 {id, enabled} 引用内置条目，不得自带删除目标，审查 B-3）。
 
 const fs = require('fs');
 const path = require('path');
@@ -60,33 +60,38 @@ function collectGroupItems(group) {
   return group.items || [];
 }
 
-// 合并自定义规则：同名 id 覆盖生效规则的字段，新 id 追加到同 key 分组（无则新分组）
-function mergeRules(base, custom) {
-  const merged = JSON.parse(JSON.stringify(base));
+// 合并自定义规则（审查 B-3 收口，2026-09-14）：custom\*.json 只允许 {id, enabled} 开关
+// 内置条目，不再「同名 id 覆盖字段 / 新 id 追加条目」。规则决定删除目标，而 custom 目录
+// 是用户级可写位置——若允许自定义条目自带 pathPs/candidatesPs/regKeys 等删除目标，任何
+// 能写该目录的进程都可借 Trim 的管理员执行面递归删除任意目录（延迟投递通道）。
+// 出现白名单外字段即整文件拒载（fail-closed、不半生效）；enabled=false 同样合法（关掉某内置项）。
+const CUSTOM_TOGGLE_FIELDS = new Set(['id', 'enabled']);
+function applyCustomToggles(rules, parsed, fileLabel) {
   const byId = new Map();
-  const keyIndex = new Map();
-  merged.groups.forEach((g, gi) => {
-    keyIndex.set(g.key, gi);
+  for (const g of (rules.groups || [])) {
     for (const it of collectGroupItems(g)) byId.set(it.id, it);
-  });
-  for (const g of (custom.groups || [])) {
+  }
+  // 第一遍：全量校验，任一条目携带白名单外字段即拒载整份文件
+  for (const g of (parsed.groups || [])) {
     for (const it of collectGroupItems(g)) {
-      if (!it || !it.id) continue;
-      const hit = byId.get(it.id);
-      if (hit) { Object.assign(hit, it); continue; }
-      const gi = keyIndex.get(g.key);
-      if (gi != null) {
-        const target = merged.groups[gi];
-        if (!target.subGroups && !target.items) target.items = [];
-        if (target.items) target.items.push(it);
-        else if (target.subGroups.length) target.subGroups[0].items.push(it);
-        byId.set(it.id, it);
-      } else {
-        merged.groups.push({ key: g.key || 'custom', title: g.title || '自定义规则', icon: g.icon || '🧩', items: [it] });
+      if (!it || typeof it !== 'object') continue;
+      const extra = Object.keys(it).filter(k => !CUSTOM_TOGGLE_FIELDS.has(k));
+      if (extra.length) {
+        console.warn(`[cleanup] 自定义规则 ${fileLabel} 条目 ${it.id || '(缺 id)'} 携带禁止字段（${extra.join('、')}），整文件拒载（审查 B-3：custom 目录仅允许 {id, enabled} 开关内置条目）`);
+        return false;
       }
     }
   }
-  return merged;
+  // 第二遍：逐条应用开关；引用未知 id 只忽略该条，不影响文件内其余开关
+  for (const g of (parsed.groups || [])) {
+    for (const it of collectGroupItems(g)) {
+      if (!it || !it.id) continue;
+      const hit = byId.get(it.id);
+      if (!hit) { console.warn(`[cleanup] 自定义规则 ${fileLabel} 引用未知条目 id: ${it.id}，已忽略`); continue; }
+      if (typeof it.enabled === 'boolean') { hit.enabled = it.enabled; }
+    }
+  }
+  return true;
 }
 
 // 🟡1：读取数据目录规则并复验 ed25519 签名。仅当签名通过且结构合法才返回，否则 null（回退内置规则）。
@@ -133,11 +138,14 @@ function loadRules() {
   if (RULES_CACHE && sig === RULES_CACHE_SIG) return RULES_CACHE;
 
   // 优先级：数据目录（在线更新产物）> 内置。数据目录走验签复验（fail-closed），失败自动回退内置。
+  // custom\*.json 不再并入规则正文，只允许做内置条目的启用开关（applyCustomToggles，审查 B-3）。
   let rules = readVerifiedDataRules() || safeReadJson(RULES_FILE);
   if (!rules) rules = { version: 0, rulesVersion: 0, groups: [] };
   for (const c of custom) {
     const parsed = safeReadJson(c.path);
-    if (parsed) rules = mergeRules(rules, parsed);
+    if (parsed && !applyCustomToggles(rules, parsed, path.basename(c.path))) {
+      console.warn(`[cleanup] 自定义规则文件已拒载: ${c.path}`);
+    }
   }
   RULES_CACHE = rules;
   RULES_CACHE_SIG = sig;
@@ -381,7 +389,11 @@ function Get-FileKeyDeletable {
   param($Rule)
   $hasExcl = $false
   if ($Rule.excludeKeys) { if (@($Rule.excludeKeys).Count -gt 0) { $hasExcl = $true } }
-  $needList = (-not $useFastSize) -or $hasExcl
+  # M2/M3（2026-09-14 重复点审查）：声明了 restartProcesses 的条目（图标/缩略图缓存、打印后台缓存）
+  # 会在执行侧临时停止占用进程，因此扫描阶段不做占用探测 —— 否则这些文件会被 explorer/spoolsv 独占，
+  # 全部判为 locked 而不进计划清单，执行侧拿不到可删文件（等于清不掉）。
+  $skipLockCheck = (@($Rule.restartProcesses).Count -gt 0)
+  $needList = $skipLockCheck -or (-not $useFastSize) -or $hasExcl
   if (-not $needList) {
     foreach ($fk in @($Rule.fileKeys)) {
       if ($fk -and $fk.recurse -eq $false) { $needList = $true; break }
@@ -394,7 +406,7 @@ function Get-FileKeyDeletable {
     $snap = @(Get-FileKeySnapshot -Rule $Rule)
     foreach ($f in $snap) {
       $totalCount++
-      if (Test-FileDeletable -Path ([string]$f.Path)) {
+      if ($skipLockCheck -or (Test-FileDeletable -Path ([string]$f.Path))) {
         $totalSize += [long]$f.Size
         $deletableCount++
         $files.Add([pscustomobject]@{ Path = [string]$f.Path; Size = [long]$f.Size })
@@ -882,6 +894,52 @@ function Get-BlockedProcesses {
   return @($out)
 }
 
+# M2/M3（2026-09-14 重复点审查）：restartProcesses —— 声明「必须临时停止占用进程才能清理、
+# 清完立刻拉回」的条目（图标/缩略图缓存需 explorer、打印后台缓存需 spoolsv）。
+# 与 requiredStoppedProcesses 的区别：后者命中即跳过、把关闭动作留给用户；前者由脚本自己停自己起。
+# restart 取值：'process'（Stop-Process + 按原 Path 拉起）/ 'service'（Stop-Service + Start-Service）。
+function Stop-Restartables {
+  param($Rule)
+  $done = @()
+  foreach ($rp in @($Rule.restartProcesses)) {
+    if (-not $rp -or -not $rp.name) { continue }
+    if ([string]$rp.restart -eq 'service') {
+      $svcName = [string]$rp.service
+      if (-not $svcName) { $svcName = [string]$rp.name }
+      $svc = Get-Service -Name $svcName -ErrorAction SilentlyContinue
+      if ($svc -and $svc.Status -eq 'Running') {
+        Stop-Service -Name $svc.Name -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Milliseconds 400
+        $now = Get-Service -Name $svc.Name -ErrorAction SilentlyContinue
+        if ($now -and $now.Status -ne 'Running') { $done += [pscustomobject]@{ kind = 'service'; target = $svc.Name; exe = '' } }
+      }
+    } else {
+      $proc = Get-Process -Name ([string]$rp.name) -ErrorAction SilentlyContinue | Select-Object -First 1
+      if ($proc) {
+        $exe = ''
+        try { $exe = [string]$proc.Path } catch { $exe = '' }
+        Stop-Process -Name ([string]$rp.name) -Force -ErrorAction SilentlyContinue
+        $done += [pscustomobject]@{ kind = 'process'; target = [string]$rp.name; exe = $exe }
+      }
+    }
+  }
+  return @($done)
+}
+
+function Start-Restartables {
+  param($Stopped)
+  foreach ($d in @($Stopped)) {
+    if (-not $d) { continue }
+    if ([string]$d.kind -eq 'service') {
+      Start-Service -Name ([string]$d.target) -ErrorAction SilentlyContinue
+    } else {
+      $exe = [string]$d.exe
+      if ($exe -and (Test-Path -LiteralPath $exe)) { Start-Process -FilePath $exe -ErrorAction SilentlyContinue }
+      else { Start-Process -FilePath ([string]$d.target + '.exe') -ErrorAction SilentlyContinue }
+    }
+  }
+}
+
 # 收集 fileKeys 候选文件（与扫描脚本同一实现，执行期重新快照以缩小 TOCTOU 窗口）
 function Get-FileKeySnapshot {
   param($Rule)
@@ -1164,7 +1222,11 @@ function Remove-PathSafely {
   }
 }
 
+# M2/M3：restartProcesses 的「起」放在这里 —— 条目分支里大量 continue 会跳过循环末尾，
+# 故在下一轮开头统一把上一轮停掉的进程拉回，循环结束后再由末尾兜底处理最后一条。
+$pendingRestart = @()
 foreach ($item in $items) {
+  if ($pendingRestart.Count -gt 0) { Start-Restartables -Stopped $pendingRestart; $pendingRestart = @() }
   $rule = $ruleMap[$item.id]
 
   # DISM 组件清理：执行 StartComponentCleanup + ResetBase（不按路径删除）
@@ -1189,6 +1251,11 @@ foreach ($item in $items) {
     $skipped++
     $details += @{ id = $item.id; name = $item.name; status = 'skip'; freed = 0; message = ('请先关闭后再清理: ' + ($blocked -join ', ')) }
     continue
+  }
+
+  # M2/M3：restartProcesses 条目的占用进程由脚本自己停，清完拉回 —— 不走上面的「命中即跳过」
+  if ($rule -and @($rule.restartProcesses).Count -gt 0) {
+    $pendingRestart = @($pendingRestart + @(Stop-Restartables -Rule $rule))
   }
 
   # ---- 文件模式条目（fileKeys）----
@@ -1415,6 +1482,9 @@ foreach ($item in $items) {
     residual = $residual
   }
 }
+
+# M2/M3：循环结束兜底 —— 最后一条 restartProcesses 条目停掉的进程在这里拉回
+if ($pendingRestart.Count -gt 0) { Start-Restartables -Stopped $pendingRestart; $pendingRestart = @() }
 
 @{
   totalFreed = $totalFreed

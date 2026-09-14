@@ -38,6 +38,7 @@ const SYNTAX_FILES = [
   'src/main/version-migrations.js',
   'src/scripts-powershell/cleanup-scripts.js',
   'src/scripts-powershell/maintenance-scripts.js',
+  'src/scripts-powershell/sysdisk-scripts.js',
   'src/scripts-powershell/defaultapps-scripts.js',
   'src/scripts-powershell/netcheck-scripts.js',
   'src/scripts/app.js',
@@ -55,6 +56,7 @@ const SYNTAX_FILES = [
   'src/scripts/logger.js',
   'src/scripts/intro.js',
   'src/scripts/maintenance.js',
+  'src/scripts/memoryclean.js',
   'src/scripts/netspeed-detector.js',
   'src/scripts/netspeed.js',
   'src/scripts/theme.js',
@@ -647,7 +649,9 @@ check('pathPs 条目 deleteMode 声明齐全（D2）', () => {
   const backupIds = new Set(['dismPlusOld', 'chromeOldBackup', 'wpsOldBackup']);
   const items = flatRuleItems(rules);
   const pathPs = items.filter(i => i.pathPs);
-  if (pathPs.length !== 45) throw new Error('pathPs 条目数应为 45，实际 ' + pathPs.length);
+  // 2026-09-14：45 → 48（新增 cbsLogs / dismLogs / printSpoolCache）→ 47
+  // （printSpoolCache 为支持 restartProcesses 改走 fileKeys 型，不再计入 pathPs）
+  if (pathPs.length !== 47) throw new Error('pathPs 条目数应为 47，实际 ' + pathPs.length);
   const missing = pathPs.filter(i => !backupIds.has(i.id) && i.deleteMode !== 'contents').map(i => i.id);
   if (missing.length) throw new Error('非备份类 pathPs 缺 deleteMode=contents：' + missing.join(', '));
   const leaked = pathPs.filter(i => backupIds.has(i.id) && i.deleteMode).map(i => i.id);
@@ -1617,6 +1621,16 @@ check('v3.0 默认应用接管 / 网络检测：页面挂载与 IPC 双侧对齐
   if (!ncMain.includes('netcheckSnapshot.find') || !ncMain.includes('NETCHECK_SCRIPT.repair')) {
     throw new Error('netcheck:repair 未走检测快照白名单链路');
   }
+});
+
+// ==================== 9. 注册表键归属校验（M4/M5，2026-09-14 重复点审查） ====================
+// 同一注册表键下的每个值名只能由一个模块写入；越界或归属表过期都算失败。
+console.log('[9/9] 注册表键归属校验');
+check('共享注册表键均由唯一模块写入（src/data/reg-ownership.json）', () => {
+  const { checkOwnership } = require('./scripts/check-reg-ownership');
+  const r = checkOwnership();
+  if (r.violations.length) throw new Error('越界写入：\n    ' + r.violations.join('\n    '));
+  if (r.missing.length) throw new Error('归属表已过期（请同步更新 reg-ownership.json）：\n    ' + r.missing.join('\n    '));
 });
 
 // ==================== 汇总 ====================
