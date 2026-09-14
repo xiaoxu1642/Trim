@@ -1689,6 +1689,10 @@
         }
       ]
     }
-  ]
+  ],
+  "_sig": {
+    "alg": "ed25519",
+    "sig": "2z0Ekdnfw9SV3UdFWKBgXSkJaDXJfLJ/psRt/SmhTO+9c8UjPmt5lnRpGCkgykMr5DTK7VVUGlRQ333zz4W3CA=="
+  }
 };
 })(typeof window !== 'undefined' ? window : globalThis);
