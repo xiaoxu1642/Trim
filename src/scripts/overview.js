@@ -198,11 +198,12 @@
     root.innerHTML = sorted.map(c => {
       const actionable = c.status === 'bad' || c.status === 'warn';
       const jump = CHECKUP_JUMP[c.id];
-      const actions = actionable ? `
+      const actions = `
           <span class="checkup-row-actions">
+            <span class="checkup-row-evidence">${escapeHtml(c.evidence || '未验证')}</span>
             ${jump ? `<button type="button" class="checkup-btn" data-checkup-jump="${escapeHtml(jump.page)}" data-tip="${escapeHtml(jump.tip)}">去处理</button>` : ''}
             <button type="button" class="checkup-btn checkup-btn-ignore" data-checkup-ignore="${escapeHtml(c.id)}" data-tip="不再显示该条目（可随时在标题旁恢复）">忽略</button>
-          </span>` : '';
+          </span>`;
       return `
       <div class="checkup-row row-card row-card-top" data-status="${escapeHtml(c.status || 'unknown')}">
         <div class="checkup-row-main">
@@ -210,7 +211,6 @@
             ${checkupStatusBadge(c.status)}
             <span class="checkup-row-title">${escapeHtml(c.title || '')}</span>
             <span class="checkup-row-value">${escapeHtml(c.value || '')}</span>
-            <span class="checkup-row-evidence">${escapeHtml(c.evidence || '未验证')}</span>
           </div>
           <p class="checkup-row-detail">${escapeHtml(c.detail || '')}</p>
         </div>
@@ -371,6 +371,41 @@
     tick();
   }
 
+  // ==================== 系统信息彩蛋（v3.2.1） ====================
+  // 设置页「系统信息」容器已隐藏（main.css #systemInfoSection display:none），
+  // 入口改为首页「系统健康度」卡连点 7 次（2 秒窗口）弹出自绘弹窗展示。
+  // 信息 DOM（含专家模式开关）整块从隐藏容器移入弹窗、关闭时移回——
+  // 节点移动不丢失监听器，开关功能不受影响；数据仍由 app.js loadAppInfo 填充。
+  let eggClicks = 0;
+  let eggTimer = null;
+  let eggModalCtrl = null;
+
+  function openSystemInfoEgg() {
+    if (eggModalCtrl) return;
+    const infoBody = document.getElementById('systemInfoBody');
+    if (!infoBody || !window.modal) {
+      window.app?.toast?.('warning', '系统信息暂不可用');
+      return;
+    }
+    eggModalCtrl = window.modal.create({
+      id: 'systemInfoEggModal',
+      title: '系统信息',
+      bodyHtml: '<div class="system-info-egg-mount"></div>',
+      footerHtml: `
+        <span class="pw-last-scan">开发者信息入口</span>
+        <span class="model-picker-spacer"></span>
+        <button class="btn btn-primary" data-role="okBtn" type="button">关闭</button>`,
+      onClose() {
+        // 信息块移回隐藏容器（保持数据填充链路完整，弹窗可反复打开）
+        const sec = document.getElementById('systemInfoSection');
+        if (sec && infoBody && infoBody.parentElement !== sec) sec.appendChild(infoBody);
+        eggModalCtrl = null;
+      }
+    });
+    eggModalCtrl.body.querySelector('.system-info-egg-mount').appendChild(infoBody);
+    eggModalCtrl.footer.querySelector('[data-role="okBtn"]').addEventListener('click', () => eggModalCtrl.close());
+  }
+
   function init() {
     $('btnOverviewRefresh')?.addEventListener('click', refresh);
     $('btnCheckupRerun')?.addEventListener('click', () => loadCheckup(true));
@@ -385,6 +420,17 @@
       card.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); }
       });
+    });
+    // 系统信息彩蛋：健康度卡 2 秒内连点 7 次
+    $('ovHealthCard')?.addEventListener('click', () => {
+      eggClicks++;
+      clearTimeout(eggTimer);
+      eggTimer = setTimeout(() => { eggClicks = 0; }, 2000);
+      if (eggClicks >= 7) {
+        eggClicks = 0;
+        clearTimeout(eggTimer);
+        openSystemInfoEgg();
+      }
     });
   }
 

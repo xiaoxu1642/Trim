@@ -183,6 +183,8 @@
     if (pageName === 'logs') logger.load();
     if (pageName === 'startup') startup.load();
     if (pageName === 'quickcmds') window.quickcmds?.init?.();
+    // v3.2.1：首次进入磁盘清理页自动检测规则库云端版本（右上角 toast 提示更新）
+    if (pageName === 'cleanup') window.cleanup?.onPageEnter?.();
     if (pageName === 'memoryclean') {
       window.memoryclean?.loadInfo?.();
     }

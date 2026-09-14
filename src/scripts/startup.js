@@ -107,7 +107,9 @@
     if (changed) render();
   }
 
-  async function scan() {
+  // v3.2.1：refresh=false 优先读持久缓存（首启扫描一次落盘，之后一直读文件）；
+  // true 强制重新扫描并覆盖缓存。启停/删除/添加后走 true 保证拿到最新状态。
+  async function scan(refresh = false) {
     if (loading) return;
     if (!window.api?.startup?.scan) {
       renderError('启动项管理仅在 Electron 环境中可用');
@@ -116,10 +118,11 @@
     loading = true;
     setScanBusy(true);
     // 阶段二：扫描期间以骨架屏占位（ds.skeletonRows），完成后由 render()/renderError() 替换
+    // 缓存命中时主进程立即返回，骨架屏一闪而过不影响体验
     const skeletonList = el('startupList');
-    if (skeletonList && window.ds) skeletonList.innerHTML = window.ds.skeletonRows(6);
+    if (skeletonList && window.ds && refresh) skeletonList.innerHTML = window.ds.skeletonRows(6);
     try {
-      const resp = await window.api.startup.scan();
+      const resp = await window.api.startup.scan(refresh);
       if (!resp || !resp.success) {
         renderError((resp && resp.message) || '扫描启动项失败');
         return;
@@ -320,7 +323,7 @@
         items.forEach(i => { if (failedIds.has(i.id)) i._flag = 'error'; });
         render();
       } else {
-        await scan();
+        await scan(true);
       }
     } catch (e) {
       window.app?.toast('error', `${act}失败: ${e.message}`);
@@ -345,7 +348,7 @@
       } else {
         window.app?.toast('warning', `删除部分失败：${(resp && resp.failed) || 0} 项未生效`);
       }
-      await scan();
+      await scan(true);
     } catch (e) {
       window.app?.toast('error', `删除失败: ${e.message}`);
     }
@@ -403,14 +406,15 @@
         return;
       }
       window.app?.toast('success', `已添加启动项：${resp.name || ''}`);
-      await scan();
+      await scan(true);
     } catch (e) {
       window.app?.toast('error', `添加启动项失败: ${e.message}`);
     }
   }
 
   function init() {
-    el('btnScanStartup')?.addEventListener('click', () => scan());
+    // 「重新扫描」= 强制真实扫描并覆盖缓存（v3.2.1 缓存政策）
+    el('btnScanStartup')?.addEventListener('click', () => scan(true));
     el('btnAddStartup')?.addEventListener('click', () => addItem());
     el('startupSelectAll')?.addEventListener('change', (e) => {
       el('startupList').querySelectorAll('.startup-item-check').forEach(c => {

@@ -5,58 +5,18 @@
   'use strict';
   root.CLEANUP_RULES_FALLBACK = {
   "version": 2,
-  "rulesVersion": 20260906,
+  "rulesVersion": 20260914,
   "groups": [
     {
-      "key": "windows",
-      "title": "Windows 系统",
-      "icon": "<svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"currentColor\"><path d=\"M3 12V6.75l6-1.32v6.48L3 12zm17-9v8.75l-10 .15V5.21L20 3zM3 13l6 .09v6.81l-6-1.15V13zm17 .25V22l-10-1.91V13.1l10 .15z\"/></svg>",
+      "key": "system",
+      "title": "系统清理",
+      "icon": "<svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"currentColor\"><path d=\"M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z\"/></svg>",
       "subGroups": [
         {
-          "id": "outdated",
-          "name": "过时文件",
-          "icon": "⏳",
+          "id": "updates",
+          "name": "更新与组件残留",
+          "icon": "🔄",
           "items": [
-            {
-              "id": "dismPlusOld",
-              "name": "以前的Dism++组件",
-              "risk": "low",
-              "pathPs": "$env:LOCALAPPDATA + '\\Dism++Backup'",
-              "evidence": "Dism++ 组件操作历史备份",
-              "recommended": true
-            },
-            {
-              "id": "chromeOldBackup",
-              "name": "Chrome浏览器老版本备份",
-              "risk": "low",
-              "pathPs": "$env:LOCALAPPDATA + '\\Google\\Chrome\\User Data\\Default\\OldBackup'",
-              "evidence": "Chrome 升级残留旧版本备份",
-              "recommended": true
-            },
-            {
-              "id": "wpsOldBackup",
-              "name": "WPS老版本备份",
-              "risk": "low",
-              "pathPs": "$env:LOCALAPPDATA + '\\Kingsoft\\WPS\\Office6\\Backup'",
-              "evidence": "WPS 版本升级备份",
-              "recommended": true
-            }
-          ]
-        },
-        {
-          "id": "system",
-          "name": "系统相关",
-          "icon": "⚙️",
-          "items": [
-            {
-              "id": "windowsReport",
-              "name": "Windows报告",
-              "risk": "low",
-              "pathPs": "$env:PROGRAMDATA + '\\Microsoft\\Windows\\WER\\ReportArchive'",
-              "evidence": "Windows 错误报告存档",
-              "recommended": true,
-              "deleteMode": "contents"
-            },
             {
               "id": "windowsUpdateLog",
               "name": "Windows更新安装记录",
@@ -64,88 +24,17 @@
               "pathPs": "$env:WINDIR + '\\Logs\\WindowsUpdate'",
               "evidence": "Windows Update 安装日志",
               "recommended": true,
-              "deleteMode": "contents"
+              "deleteMode": "contents",
+              "domain": "system",
+              "group": "updates",
+              "nature": "log",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/system",
+                "importedAt": "2026-09-14"
+              }
             },
-            {
-              "id": "diagnosisData",
-              "name": "诊断数据目录",
-              "risk": "low",
-              "pathPs": "$env:PROGRAMDATA + '\\Microsoft\\Diagnosis'",
-              "evidence": "系统诊断预取数据",
-              "recommended": true,
-              "deleteMode": "contents"
-            },
-            {
-              "id": "explorerRecentDocs",
-              "name": "最近文档注册表记录",
-              "risk": "low",
-              "regKeys": [
-                {
-                  "path": "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\RecentDocs"
-                }
-              ],
-              "evidence": "资源管理器最近打开文档的注册表记录（隐私清理）",
-              "recommended": false
-            },
-            {
-              "id": "explorerRunMRU",
-              "name": "运行对话框历史",
-              "risk": "low",
-              "regKeys": [
-                {
-                  "path": "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\RunMRU"
-                }
-              ],
-              "evidence": "Win+R「运行」历史记录（隐私清理）",
-              "recommended": false
-            },
-            {
-              "id": "shellMuiCache",
-              "name": "资源管理器名称缓存",
-              "risk": "low",
-              "regKeys": [
-                {
-                  "path": "HKCU\\Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\Shell\\MuiCache",
-                  "value": "*"
-                }
-              ],
-              "evidence": "MuiCache 显示名缓存，仅清键值不删键，系统自动重建",
-              "recommended": false
-            },
-            {
-              "id": "systemLogFiles",
-              "name": "系统日志文件目录",
-              "risk": "low",
-              "pathPs": "$env:WINDIR + '\\System32\\LogFiles'",
-              "evidence": "系统/HTTPERR 等日志文件（HiBit 逆向新增，主要清理 HTTPERR 与 W3SVC 站点日志）",
-              "recommended": false,
-              "deleteMode": "contents"
-            },
-            {
-              "id": "windowsDebug",
-              "name": "Windows 调试文件",
-              "risk": "low",
-              "pathPs": "$env:WINDIR + '\\debug'",
-              "evidence": "Windows 调试输出目录（HiBit 逆向新增）",
-              "recommended": false,
-              "deleteMode": "contents"
-            },
-            {
-              "id": "pantherLogs",
-              "name": "Windows 安装日志",
-              "risk": "low",
-              "pathPs": "$env:WINDIR + '\\Panther'",
-              "evidence": "setupact/setuperr 安装日志与镜像部署残留（HiBit 逆向新增）",
-              "recommended": false,
-              "deleteMode": "contents"
-            }
-          ]
-        },
-        {
-          "id": "cache",
-          "name": "缓存文件",
-          "icon": "🗂️",
-          "items": [
             {
               "id": "windowsDownloadCache",
               "name": "Windows下载缓存",
@@ -157,7 +46,16 @@
               ],
               "evidence": "Windows Update 下载缓存",
               "recommended": false,
-              "deleteMode": "contents"
+              "deleteMode": "contents",
+              "domain": "system",
+              "group": "updates",
+              "nature": "updateResidual",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/cache",
+                "importedAt": "2026-09-14"
+              }
             },
             {
               "id": "deliveryOptimization",
@@ -166,8 +64,211 @@
               "pathPs": "$env:WINDIR + '\\SoftwareDistribution\\DeliveryOptimization'",
               "evidence": "更新分发缓存",
               "recommended": true,
-              "deleteMode": "contents"
+              "deleteMode": "contents",
+              "domain": "system",
+              "group": "updates",
+              "nature": "updateResidual",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/cache",
+                "importedAt": "2026-09-14"
+              }
             },
+            {
+              "id": "winsatCache",
+              "name": "Windows 系统评估数据",
+              "risk": "low",
+              "pathPs": "$env:WINDIR + '\\Performance\\WinSAT'",
+              "evidence": "WinSAT 磁盘/图形评估缓存（HiBit 逆向新增）",
+              "recommended": false,
+              "deleteMode": "contents",
+              "domain": "system",
+              "group": "updates",
+              "nature": "updateResidual",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/cache",
+                "importedAt": "2026-09-14"
+              }
+            },
+            {
+              "id": "usoLogs",
+              "name": "更新会话日志",
+              "risk": "low",
+              "pathPs": "$env:PROGRAMDATA + '\\USOShared\\Logs'",
+              "evidence": "Windows Update 会话日志（HiBit 逆向新增）",
+              "recommended": true,
+              "deleteMode": "contents",
+              "domain": "system",
+              "group": "updates",
+              "nature": "updateResidual",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/cache",
+                "importedAt": "2026-09-14"
+              }
+            }
+          ]
+        },
+        {
+          "id": "logs",
+          "name": "日志与诊断",
+          "icon": "📋",
+          "items": [
+            {
+              "id": "windowsReport",
+              "name": "Windows报告",
+              "risk": "low",
+              "pathPs": "$env:PROGRAMDATA + '\\Microsoft\\Windows\\WER\\ReportArchive'",
+              "evidence": "Windows 错误报告存档",
+              "recommended": true,
+              "deleteMode": "contents",
+              "domain": "system",
+              "group": "logs",
+              "nature": "log",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/system",
+                "importedAt": "2026-09-14"
+              }
+            },
+            {
+              "id": "diagnosisData",
+              "name": "诊断数据目录",
+              "risk": "low",
+              "pathPs": "$env:PROGRAMDATA + '\\Microsoft\\Diagnosis'",
+              "evidence": "系统诊断预取数据",
+              "recommended": true,
+              "deleteMode": "contents",
+              "domain": "system",
+              "group": "logs",
+              "nature": "log",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/system",
+                "importedAt": "2026-09-14"
+              }
+            },
+            {
+              "id": "systemLogFiles",
+              "name": "系统日志文件目录",
+              "risk": "low",
+              "pathPs": "$env:WINDIR + '\\System32\\LogFiles'",
+              "evidence": "系统/HTTPERR 等日志文件（HiBit 逆向新增，主要清理 HTTPERR 与 W3SVC 站点日志）",
+              "recommended": false,
+              "deleteMode": "contents",
+              "domain": "system",
+              "group": "logs",
+              "nature": "log",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/system",
+                "importedAt": "2026-09-14"
+              }
+            },
+            {
+              "id": "windowsDebug",
+              "name": "Windows 调试文件",
+              "risk": "low",
+              "pathPs": "$env:WINDIR + '\\debug'",
+              "evidence": "Windows 调试输出目录（HiBit 逆向新增）",
+              "recommended": false,
+              "deleteMode": "contents",
+              "domain": "system",
+              "group": "logs",
+              "nature": "log",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/system",
+                "importedAt": "2026-09-14"
+              }
+            },
+            {
+              "id": "pantherLogs",
+              "name": "Windows 安装日志",
+              "risk": "low",
+              "pathPs": "$env:WINDIR + '\\Panther'",
+              "evidence": "setupact/setuperr 安装日志与镜像部署残留（HiBit 逆向新增）",
+              "recommended": false,
+              "deleteMode": "contents",
+              "domain": "system",
+              "group": "logs",
+              "nature": "log",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/system",
+                "importedAt": "2026-09-14"
+              }
+            },
+            {
+              "id": "werReportQueue",
+              "name": "错误报告队列",
+              "risk": "low",
+              "pathPs": "$env:PROGRAMDATA + '\\Microsoft\\Windows\\WER\\ReportQueue'",
+              "evidence": "待上报的 WER 错误报告队列（与 ReportArchive 配套，HiBit 逆向新增）",
+              "recommended": false,
+              "deleteMode": "contents",
+              "domain": "system",
+              "group": "logs",
+              "nature": "log",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/cache",
+                "importedAt": "2026-09-14"
+              }
+            },
+            {
+              "id": "defenderHistoryRecords",
+              "name": "Windows Defender保护历史记录",
+              "risk": "low",
+              "pathPs": "$env:PROGRAMDATA + '\\Microsoft\\Windows Defender\\Scans\\History\\Results'",
+              "evidence": "Defender 扫描历史",
+              "recommended": true,
+              "deleteMode": "contents",
+              "domain": "system",
+              "group": "logs",
+              "nature": "log",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/app",
+                "importedAt": "2026-09-14"
+              }
+            },
+            {
+              "id": "windowsLogs",
+              "name": "Windows日志",
+              "risk": "low",
+              "pathPs": "$env:WINDIR + '\\System32\\winevt\\Logs'",
+              "evidence": "事件日志目录",
+              "recommended": false,
+              "deleteMode": "contents",
+              "domain": "system",
+              "group": "logs",
+              "nature": "log",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/temp",
+                "importedAt": "2026-09-14"
+              }
+            }
+          ]
+        },
+        {
+          "id": "caches",
+          "name": "缓存与预读",
+          "icon": "⚡",
+          "items": [
             {
               "id": "terminalServerCache",
               "name": "Terminal Server Client缓存",
@@ -175,7 +276,16 @@
               "pathPs": "$env:LOCALAPPDATA + '\\Microsoft\\Terminal Server Client\\Cache'",
               "evidence": "远程桌面位图缓存",
               "recommended": true,
-              "deleteMode": "contents"
+              "deleteMode": "contents",
+              "domain": "system",
+              "group": "caches",
+              "nature": "cache",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/cache",
+                "importedAt": "2026-09-14"
+              }
             },
             {
               "id": "dotNetCache",
@@ -184,7 +294,16 @@
               "pathPs": "$env:LOCALAPPDATA + '\\Microsoft\\CLR_v4.0\\UsageLogs'",
               "evidence": "CLR 使用日志",
               "recommended": true,
-              "deleteMode": "contents"
+              "deleteMode": "contents",
+              "domain": "system",
+              "group": "caches",
+              "nature": "cache",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/cache",
+                "importedAt": "2026-09-14"
+              }
             },
             {
               "id": "prefetchFiles",
@@ -193,7 +312,16 @@
               "pathPs": "$env:WINDIR + '\\Prefetch'",
               "evidence": "Prefetch 预读",
               "recommended": false,
-              "deleteMode": "contents"
+              "deleteMode": "contents",
+              "domain": "system",
+              "group": "caches",
+              "nature": "cache",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/cache",
+                "importedAt": "2026-09-14"
+              }
             },
             {
               "id": "thumbnailCacheFiles",
@@ -211,7 +339,16 @@
               ],
               "evidence": "资源管理器缩略图缓存数据库",
               "recommended": false,
-              "deleteMode": "contents"
+              "deleteMode": "contents",
+              "domain": "system",
+              "group": "caches",
+              "nature": "cache",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/cache",
+                "importedAt": "2026-09-14"
+              }
             },
             {
               "id": "iconCacheFiles",
@@ -227,7 +364,16 @@
                 "explorer"
               ],
               "evidence": "资源管理器图标缓存数据库（与缩略图缓存同目录，按模式区分）",
-              "recommended": false
+              "recommended": false,
+              "domain": "system",
+              "group": "caches",
+              "nature": "cache",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/cache",
+                "importedAt": "2026-09-14"
+              }
             },
             {
               "id": "winINetCache",
@@ -236,25 +382,16 @@
               "pathPs": "$env:LOCALAPPDATA + '\\Microsoft\\Windows\\INetCache'",
               "evidence": "系统级网页缓存",
               "recommended": true,
-              "deleteMode": "contents"
-            },
-            {
-              "id": "winINetCookies",
-              "name": "WinINet Cookies",
-              "risk": "low",
-              "pathPs": "$env:LOCALAPPDATA + '\\Microsoft\\Windows\\INetCookies'",
-              "evidence": "系统级 Cookie",
-              "recommended": false,
-              "deleteMode": "contents"
-            },
-            {
-              "id": "userCrashDumps",
-              "name": "用户崩溃转储",
-              "risk": "low",
-              "pathPs": "$env:LOCALAPPDATA + '\\CrashDumps'",
-              "evidence": "应用崩溃 .dmp",
-              "recommended": true,
-              "deleteMode": "contents"
+              "deleteMode": "contents",
+              "domain": "system",
+              "group": "caches",
+              "nature": "cache",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/cache",
+                "importedAt": "2026-09-14"
+              }
             },
             {
               "id": "liveKernelReports",
@@ -263,66 +400,23 @@
               "pathPs": "$env:WINDIR + '\\LiveKernelReports'",
               "evidence": "内核实时崩溃报告（HiBit 逆向新增）",
               "recommended": false,
-              "deleteMode": "contents"
-            },
-            {
-              "id": "werReportQueue",
-              "name": "错误报告队列",
-              "risk": "low",
-              "pathPs": "$env:PROGRAMDATA + '\\Microsoft\\Windows\\WER\\ReportQueue'",
-              "evidence": "待上报的 WER 错误报告队列（与 ReportArchive 配套，HiBit 逆向新增）",
-              "recommended": false,
-              "deleteMode": "contents"
-            },
-            {
-              "id": "winsatCache",
-              "name": "Windows 系统评估数据",
-              "risk": "low",
-              "pathPs": "$env:WINDIR + '\\Performance\\WinSAT'",
-              "evidence": "WinSAT 磁盘/图形评估缓存（HiBit 逆向新增）",
-              "recommended": false,
-              "deleteMode": "contents"
-            },
-            {
-              "id": "usoLogs",
-              "name": "更新会话日志",
-              "risk": "low",
-              "pathPs": "$env:PROGRAMDATA + '\\USOShared\\Logs'",
-              "evidence": "Windows Update 会话日志（HiBit 逆向新增）",
-              "recommended": true,
-              "deleteMode": "contents"
+              "deleteMode": "contents",
+              "domain": "system",
+              "group": "caches",
+              "nature": "cache",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/cache",
+                "importedAt": "2026-09-14"
+              }
             }
           ]
         },
         {
-          "id": "app",
-          "name": "应用程序",
-          "icon": "📦",
-          "items": [
-            {
-              "id": "packageCache",
-              "name": "Windows Installer 补丁缓存",
-              "risk": "high",
-              "pathPs": "$env:WINDIR + '\\Installer\\$PatchCache$'",
-              "evidence": "MSI 补丁卸载缓存，删除后已装更新将无法卸载",
-              "recommended": false,
-              "deleteMode": "contents"
-            },
-            {
-              "id": "defenderHistoryRecords",
-              "name": "Windows Defender保护历史记录",
-              "risk": "low",
-              "pathPs": "$env:PROGRAMDATA + '\\Microsoft\\Windows Defender\\Scans\\History\\Results'",
-              "evidence": "Defender 扫描历史",
-              "recommended": true,
-              "deleteMode": "contents"
-            }
-          ]
-        },
-        {
-          "id": "temp",
+          "id": "temps",
           "name": "临时文件",
-          "icon": "📄",
+          "icon": "🧹",
           "items": [
             {
               "id": "winSxsTempFile",
@@ -331,7 +425,16 @@
               "pathPs": "$env:WINDIR + '\\WinSxS\\Temp'",
               "evidence": "组件服务临时",
               "recommended": false,
-              "deleteMode": "contents"
+              "deleteMode": "contents",
+              "domain": "system",
+              "group": "temps",
+              "nature": "temp",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/temp",
+                "importedAt": "2026-09-14"
+              }
             },
             {
               "id": "winSxsTempFile2",
@@ -340,16 +443,16 @@
               "pathPs": "$env:WINDIR + '\\WinSxS\\Temp\\PendingRename'",
               "evidence": "挂起重命名临时",
               "recommended": false,
-              "deleteMode": "contents"
-            },
-            {
-              "id": "windowsLogs",
-              "name": "Windows日志",
-              "risk": "low",
-              "pathPs": "$env:WINDIR + '\\System32\\winevt\\Logs'",
-              "evidence": "事件日志目录",
-              "recommended": false,
-              "deleteMode": "contents"
+              "deleteMode": "contents",
+              "domain": "system",
+              "group": "temps",
+              "nature": "temp",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/temp",
+                "importedAt": "2026-09-14"
+              }
             },
             {
               "id": "tempFiles",
@@ -358,7 +461,16 @@
               "pathPs": "$env:TEMP",
               "evidence": "用户 TEMP",
               "recommended": true,
-              "deleteMode": "contents"
+              "deleteMode": "contents",
+              "domain": "system",
+              "group": "temps",
+              "nature": "temp",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/temp",
+                "importedAt": "2026-09-14"
+              }
             },
             {
               "id": "driverTempExtract",
@@ -367,69 +479,16 @@
               "pathPs": "$env:WINDIR + '\\System32\\DriverStore\\Temp'",
               "evidence": "驱动安装解压残留",
               "recommended": false,
-              "deleteMode": "contents"
-            },
-            {
-              "id": "qqTemp",
-              "name": "QQ临时数据",
-              "risk": "low",
-              "pathPs": "$env:APPDATA + '\\Tencent\\QQ\\Temp'",
-              "evidence": "QQ 临时",
-              "recommended": true,
-              "deleteMode": "contents"
-            },
-            {
-              "id": "baiduNetdiskLog",
-              "name": "百度网盘日志",
-              "risk": "low",
-              "pathPs": "$env:LOCALAPPDATA + '\\Baidu\\BaiduNetdisk\\log'",
-              "evidence": "百度网盘日志",
-              "recommended": true,
-              "deleteMode": "contents"
-            },
-            {
-              "id": "recycleBin",
-              "name": "回收站",
-              "risk": "medium",
-              "pathPs": "'C:\\$Recycle.Bin'",
-              "evidence": "回收站内容",
-              "recommended": false,
-              "deleteMode": "contents"
-            },
-            {
-              "id": "memoryDumpFiles",
-              "name": "系统以及程序崩溃dmp文件（by YukiSakura）",
-              "risk": "low",
-              "pathPs": "$env:WINDIR + '\\Minidump'",
-              "evidence": "蓝屏 minidump",
-              "recommended": true,
-              "deleteMode": "contents"
-            },
-            {
-              "id": "recentFiles",
-              "name": "最近文档快捷方式",
-              "risk": "low",
-              "pathPs": "$env:APPDATA + '\\Microsoft\\Windows\\Recent'",
-              "evidence": "最近使用文件的 .lnk 快捷方式（隐私清理，执行后自动重建目录）",
-              "recommended": false,
-              "deleteMode": "contents"
-            },
-            {
-              "id": "dismComponentCleanup",
-              "name": "DISM 组件清理 (WinSxS /ResetBase)",
-              "risk": "high",
-              "special": "dism",
-              "evidence": "压缩组件存储，更新将不可卸载",
-              "recommended": false
-            },
-            {
-              "id": "directXShaderCache",
-              "name": "DirectX 着色器缓存",
-              "risk": "low",
-              "pathPs": "$env:LOCALAPPDATA + '\\D3DSCache'",
-              "evidence": "DX 着色器缓存",
-              "recommended": true,
-              "deleteMode": "contents"
+              "deleteMode": "contents",
+              "domain": "system",
+              "group": "temps",
+              "nature": "temp",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/temp",
+                "importedAt": "2026-09-14"
+              }
             },
             {
               "id": "systemTemp",
@@ -438,544 +497,1198 @@
               "pathPs": "$env:WINDIR + '\\Temp'",
               "evidence": "系统级 TEMP（区别于用户 TEMP，HiBit 逆向新增）",
               "recommended": true,
-              "deleteMode": "contents"
+              "deleteMode": "contents",
+              "domain": "system",
+              "group": "temps",
+              "nature": "temp",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/temp",
+                "importedAt": "2026-09-14"
+              }
+            }
+          ]
+        },
+        {
+          "id": "dumps",
+          "name": "崩溃转储",
+          "icon": "💥",
+          "items": [
+            {
+              "id": "userCrashDumps",
+              "name": "用户崩溃转储",
+              "risk": "low",
+              "pathPs": "$env:LOCALAPPDATA + '\\CrashDumps'",
+              "evidence": "应用崩溃 .dmp",
+              "recommended": true,
+              "deleteMode": "contents",
+              "domain": "system",
+              "group": "dumps",
+              "nature": "dump",
+              "regenerable": false,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/cache",
+                "importedAt": "2026-09-14"
+              }
+            },
+            {
+              "id": "memoryDumpFiles",
+              "name": "系统以及程序崩溃dmp文件（by YukiSakura）",
+              "risk": "low",
+              "pathPs": "$env:WINDIR + '\\Minidump'",
+              "evidence": "蓝屏 minidump",
+              "recommended": true,
+              "deleteMode": "contents",
+              "domain": "system",
+              "group": "dumps",
+              "nature": "dump",
+              "regenerable": false,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/temp",
+                "importedAt": "2026-09-14"
+              }
+            }
+          ]
+        },
+        {
+          "id": "history",
+          "name": "隐私历史",
+          "icon": "🕘",
+          "items": [
+            {
+              "id": "explorerRecentDocs",
+              "name": "最近文档注册表记录",
+              "risk": "low",
+              "regKeys": [
+                {
+                  "path": "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\RecentDocs"
+                }
+              ],
+              "evidence": "资源管理器最近打开文档的注册表记录（隐私清理）",
+              "recommended": false,
+              "domain": "system",
+              "group": "history",
+              "nature": "history",
+              "regenerable": false,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/system",
+                "importedAt": "2026-09-14"
+              }
+            },
+            {
+              "id": "explorerRunMRU",
+              "name": "运行对话框历史",
+              "risk": "low",
+              "regKeys": [
+                {
+                  "path": "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\RunMRU"
+                }
+              ],
+              "evidence": "Win+R「运行」历史记录（隐私清理）",
+              "recommended": false,
+              "domain": "system",
+              "group": "history",
+              "nature": "history",
+              "regenerable": false,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/system",
+                "importedAt": "2026-09-14"
+              }
+            },
+            {
+              "id": "shellMuiCache",
+              "name": "资源管理器名称缓存",
+              "risk": "low",
+              "regKeys": [
+                {
+                  "path": "HKCU\\Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\Shell\\MuiCache",
+                  "value": "*"
+                }
+              ],
+              "evidence": "MuiCache 显示名缓存，仅清键值不删键，系统自动重建",
+              "recommended": false,
+              "domain": "system",
+              "group": "history",
+              "nature": "history",
+              "regenerable": false,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/system",
+                "importedAt": "2026-09-14"
+              }
+            },
+            {
+              "id": "winINetCookies",
+              "name": "WinINet Cookies",
+              "risk": "low",
+              "pathPs": "$env:LOCALAPPDATA + '\\Microsoft\\Windows\\INetCookies'",
+              "evidence": "系统级 Cookie",
+              "recommended": false,
+              "deleteMode": "contents",
+              "domain": "system",
+              "group": "history",
+              "nature": "history",
+              "regenerable": false,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/cache",
+                "importedAt": "2026-09-14"
+              }
+            },
+            {
+              "id": "recentFiles",
+              "name": "最近文档快捷方式",
+              "risk": "low",
+              "pathPs": "$env:APPDATA + '\\Microsoft\\Windows\\Recent'",
+              "evidence": "最近使用文件的 .lnk 快捷方式（隐私清理，执行后自动重建目录）",
+              "recommended": false,
+              "deleteMode": "contents",
+              "domain": "system",
+              "group": "history",
+              "nature": "history",
+              "regenerable": false,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/temp",
+                "importedAt": "2026-09-14"
+              }
+            }
+          ]
+        },
+        {
+          "id": "stale",
+          "name": "过时备份",
+          "icon": "📦",
+          "items": [
+            {
+              "id": "dismPlusOld",
+              "name": "以前的Dism++组件",
+              "risk": "low",
+              "pathPs": "$env:LOCALAPPDATA + '\\Dism++Backup'",
+              "evidence": "Dism++ 组件操作历史备份",
+              "recommended": true,
+              "domain": "system",
+              "group": "stale",
+              "nature": "staleBackup",
+              "regenerable": false,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/outdated",
+                "importedAt": "2026-09-14"
+              }
             }
           ]
         }
       ]
     },
     {
-      "key": "gpu",
-      "title": "显卡缓存",
-      "icon": "<svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"currentColor\"><path d=\"M2 7v10l3 2v-3h2v3l3 2v-3h2v3l3 2v-3h2v3l3 2V7l-3-2v3h-2V5l-3-2v3h-2V3l-3 2v3H7V5L4 7v3H2z\"/></svg>",
-      "items": [
+      "key": "app",
+      "title": "应用清理",
+      "icon": "<svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"currentColor\"><path d=\"M20 2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h4l4 4 4-4h4c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z\"/></svg>",
+      "subGroups": [
         {
-          "id": "nvidiaCache",
-          "name": "NVIDIA 显卡缓存 (GLCache/DXCache)",
-          "risk": "low",
-          "pathPs": "$env:LOCALAPPDATA + '\\NVIDIA'",
-          "evidence": "NVIDIA 编译着色器缓存",
-          "recommended": true,
-          "deleteMode": "contents"
+          "id": "im",
+          "name": "即时通讯",
+          "icon": "💬",
+          "items": [
+            {
+              "id": "qqTemp",
+              "name": "QQ临时数据",
+              "risk": "low",
+              "pathPs": "$env:APPDATA + '\\Tencent\\QQ\\Temp'",
+              "evidence": "QQ 临时",
+              "recommended": true,
+              "deleteMode": "contents",
+              "domain": "app",
+              "group": "im",
+              "nature": "cache",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/temp",
+                "importedAt": "2026-09-14"
+              }
+            },
+            {
+              "id": "wechatCache",
+              "name": "微信缓存",
+              "risk": "low",
+              "pathPs": "''",
+              "globCandidatesPs": [
+                "($env:USERPROFILE + '\\Documents\\xwechat_files\\*\\temp')",
+                "($env:USERPROFILE + '\\Documents\\WeChat Files\\*\\FileStorage\\Cache')"
+              ],
+              "requiredStoppedProcesses": [
+                "wechat"
+              ],
+              "evidence": "微信文件缓存",
+              "recommended": true,
+              "deleteMode": "contents",
+              "domain": "app",
+              "group": "im",
+              "nature": "cache",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "apps",
+                "importedAt": "2026-09-14"
+              }
+            },
+            {
+              "id": "qqCache",
+              "name": "QQ缓存",
+              "risk": "low",
+              "pathPs": "$env:APPDATA + '\\Tencent\\QQ'",
+              "candidatesPs": [
+                "$env:APPDATA + '\\Tencent\\QQ\\Cache'",
+                "$env:LOCALAPPDATA + '\\Tencent\\QQNT\\User Data\\Cache'",
+                "$env:APPDATA + '\\Tencent Files\\Cache'",
+                "$env:APPDATA + '\\Tencent\\QQ'"
+              ],
+              "requiredStoppedProcesses": [
+                "qq",
+                "qqnt"
+              ],
+              "evidence": "QQ 缓存",
+              "recommended": true,
+              "deleteMode": "contents",
+              "domain": "app",
+              "group": "im",
+              "nature": "cache",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "apps",
+                "importedAt": "2026-09-14"
+              }
+            },
+            {
+              "id": "qqFileClean",
+              "name": "QQ文件清理",
+              "risk": "low",
+              "fileCleanType": "qq",
+              "evidence": "QQ 图片/视频/文件分类清理",
+              "recommended": false,
+              "domain": "app",
+              "group": "im",
+              "nature": "fileClean",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "fileclean",
+                "importedAt": "2026-09-14"
+              }
+            },
+            {
+              "id": "wechatFileClean",
+              "name": "微信文件清理",
+              "risk": "low",
+              "fileCleanType": "wechat",
+              "evidence": "微信图片/视频/文件分类清理",
+              "recommended": false,
+              "domain": "app",
+              "group": "im",
+              "nature": "fileClean",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "fileclean",
+                "importedAt": "2026-09-14"
+              }
+            }
+          ]
         },
         {
-          "id": "nvidiaNvCache",
-          "name": "NVIDIA 全局缓存 (NV_Cache)",
-          "risk": "low",
-          "pathPs": "$env:PROGRAMDATA + '\\NVIDIA Corporation\\NV_Cache'",
-          "evidence": "NVIDIA 全局安装缓存",
-          "recommended": true,
-          "deleteMode": "contents"
+          "id": "media",
+          "name": "影音娱乐",
+          "icon": "🎬",
+          "items": [
+            {
+              "id": "neteaseMusicCache",
+              "name": "网易云音乐缓存",
+              "risk": "low",
+              "pathPs": "($env:LOCALAPPDATA + '\\NetEase\\CloudMusic\\Cache')",
+              "candidatesPs": [
+                "($env:LOCALAPPDATA + '\\NetEase\\CloudMusic\\Cache')",
+                "($env:APPDATA + '\\NetEase\\CloudMusic\\Cache')",
+                "($env:LOCALAPPDATA + '\\Netease\\CloudMusic\\Cache')"
+              ],
+              "requiredStoppedProcesses": [
+                "cloudmusic"
+              ],
+              "evidence": "网易云音乐缓存",
+              "recommended": true,
+              "deleteMode": "contents",
+              "domain": "app",
+              "group": "media",
+              "nature": "cache",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "apps",
+                "importedAt": "2026-09-14"
+              }
+            },
+            {
+              "id": "douyinCache",
+              "name": "抖音缓存",
+              "risk": "low",
+              "pathPs": "($env:LOCALAPPDATA + '\\Douyin')",
+              "candidatesPs": [
+                "($env:LOCALAPPDATA + '\\Douyin')",
+                "($env:USERPROFILE + '\\AppData\\Local\\Douyin')",
+                "($env:LOCALAPPDATA + '\\TikTok')"
+              ],
+              "requiredStoppedProcesses": [
+                "douyin"
+              ],
+              "evidence": "抖音缓存",
+              "recommended": true,
+              "deleteMode": "contents",
+              "domain": "app",
+              "group": "media",
+              "nature": "cache",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "apps",
+                "importedAt": "2026-09-14"
+              }
+            }
+          ]
         },
         {
-          "id": "amdCache",
-          "name": "AMD 显卡缓存 (DxCache/Cache)",
-          "risk": "low",
-          "pathPs": "$env:LOCALAPPDATA + '\\AMD'",
-          "evidence": "AMD 着色器缓存",
-          "recommended": true,
-          "deleteMode": "contents"
+          "id": "netdisk",
+          "name": "网盘与下载",
+          "icon": "☁️",
+          "items": [
+            {
+              "id": "baiduNetdiskLog",
+              "name": "百度网盘日志",
+              "risk": "low",
+              "pathPs": "$env:LOCALAPPDATA + '\\Baidu\\BaiduNetdisk\\log'",
+              "evidence": "百度网盘日志",
+              "recommended": true,
+              "deleteMode": "contents",
+              "domain": "app",
+              "group": "netdisk",
+              "nature": "log",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/temp",
+                "importedAt": "2026-09-14"
+              }
+            }
+          ]
         },
         {
-          "id": "intelShaderCache",
-          "name": "Intel 着色器缓存",
-          "risk": "low",
-          "pathPs": "$env:LOCALAPPDATA + '\\Intel\\ShaderCache'",
-          "evidence": "Intel 核显着色器缓存",
-          "recommended": true,
-          "deleteMode": "contents"
+          "id": "office",
+          "name": "办公与文档",
+          "icon": "📄",
+          "items": [
+            {
+              "id": "wpsOldBackup",
+              "name": "WPS老版本备份",
+              "risk": "low",
+              "pathPs": "$env:LOCALAPPDATA + '\\Kingsoft\\WPS\\Office6\\Backup'",
+              "evidence": "WPS 版本升级备份",
+              "recommended": true,
+              "domain": "app",
+              "group": "office",
+              "nature": "staleBackup",
+              "regenerable": false,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/outdated",
+                "importedAt": "2026-09-14"
+              }
+            },
+            {
+              "id": "officeFileCache",
+              "name": "Office 文件缓存",
+              "risk": "medium",
+              "detect": [
+                {
+                  "type": "file",
+                  "path": "%LOCALAPPDATA%\\Microsoft\\Office"
+                }
+              ],
+              "fileKeys": [
+                {
+                  "path": "%LOCALAPPDATA%\\Microsoft\\Office\\*\\OfficeFileCache"
+                }
+              ],
+              "requiredStoppedProcesses": [
+                "WINWORD",
+                "EXCEL",
+                "POWERPNT",
+                "OUTLOOK"
+              ],
+              "evidence": "Office 上传中心文件缓存（通配 15.0/16.0 版本目录）",
+              "recommended": false,
+              "domain": "app",
+              "group": "office",
+              "nature": "cache",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "apps",
+                "importedAt": "2026-09-14"
+              }
+            }
+          ]
+        },
+        {
+          "id": "game",
+          "name": "游戏平台",
+          "icon": "🎮",
+          "items": [
+            {
+              "id": "steamCache",
+              "name": "Steam 下载与缓存",
+              "risk": "low",
+              "pathPs": "'C:\\Program Files (x86)\\Steam\\appcache'",
+              "requiredStoppedProcesses": [
+                "steam"
+              ],
+              "evidence": "Steam 下载缓存",
+              "recommended": true,
+              "deleteMode": "contents",
+              "domain": "app",
+              "group": "game",
+              "nature": "cache",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "apps",
+                "importedAt": "2026-09-14"
+              }
+            },
+            {
+              "id": "steamHtmlCache",
+              "name": "Steam 内置浏览器缓存",
+              "risk": "low",
+              "detect": [
+                {
+                  "type": "file",
+                  "path": "%LOCALAPPDATA%\\Steam\\htmlcache"
+                }
+              ],
+              "fileKeys": [
+                {
+                  "path": "%LOCALAPPDATA%\\Steam\\htmlcache"
+                }
+              ],
+              "requiredStoppedProcesses": [
+                "steam"
+              ],
+              "evidence": "Steam 客户端内置浏览器（CEF）缓存",
+              "recommended": false,
+              "domain": "app",
+              "group": "game",
+              "nature": "cache",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "apps",
+                "importedAt": "2026-09-14"
+              }
+            },
+            {
+              "id": "epicWebCache",
+              "name": "Epic 启动器网页缓存",
+              "risk": "low",
+              "detect": [
+                {
+                  "type": "file",
+                  "path": "%LOCALAPPDATA%\\Epic Games Launcher\\Saved\\webcache"
+                }
+              ],
+              "fileKeys": [
+                {
+                  "path": "%LOCALAPPDATA%\\Epic Games Launcher\\Saved\\webcache"
+                }
+              ],
+              "requiredStoppedProcesses": [
+                "EpicGamesLauncher"
+              ],
+              "evidence": "Epic Games Launcher 内置浏览器缓存",
+              "recommended": false,
+              "domain": "app",
+              "group": "game",
+              "nature": "cache",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "apps",
+                "importedAt": "2026-09-14"
+              }
+            }
+          ]
+        },
+        {
+          "id": "dev",
+          "name": "开发工具",
+          "icon": "🛠️",
+          "items": [
+            {
+              "id": "vscodeCache",
+              "name": "VS Code 缓存",
+              "risk": "low",
+              "detect": [
+                {
+                  "type": "file",
+                  "path": "%APPDATA%\\Code"
+                }
+              ],
+              "fileKeys": [
+                {
+                  "path": "%APPDATA%\\Code\\Cache"
+                },
+                {
+                  "path": "%APPDATA%\\Code\\CachedData"
+                },
+                {
+                  "path": "%APPDATA%\\Code\\Code Cache"
+                },
+                {
+                  "path": "%APPDATA%\\Code\\GPUCache"
+                }
+              ],
+              "requiredStoppedProcesses": [
+                "Code"
+              ],
+              "evidence": "VS Code 渲染/程序/GPU 缓存",
+              "recommended": true,
+              "domain": "app",
+              "group": "dev",
+              "nature": "cache",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "apps",
+                "importedAt": "2026-09-14"
+              }
+            },
+            {
+              "id": "jetbrainsCache",
+              "name": "JetBrains IDE 缓存",
+              "risk": "low",
+              "detect": [
+                {
+                  "type": "file",
+                  "path": "%LOCALAPPDATA%\\JetBrains"
+                }
+              ],
+              "fileKeys": [
+                {
+                  "path": "%LOCALAPPDATA%\\JetBrains\\*\\caches"
+                },
+                {
+                  "path": "%LOCALAPPDATA%\\JetBrains\\*\\log"
+                }
+              ],
+              "evidence": "JetBrains 系列 IDE 的索引缓存与日志（通配各产品版本目录）",
+              "recommended": false,
+              "domain": "app",
+              "group": "dev",
+              "nature": "cache",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "apps",
+                "importedAt": "2026-09-14"
+              }
+            },
+            {
+              "id": "npmCache",
+              "name": "npm 包缓存",
+              "risk": "low",
+              "detect": [
+                {
+                  "type": "file",
+                  "path": "%LOCALAPPDATA%\\npm-cache"
+                }
+              ],
+              "fileKeys": [
+                {
+                  "path": "%LOCALAPPDATA%\\npm-cache"
+                }
+              ],
+              "evidence": "npm 下载缓存（内容寻址校验，可安全清除）",
+              "recommended": true,
+              "domain": "app",
+              "group": "dev",
+              "nature": "cache",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "apps",
+                "importedAt": "2026-09-14"
+              }
+            },
+            {
+              "id": "pipCache",
+              "name": "pip 包缓存",
+              "risk": "low",
+              "detect": [
+                {
+                  "type": "file",
+                  "path": "%LOCALAPPDATA%\\pip\\cache"
+                }
+              ],
+              "fileKeys": [
+                {
+                  "path": "%LOCALAPPDATA%\\pip\\cache"
+                }
+              ],
+              "evidence": "pip 下载/构建缓存",
+              "recommended": true,
+              "domain": "app",
+              "group": "dev",
+              "nature": "cache",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "apps",
+                "importedAt": "2026-09-14"
+              }
+            },
+            {
+              "id": "nugetCache",
+              "name": "NuGet 全局包缓存",
+              "risk": "medium",
+              "detect": [
+                {
+                  "type": "file",
+                  "path": "%USERPROFILE%\\.nuget\\packages"
+                }
+              ],
+              "fileKeys": [
+                {
+                  "path": "%USERPROFILE%\\.nuget\\packages"
+                }
+              ],
+              "evidence": "NuGet 全局包目录（删除后首次构建将自动重新还原）",
+              "recommended": false,
+              "domain": "app",
+              "group": "dev",
+              "nature": "cache",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "apps",
+                "importedAt": "2026-09-14"
+              }
+            }
+          ]
         }
       ]
     },
     {
       "key": "browser",
-      "title": "浏览器",
+      "title": "浏览器清理",
       "icon": "<svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"currentColor\"><path d=\"M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z\"/></svg>",
-      "items": [
+      "subGroups": [
         {
-          "id": "chromeCache",
-          "name": "Chrome 浏览器缓存",
-          "risk": "low",
-          "detect": [
+          "id": "webpage",
+          "name": "网页缓存",
+          "icon": "🌐",
+          "items": [
             {
-              "type": "file",
-              "path": "%LOCALAPPDATA%\\Google\\Chrome\\User Data"
+              "id": "chromeCache",
+              "name": "Chrome 浏览器缓存",
+              "risk": "low",
+              "detect": [
+                {
+                  "type": "file",
+                  "path": "%LOCALAPPDATA%\\Google\\Chrome\\User Data"
+                }
+              ],
+              "fileKeys": [
+                {
+                  "path": "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\*\\Network\\Cache"
+                },
+                {
+                  "path": "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\*\\Cache"
+                },
+                {
+                  "path": "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\*\\GPUCache"
+                },
+                {
+                  "path": "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\*\\DawnGraphiteCache"
+                },
+                {
+                  "path": "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\*\\DawnWebGPUCache"
+                }
+              ],
+              "requiredStoppedProcesses": [
+                "chrome"
+              ],
+              "evidence": "Chrome 各 Profile 网页缓存（新版 Network\\Cache + 旧版 Cache + GPU/Dawn 着色器缓存，通配所有 Profile）",
+              "recommended": true,
+              "domain": "browser",
+              "group": "webpage",
+              "nature": "cache",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "browser",
+                "importedAt": "2026-09-14"
+              }
+            },
+            {
+              "id": "edgeCache",
+              "name": "Edge 浏览器缓存",
+              "risk": "low",
+              "detect": [
+                {
+                  "type": "file",
+                  "path": "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data"
+                }
+              ],
+              "fileKeys": [
+                {
+                  "path": "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\*\\Network\\Cache"
+                },
+                {
+                  "path": "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\*\\Cache"
+                },
+                {
+                  "path": "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\*\\GPUCache"
+                }
+              ],
+              "requiredStoppedProcesses": [
+                "msedge"
+              ],
+              "evidence": "Edge 各 Profile 网页缓存（新版 Network\\Cache + 旧版 Cache + GPUCache，通配所有 Profile）",
+              "recommended": true,
+              "domain": "browser",
+              "group": "webpage",
+              "nature": "cache",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "browser",
+                "importedAt": "2026-09-14"
+              }
+            },
+            {
+              "id": "qqBrowserCache",
+              "name": "QQ浏览器缓存",
+              "risk": "low",
+              "detect": [
+                {
+                  "type": "file",
+                  "path": "%APPDATA%\\Tencent\\QQBrowser"
+                }
+              ],
+              "fileKeys": [
+                {
+                  "path": "%APPDATA%\\Tencent\\QQBrowser\\User Data\\*\\Cache"
+                }
+              ],
+              "requiredStoppedProcesses": [
+                "QQBrowser"
+              ],
+              "evidence": "QQ浏览器各 Profile 网页缓存",
+              "recommended": false,
+              "domain": "browser",
+              "group": "webpage",
+              "nature": "cache",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "browser",
+                "importedAt": "2026-09-14"
+              }
             }
-          ],
-          "fileKeys": [
-            {
-              "path": "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\*\\Network\\Cache"
-            },
-            {
-              "path": "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\*\\Cache"
-            },
-            {
-              "path": "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\*\\GPUCache"
-            },
-            {
-              "path": "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\*\\DawnGraphiteCache"
-            },
-            {
-              "path": "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\*\\DawnWebGPUCache"
-            }
-          ],
-          "requiredStoppedProcesses": [
-            "chrome"
-          ],
-          "evidence": "Chrome 各 Profile 网页缓存（新版 Network\\Cache + 旧版 Cache + GPU/Dawn 着色器缓存，通配所有 Profile）",
-          "recommended": true
+          ]
         },
         {
-          "id": "chromeCodeCache",
-          "name": "Chrome 代码缓存",
-          "risk": "low",
-          "detect": [
+          "id": "codecache",
+          "name": "代码与媒体缓存",
+          "icon": "🧩",
+          "items": [
             {
-              "type": "file",
-              "path": "%LOCALAPPDATA%\\Google\\Chrome\\User Data"
-            }
-          ],
-          "fileKeys": [
-            {
-              "path": "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\*\\Code Cache"
-            }
-          ],
-          "requiredStoppedProcesses": [
-            "chrome"
-          ],
-          "evidence": "Chrome 各 Profile JS/WASM 缓存",
-          "recommended": true
-        },
-        {
-          "id": "chromeMediaCache",
-          "name": "Chrome 媒体缓存",
-          "risk": "low",
-          "detect": [
-            {
-              "type": "file",
-              "path": "%LOCALAPPDATA%\\Google\\Chrome\\User Data"
-            }
-          ],
-          "fileKeys": [
-            {
-              "path": "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\*\\Media Cache"
-            }
-          ],
-          "requiredStoppedProcesses": [
-            "chrome"
-          ],
-          "evidence": "Chrome 各 Profile 媒体缓存",
-          "recommended": true
-        },
-        {
-          "id": "edgeMediaCache",
-          "name": "Edge 媒体缓存",
-          "risk": "low",
-          "detect": [
-            {
-              "type": "file",
-              "path": "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data"
-            }
-          ],
-          "fileKeys": [
-            {
-              "path": "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\*\\Media Cache"
-            }
-          ],
-          "requiredStoppedProcesses": [
-            "msedge"
-          ],
-          "evidence": "Edge 各 Profile 媒体缓存",
-          "recommended": true
-        },
-        {
-          "id": "edgeCache",
-          "name": "Edge 浏览器缓存",
-          "risk": "low",
-          "detect": [
-            {
-              "type": "file",
-              "path": "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data"
-            }
-          ],
-          "fileKeys": [
-            {
-              "path": "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\*\\Network\\Cache"
+              "id": "chromeCodeCache",
+              "name": "Chrome 代码缓存",
+              "risk": "low",
+              "detect": [
+                {
+                  "type": "file",
+                  "path": "%LOCALAPPDATA%\\Google\\Chrome\\User Data"
+                }
+              ],
+              "fileKeys": [
+                {
+                  "path": "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\*\\Code Cache"
+                }
+              ],
+              "requiredStoppedProcesses": [
+                "chrome"
+              ],
+              "evidence": "Chrome 各 Profile JS/WASM 缓存",
+              "recommended": true,
+              "domain": "browser",
+              "group": "codecache",
+              "nature": "cache",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "browser",
+                "importedAt": "2026-09-14"
+              }
             },
             {
-              "path": "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\*\\Cache"
+              "id": "chromeMediaCache",
+              "name": "Chrome 媒体缓存",
+              "risk": "low",
+              "detect": [
+                {
+                  "type": "file",
+                  "path": "%LOCALAPPDATA%\\Google\\Chrome\\User Data"
+                }
+              ],
+              "fileKeys": [
+                {
+                  "path": "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\*\\Media Cache"
+                }
+              ],
+              "requiredStoppedProcesses": [
+                "chrome"
+              ],
+              "evidence": "Chrome 各 Profile 媒体缓存",
+              "recommended": true,
+              "domain": "browser",
+              "group": "codecache",
+              "nature": "cache",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "browser",
+                "importedAt": "2026-09-14"
+              }
             },
             {
-              "path": "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\*\\GPUCache"
+              "id": "edgeMediaCache",
+              "name": "Edge 媒体缓存",
+              "risk": "low",
+              "detect": [
+                {
+                  "type": "file",
+                  "path": "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data"
+                }
+              ],
+              "fileKeys": [
+                {
+                  "path": "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\*\\Media Cache"
+                }
+              ],
+              "requiredStoppedProcesses": [
+                "msedge"
+              ],
+              "evidence": "Edge 各 Profile 媒体缓存",
+              "recommended": true,
+              "domain": "browser",
+              "group": "codecache",
+              "nature": "cache",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "browser",
+                "importedAt": "2026-09-14"
+              }
+            },
+            {
+              "id": "firefoxCache",
+              "name": "Firefox 浏览器缓存",
+              "risk": "low",
+              "detect": [
+                {
+                  "type": "file",
+                  "path": "%LOCALAPPDATA%\\Mozilla\\Firefox\\Profiles"
+                }
+              ],
+              "fileKeys": [
+                {
+                  "path": "%LOCALAPPDATA%\\Mozilla\\Firefox\\Profiles\\*\\cache2"
+                },
+                {
+                  "path": "%LOCALAPPDATA%\\Mozilla\\Firefox\\Profiles\\*\\startupCache"
+                },
+                {
+                  "path": "%LOCALAPPDATA%\\Mozilla\\Firefox\\Profiles\\*\\shader-cache"
+                }
+              ],
+              "requiredStoppedProcesses": [
+                "firefox"
+              ],
+              "evidence": "Firefox 各 Profile 网页/启动/着色器缓存",
+              "recommended": true,
+              "domain": "browser",
+              "group": "codecache",
+              "nature": "cache",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "browser",
+                "importedAt": "2026-09-14"
+              }
             }
-          ],
-          "requiredStoppedProcesses": [
-            "msedge"
-          ],
-          "evidence": "Edge 各 Profile 网页缓存（新版 Network\\Cache + 旧版 Cache + GPUCache，通配所有 Profile）",
-          "recommended": true
+          ]
         },
         {
-          "id": "firefoxCache",
-          "name": "Firefox 浏览器缓存",
-          "risk": "low",
-          "detect": [
+          "id": "sync",
+          "name": "同步与隐私",
+          "icon": "🔒",
+          "items": [
             {
-              "type": "file",
-              "path": "%LOCALAPPDATA%\\Mozilla\\Firefox\\Profiles"
+              "id": "cloudSyncCache",
+              "name": "云端扫描",
+              "risk": "low",
+              "detect": [
+                {
+                  "type": "file",
+                  "path": "%LOCALAPPDATA%\\Google\\Chrome\\User Data"
+                },
+                {
+                  "type": "file",
+                  "path": "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data"
+                }
+              ],
+              "fileKeys": [
+                {
+                  "path": "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\*\\Sync Data"
+                },
+                {
+                  "path": "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\*\\Sync Data"
+                }
+              ],
+              "evidence": "由 Winapp2 云端浏览器同步缓存规则转换（Chrome/Edge Sync Data），仅清空目录内容，浏览器自动重建",
+              "recommended": false,
+              "domain": "browser",
+              "group": "sync",
+              "nature": "history",
+              "regenerable": false,
+              "prov": {
+                "source": "builtin",
+                "ref": "browser",
+                "importedAt": "2026-09-14"
+              }
             }
-          ],
-          "fileKeys": [
-            {
-              "path": "%LOCALAPPDATA%\\Mozilla\\Firefox\\Profiles\\*\\cache2"
-            },
-            {
-              "path": "%LOCALAPPDATA%\\Mozilla\\Firefox\\Profiles\\*\\startupCache"
-            },
-            {
-              "path": "%LOCALAPPDATA%\\Mozilla\\Firefox\\Profiles\\*\\shader-cache"
-            }
-          ],
-          "requiredStoppedProcesses": [
-            "firefox"
-          ],
-          "evidence": "Firefox 各 Profile 网页/启动/着色器缓存",
-          "recommended": true
+          ]
         },
         {
-          "id": "qqBrowserCache",
-          "name": "QQ浏览器缓存",
-          "risk": "low",
-          "detect": [
+          "id": "stale",
+          "name": "过时版本备份",
+          "icon": "📦",
+          "items": [
             {
-              "type": "file",
-              "path": "%APPDATA%\\Tencent\\QQBrowser"
+              "id": "chromeOldBackup",
+              "name": "Chrome浏览器老版本备份",
+              "risk": "low",
+              "pathPs": "$env:LOCALAPPDATA + '\\Google\\Chrome\\User Data\\Default\\OldBackup'",
+              "evidence": "Chrome 升级残留旧版本备份",
+              "recommended": true,
+              "domain": "browser",
+              "group": "stale",
+              "nature": "staleBackup",
+              "regenerable": false,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/outdated",
+                "importedAt": "2026-09-14"
+              }
             }
-          ],
-          "fileKeys": [
-            {
-              "path": "%APPDATA%\\Tencent\\QQBrowser\\User Data\\*\\Cache"
-            }
-          ],
-          "requiredStoppedProcesses": [
-            "QQBrowser"
-          ],
-          "evidence": "QQ浏览器各 Profile 网页缓存",
-          "recommended": false
-        },
-        {
-          "id": "cloudSyncCache",
-          "name": "云端扫描",
-          "risk": "low",
-          "detect": [
-            {
-              "type": "file",
-              "path": "%LOCALAPPDATA%\\Google\\Chrome\\User Data"
-            },
-            {
-              "type": "file",
-              "path": "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data"
-            }
-          ],
-          "fileKeys": [
-            {
-              "path": "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\*\\Sync Data"
-            },
-            {
-              "path": "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\*\\Sync Data"
-            }
-          ],
-          "evidence": "由 Winapp2 云端浏览器同步缓存规则转换（Chrome/Edge Sync Data），仅清空目录内容，浏览器自动重建",
-          "recommended": false
+          ]
         }
       ]
     },
     {
-      "key": "apps",
-      "title": "应用程序",
-      "icon": "<svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"currentColor\"><path d=\"M4 8h4V4H4v4zm6 12h4v-4h-4v4zm-6 0h4v-4H4v4zm0-6h4v-4H4v4zm6 0h4v-4h-4v4zm6-10v4h4V4h-4zm-6 4h4V4h-4v4zm6 6h4v-4h-4v4zm0 6h4v-4h-4v4z\"/></svg>",
-      "items": [
+      "key": "gfx",
+      "title": "图形与加速",
+      "icon": "<svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"currentColor\"><path d=\"M7 14c1.66 0 3-1.34 3-3S8.66 8 7 8s-3 1.34-3 3 1.34 3 3 3zm5-6h10V5H12v3zm0 12h10v-3H12v3zm0-6h10v-3H12v3zM4 9h2v2H2v-2h2zm0 12v-2h2v2H4zm-2-6h4v2H2v-2z\"/></svg>",
+      "subGroups": [
         {
-          "id": "steamCache",
-          "name": "Steam 下载与缓存",
-          "risk": "low",
-          "pathPs": "'C:\\Program Files (x86)\\Steam\\appcache'",
-          "requiredStoppedProcesses": [
-            "steam"
-          ],
-          "evidence": "Steam 下载缓存",
-          "recommended": true,
-          "deleteMode": "contents"
-        },
-        {
-          "id": "steamHtmlCache",
-          "name": "Steam 内置浏览器缓存",
-          "risk": "low",
-          "detect": [
+          "id": "shader",
+          "name": "显卡着色器缓存",
+          "icon": "🎮",
+          "items": [
             {
-              "type": "file",
-              "path": "%LOCALAPPDATA%\\Steam\\htmlcache"
-            }
-          ],
-          "fileKeys": [
-            {
-              "path": "%LOCALAPPDATA%\\Steam\\htmlcache"
-            }
-          ],
-          "requiredStoppedProcesses": [
-            "steam"
-          ],
-          "evidence": "Steam 客户端内置浏览器（CEF）缓存",
-          "recommended": false
-        },
-        {
-          "id": "epicWebCache",
-          "name": "Epic 启动器网页缓存",
-          "risk": "low",
-          "detect": [
-            {
-              "type": "file",
-              "path": "%LOCALAPPDATA%\\Epic Games Launcher\\Saved\\webcache"
-            }
-          ],
-          "fileKeys": [
-            {
-              "path": "%LOCALAPPDATA%\\Epic Games Launcher\\Saved\\webcache"
-            }
-          ],
-          "requiredStoppedProcesses": [
-            "EpicGamesLauncher"
-          ],
-          "evidence": "Epic Games Launcher 内置浏览器缓存",
-          "recommended": false
-        },
-        {
-          "id": "officeFileCache",
-          "name": "Office 文件缓存",
-          "risk": "medium",
-          "detect": [
-            {
-              "type": "file",
-              "path": "%LOCALAPPDATA%\\Microsoft\\Office"
-            }
-          ],
-          "fileKeys": [
-            {
-              "path": "%LOCALAPPDATA%\\Microsoft\\Office\\*\\OfficeFileCache"
-            }
-          ],
-          "requiredStoppedProcesses": [
-            "WINWORD",
-            "EXCEL",
-            "POWERPNT",
-            "OUTLOOK"
-          ],
-          "evidence": "Office 上传中心文件缓存（通配 15.0/16.0 版本目录）",
-          "recommended": false
-        },
-        {
-          "id": "neteaseMusicCache",
-          "name": "网易云音乐缓存",
-          "risk": "low",
-          "pathPs": "($env:LOCALAPPDATA + '\\NetEase\\CloudMusic\\Cache')",
-          "candidatesPs": [
-            "($env:LOCALAPPDATA + '\\NetEase\\CloudMusic\\Cache')",
-            "($env:APPDATA + '\\NetEase\\CloudMusic\\Cache')",
-            "($env:LOCALAPPDATA + '\\Netease\\CloudMusic\\Cache')"
-          ],
-          "requiredStoppedProcesses": [
-            "cloudmusic"
-          ],
-          "evidence": "网易云音乐缓存",
-          "recommended": true,
-          "deleteMode": "contents"
-        },
-        {
-          "id": "wechatCache",
-          "name": "微信缓存",
-          "risk": "low",
-          "pathPs": "''",
-          "globCandidatesPs": [
-            "($env:USERPROFILE + '\\Documents\\xwechat_files\\*\\temp')",
-            "($env:USERPROFILE + '\\Documents\\WeChat Files\\*\\FileStorage\\Cache')"
-          ],
-          "requiredStoppedProcesses": [
-            "wechat"
-          ],
-          "evidence": "微信文件缓存",
-          "recommended": true,
-          "deleteMode": "contents"
-        },
-        {
-          "id": "qqCache",
-          "name": "QQ缓存",
-          "risk": "low",
-          "pathPs": "$env:APPDATA + '\\Tencent\\QQ'",
-          "candidatesPs": [
-            "$env:APPDATA + '\\Tencent\\QQ\\Cache'",
-            "$env:LOCALAPPDATA + '\\Tencent\\QQNT\\User Data\\Cache'",
-            "$env:APPDATA + '\\Tencent Files\\Cache'",
-            "$env:APPDATA + '\\Tencent\\QQ'"
-          ],
-          "requiredStoppedProcesses": [
-            "qq",
-            "qqnt"
-          ],
-          "evidence": "QQ 缓存",
-          "recommended": true,
-          "deleteMode": "contents"
-        },
-        {
-          "id": "douyinCache",
-          "name": "抖音缓存",
-          "risk": "low",
-          "pathPs": "($env:LOCALAPPDATA + '\\Douyin')",
-          "candidatesPs": [
-            "($env:LOCALAPPDATA + '\\Douyin')",
-            "($env:USERPROFILE + '\\AppData\\Local\\Douyin')",
-            "($env:LOCALAPPDATA + '\\TikTok')"
-          ],
-          "requiredStoppedProcesses": [
-            "douyin"
-          ],
-          "evidence": "抖音缓存",
-          "recommended": true,
-          "deleteMode": "contents"
-        },
-        {
-          "id": "vscodeCache",
-          "name": "VS Code 缓存",
-          "risk": "low",
-          "detect": [
-            {
-              "type": "file",
-              "path": "%APPDATA%\\Code"
-            }
-          ],
-          "fileKeys": [
-            {
-              "path": "%APPDATA%\\Code\\Cache"
+              "id": "nvidiaCache",
+              "name": "NVIDIA 显卡缓存 (GLCache/DXCache)",
+              "risk": "low",
+              "pathPs": "$env:LOCALAPPDATA + '\\NVIDIA'",
+              "evidence": "NVIDIA 编译着色器缓存",
+              "recommended": true,
+              "deleteMode": "contents",
+              "domain": "gfx",
+              "group": "shader",
+              "nature": "cache",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "gpu",
+                "importedAt": "2026-09-14"
+              }
             },
             {
-              "path": "%APPDATA%\\Code\\CachedData"
+              "id": "nvidiaNvCache",
+              "name": "NVIDIA 全局缓存 (NV_Cache)",
+              "risk": "low",
+              "pathPs": "$env:PROGRAMDATA + '\\NVIDIA Corporation\\NV_Cache'",
+              "evidence": "NVIDIA 全局安装缓存",
+              "recommended": true,
+              "deleteMode": "contents",
+              "domain": "gfx",
+              "group": "shader",
+              "nature": "cache",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "gpu",
+                "importedAt": "2026-09-14"
+              }
             },
             {
-              "path": "%APPDATA%\\Code\\Code Cache"
+              "id": "amdCache",
+              "name": "AMD 显卡缓存 (DxCache/Cache)",
+              "risk": "low",
+              "pathPs": "$env:LOCALAPPDATA + '\\AMD'",
+              "evidence": "AMD 着色器缓存",
+              "recommended": true,
+              "deleteMode": "contents",
+              "domain": "gfx",
+              "group": "shader",
+              "nature": "cache",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "gpu",
+                "importedAt": "2026-09-14"
+              }
             },
             {
-              "path": "%APPDATA%\\Code\\GPUCache"
+              "id": "intelShaderCache",
+              "name": "Intel 着色器缓存",
+              "risk": "low",
+              "pathPs": "$env:LOCALAPPDATA + '\\Intel\\ShaderCache'",
+              "evidence": "Intel 核显着色器缓存",
+              "recommended": true,
+              "deleteMode": "contents",
+              "domain": "gfx",
+              "group": "shader",
+              "nature": "cache",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "gpu",
+                "importedAt": "2026-09-14"
+              }
             }
-          ],
-          "requiredStoppedProcesses": [
-            "Code"
-          ],
-          "evidence": "VS Code 渲染/程序/GPU 缓存",
-          "recommended": true
+          ]
         },
         {
-          "id": "jetbrainsCache",
-          "name": "JetBrains IDE 缓存",
-          "risk": "low",
-          "detect": [
+          "id": "sysgfx",
+          "name": "系统图形缓存",
+          "icon": "⚡",
+          "items": [
             {
-              "type": "file",
-              "path": "%LOCALAPPDATA%\\JetBrains"
+              "id": "directXShaderCache",
+              "name": "DirectX 着色器缓存",
+              "risk": "low",
+              "pathPs": "$env:LOCALAPPDATA + '\\D3DSCache'",
+              "evidence": "DX 着色器缓存",
+              "recommended": true,
+              "deleteMode": "contents",
+              "domain": "gfx",
+              "group": "sysgfx",
+              "nature": "cache",
+              "regenerable": true,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/temp",
+                "importedAt": "2026-09-14"
+              }
             }
-          ],
-          "fileKeys": [
-            {
-              "path": "%LOCALAPPDATA%\\JetBrains\\*\\caches"
-            },
-            {
-              "path": "%LOCALAPPDATA%\\JetBrains\\*\\log"
-            }
-          ],
-          "evidence": "JetBrains 系列 IDE 的索引缓存与日志（通配各产品版本目录）",
-          "recommended": false
-        },
-        {
-          "id": "npmCache",
-          "name": "npm 包缓存",
-          "risk": "low",
-          "detect": [
-            {
-              "type": "file",
-              "path": "%LOCALAPPDATA%\\npm-cache"
-            }
-          ],
-          "fileKeys": [
-            {
-              "path": "%LOCALAPPDATA%\\npm-cache"
-            }
-          ],
-          "evidence": "npm 下载缓存（内容寻址校验，可安全清除）",
-          "recommended": true
-        },
-        {
-          "id": "pipCache",
-          "name": "pip 包缓存",
-          "risk": "low",
-          "detect": [
-            {
-              "type": "file",
-              "path": "%LOCALAPPDATA%\\pip\\cache"
-            }
-          ],
-          "fileKeys": [
-            {
-              "path": "%LOCALAPPDATA%\\pip\\cache"
-            }
-          ],
-          "evidence": "pip 下载/构建缓存",
-          "recommended": true
-        },
-        {
-          "id": "nugetCache",
-          "name": "NuGet 全局包缓存",
-          "risk": "medium",
-          "detect": [
-            {
-              "type": "file",
-              "path": "%USERPROFILE%\\.nuget\\packages"
-            }
-          ],
-          "fileKeys": [
-            {
-              "path": "%USERPROFILE%\\.nuget\\packages"
-            }
-          ],
-          "evidence": "NuGet 全局包目录（删除后首次构建将自动重新还原）",
-          "recommended": false
+          ]
         }
       ]
     },
     {
-      "key": "fileclean",
-      "title": "文件清理",
-      "icon": "<svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"currentColor\"><path d=\"M14 2H6c-1.1 0-1.99.9-1.99 2L4 18c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z\"/></svg>",
-      "items": [
+      "key": "special",
+      "title": "维护与特殊操作",
+      "icon": "<svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"currentColor\"><path d=\"M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z\"/></svg>",
+      "subGroups": [
         {
-          "id": "qqFileClean",
-          "name": "QQ文件清理",
-          "risk": "low",
-          "fileCleanType": "qq",
-          "evidence": "QQ 图片/视频/文件分类清理",
-          "recommended": false
-        },
-        {
-          "id": "wechatFileClean",
-          "name": "微信文件清理",
-          "risk": "low",
-          "fileCleanType": "wechat",
-          "evidence": "微信图片/视频/文件分类清理",
-          "recommended": false
+          "id": "actions",
+          "name": "系统动作",
+          "icon": "⚠️",
+          "items": [
+            {
+              "id": "packageCache",
+              "name": "Windows Installer 补丁缓存",
+              "risk": "high",
+              "pathPs": "$env:WINDIR + '\\Installer\\$PatchCache$'",
+              "evidence": "MSI 补丁卸载缓存，删除后已装更新将无法卸载",
+              "recommended": false,
+              "deleteMode": "contents",
+              "domain": "special",
+              "group": "actions",
+              "nature": "action",
+              "regenerable": false,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/app",
+                "importedAt": "2026-09-14"
+              }
+            },
+            {
+              "id": "recycleBin",
+              "name": "回收站",
+              "risk": "medium",
+              "pathPs": "'C:\\$Recycle.Bin'",
+              "evidence": "回收站内容",
+              "recommended": false,
+              "deleteMode": "contents",
+              "domain": "special",
+              "group": "actions",
+              "nature": "action",
+              "regenerable": false,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/temp",
+                "importedAt": "2026-09-14"
+              }
+            },
+            {
+              "id": "dismComponentCleanup",
+              "name": "DISM 组件清理 (WinSxS /ResetBase)",
+              "risk": "high",
+              "special": "dism",
+              "evidence": "压缩组件存储，更新将不可卸载",
+              "recommended": false,
+              "domain": "special",
+              "group": "actions",
+              "nature": "action",
+              "regenerable": false,
+              "prov": {
+                "source": "builtin",
+                "ref": "windows/temp",
+                "importedAt": "2026-09-14"
+              }
+            }
+          ]
         }
       ]
     }
-  ],
-  "_sig": {
-    "alg": "ed25519",
-    "sig": "BijniDifk9CKv4qPu4BfnZPnDGxmB08NOni8rTqdMtmP6Y7gpvFoMaO8DaClbhfQ/3rr6+6VbOKmdHiAxx4wBA=="
-  }
+  ]
 };
 })(typeof window !== 'undefined' ? window : globalThis);

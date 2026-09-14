@@ -14,10 +14,14 @@
     (typeof window !== 'undefined' ? window : globalThis).CLEANUP_RULES_FALLBACK || { groups: [] }
   );
 
-  // 从 cleanup-rules.json 的分组项提取渲染层所需字段（id/name/risk/fileCleanType）
+  // 从 cleanup-rules.json 的分组项提取渲染层所需字段（id/name/risk/fileCleanType/domain/nature）
+  // v3.2.1 类目重构：domain/group 为唯一分类主轴元数据，nature 为性质标签（文档 §3.1）
   function pickRuleItem(it) {
     const o = { id: it.id, name: it.name, risk: it.risk };
     if (it.fileCleanType) o.fileCleanType = it.fileCleanType;
+    if (it.domain) o.domain = it.domain;
+    if (it.nature) o.nature = it.nature;
+    if (it.recommended !== undefined) o.recommended = it.recommended;
     return o;
   }
 
@@ -158,9 +162,15 @@
   }
 
   // 取某个 subGroup 的全部子项 id（已移除项不参与）
+  // v3.2.1：不再硬编码 windows 组——遍历全部域的 subGroups（子分类 id 可能跨域同名，
+  // 持久化折叠键已带组前缀，此处按「组内 sg.id」唯一性逐组查找第一个命中即可）
   function getSubGroupItemIds(subGroupId) {
-    const sg = CATEGORIES.windows.subGroups.find(s => s.id === subGroupId);
-    return sg ? sg.items.map(i => i.id) : [];
+    for (const group of Object.values(CATEGORIES)) {
+      if (!group.subGroups) continue;
+      const sg = group.subGroups.find(s => s.id === subGroupId);
+      if (sg) return sg.items.map(i => i.id);
+    }
+    return [];
   }
 
   // ==================== 详细信息表格（资源管理器风格） ====================
@@ -176,13 +186,21 @@
   const COL_CHECK = { key: 'check', label: '', width: 40, minWidth: 40, sortable: false, resizable: false };
   const COL_NAME = { key: 'name', label: '名称', width: 220, minWidth: 100 };
   const COL_PATH = { key: 'path', label: '路径', minWidth: 140 };
+  // v3.2.1 类目重构 S2：性质标签列（缓存/日志/临时/转储/隐私/更新残留/过时备份/动作）
+  const COL_NATURE = { key: 'nature', label: '性质', width: 76, minWidth: 64, align: 'center' };
   const COL_RISK = { key: 'risk', label: '风险', width: 84, minWidth: 64, align: 'center' };
   const COL_SIZE = { key: 'size', label: '占用大小', width: 110, minWidth: 84, align: 'end' };
   const COL_ACTIONS = { key: 'actions', label: '操作', width: 112, minWidth: 84, sortable: false, align: 'center' };
 
+  const NATURE_LABELS = {
+    cache: '缓存', log: '日志', temp: '临时', dump: '转储',
+    history: '隐私', updateResidual: '更新残留', staleBackup: '过时备份',
+    action: '动作', fileClean: '文件'
+  };
+
   function columnsFor(groupKey) {
     // P3：全部分组都提供「明细」操作列（fileclean 组沿用图片预览按钮）
-    const cols = [COL_CHECK, COL_NAME, COL_PATH, COL_RISK, COL_SIZE, COL_ACTIONS];
+    const cols = [COL_CHECK, COL_NAME, COL_PATH, COL_NATURE, COL_RISK, COL_SIZE, COL_ACTIONS];
     return cols;
   }
 
@@ -190,6 +208,7 @@
   const SORT_FNS = {
     name: it => it.name,
     path: it => (scanResults.get(it.id) || {}).path || null,
+    nature: it => NATURE_LABELS[it.nature] || '',
     risk: it => (RISK_ORDER[it.risk] !== undefined ? RISK_ORDER[it.risk] : 0),
     size: it => {
       const r = scanResults.get(it.id);
@@ -306,6 +325,11 @@
             inner = '<span class="xtable-cell-muted">—</span>';
           }
           break;
+        case 'nature':
+          inner = item.nature
+            ? `<span class="nature-tag nature-${escapeHtml(item.nature)}">${NATURE_LABELS[item.nature] || escapeHtml(item.nature)}</span>`
+            : '<span class="xtable-cell-muted">—</span>';
+          break;
         case 'risk':
           inner = `<span class="category-risk ${item.risk}">${RISK_LABELS[item.risk] || item.risk}</span>`;
           break;
@@ -377,21 +401,25 @@
       const group = rawGroup.subGroups
         ? { ...rawGroup, subGroups: rawGroup.subGroups.map(sg => ({ ...sg, items: visibleItems(sg.items) })).filter(sg => sg.items.length > 0) }
         : { ...rawGroup, items: visibleItems(rawGroup.items || []) };
+      // v3.2.1 类目重构：维护与特殊操作域加视觉隔离类（警示条 + 语义边界）
       const groupEl = document.createElement('div');
-      groupEl.className = 'category-group' + (groupKey === 'fileclean' ? ' fileclean-group' : '');
+      groupEl.className = 'category-group'
+        + (groupKey === 'fileclean' ? ' fileclean-group' : '')
+        + (groupKey === 'special' ? ' special-group' : '');
 
       if (group.subGroups) {
-        // 二级分类布局（Windows 系统）
+        // 二级分类布局（各清理域）
         const subGroups = group.subGroups.filter(sg => sg.items.length > 0);
         const totalItems = subGroups.reduce((s, sg) => s + sg.items.length, 0);
         groupEl.innerHTML = `
+          ${groupKey === 'special' ? '<div class="special-group-banner">以下为不可逆系统操作（动作型维护项），默认不勾选，请确认后再执行</div>' : ''}
           <div class="category-group-header" data-group-toggle="${groupKey}">
             <span class="category-group-icon">${group.icon}</span>
             <span>${group.title}</span>
             <span style="margin-left:auto;font-size:11px;color:var(--fg-tertiary)" data-group-count="${groupKey}">${totalItems} 项 · ${subGroups.length} 分类</span>
           </div>
           <div class="category-group-content" data-group-content="${groupKey}">
-            ${subGroups.map(sg => renderSubGroup(sg)).join('')}
+            ${subGroups.map(sg => renderSubGroup(groupKey, sg)).join('')}
           </div>
         `;
       } else {
@@ -494,8 +522,8 @@
     pendingBatches = [];
   }
 
-  // 渲染单个二级分类
-  function renderSubGroup(sg) {
+  // 渲染单个二级分类（v3.2.1：tableKey 带域前缀——子分类 id 可跨域同名）
+  function renderSubGroup(groupKey, sg) {
     const sizePart = groupTotalSize(sg.items) > 0 ? ` · ${formatSize(groupTotalSize(sg.items))}` : '';
     return `
       <div class="sub-group" data-sub-group="${sg.id}">
@@ -506,7 +534,7 @@
           <span style="margin-left:auto;font-size:11px;color:var(--fg-tertiary)" data-sub-meta="${sg.id}">${sg.items.length} 项${sizePart}</span>
         </div>
         <div class="sub-group-content">
-          ${renderTable('windows', sg.items, 'win:' + sg.id)}
+          ${renderTable(groupKey, sg.items, groupKey + ':' + sg.id)}
         </div>
       </div>
     `;
@@ -858,7 +886,11 @@
       }
       setProgress(100, '扫描完成');
       // 默认勾选所有安全项
+      // v3.2.1 类目重构：维护与特殊操作域（special，DISM/回收站/Installer 缓存）为不可逆
+      // 系统动作，永不默认勾选（文档 §2.2 域 5 / P4）
       for (const r of results) {
+        const meta = getItemById(r.id);
+        if (meta && meta.domain === 'special') continue;
         if (r.risk === 'low' && r.size > 0) selectedIds.add(r.id);
       }
       await new Promise(r => setTimeout(r, 400));
@@ -1136,6 +1168,57 @@
     });
   }
 
+  // ==================== 规则库版本显示与检测（v3.2.1） ====================
+  // 「更新规则库」右侧（当前版本为：x，云端版本为：y）；首次进入磁盘清理页自动检测远端
+  // （远端验签后只读版本号，不落盘）；有更新 toast 提示；每次会话只自动检测一次
+  let versionChecked = false;
+
+  function setVersionInfo(cur, remote) {
+    const el = document.getElementById('rulesVersionInfo');
+    if (el) el.textContent = `（当前版本为：${cur ?? '--'}，云端版本为：${remote ?? '--'}）`;
+  }
+
+  function onPageEnter() {
+    if (versionChecked) return;
+    versionChecked = true;
+    if (!window.api?.cleanup?.checkRulesVersion) return;
+    window.api.cleanup.checkRulesVersion().then((resp) => {
+      if (resp && resp.success) {
+        setVersionInfo(resp.currentVersion, resp.remoteVersion);
+        if (resp.hasUpdate) {
+          window.app?.toast('info', `规则库有新版本：v${resp.remoteVersion}（当前 v${resp.currentVersion}），可点击「更新规则库」升级`, 6000);
+        }
+      } else {
+        // 检测失败（网络/源不可达）：云端显示 --，不打扰
+        setVersionInfo(resp?.currentVersion ?? null, null);
+      }
+    }).catch(() => {});
+  }
+
+  // 规则库更新进度 toast（0-100%）：主进程流式推送下载进度，完成后弹「更新完成」
+  let rulesProgressToastEl = null;
+  function showRulesProgressToast() {
+    dismissRulesProgressToast();
+    const container = document.getElementById('toastContainer');
+    if (!container) return;
+    const el = document.createElement('div');
+    el.className = 'toast info rules-progress-toast';
+    el.innerHTML = `
+      <div class="toast-icon"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg></div>
+      <div class="toast-message"><div class="toast-title">正在更新规则库</div><div data-role="pct">0%</div></div>`;
+    container.appendChild(el);
+    rulesProgressToastEl = el;
+  }
+  function updateRulesProgressToast(pct) {
+    if (!rulesProgressToastEl) return;
+    const t = rulesProgressToastEl.querySelector('[data-role="pct"]');
+    if (t) t.textContent = `${pct}%`;
+  }
+  function dismissRulesProgressToast() {
+    rulesProgressToastEl?.remove();
+    rulesProgressToastEl = null;
+  }
+
   // P2：规则库在线更新（数据目录规则优先于内置规则），成功后重载规则并重渲染
   async function updateRules() {
     const btn = document.getElementById('btnUpdateRules');
@@ -1144,18 +1227,28 @@
       return;
     }
     if (btn) btn.disabled = true;
+    showRulesProgressToast();
+    const unbindProgress = window.api.cleanup.onRulesDownloadProgress?.((d) => {
+      if (d && typeof d.percent === 'number') updateRulesProgressToast(d.percent);
+    });
     try {
       const resp = await window.api.cleanup.updateRules();
       if (resp && resp.success) {
-        window.app?.toast('success', `规则库已更新到版本 ${resp.rulesVersion}`);
+        updateRulesProgressToast(100);
+        setTimeout(dismissRulesProgressToast, 500);
+        window.app?.toast('success', `规则库更新完成（当前版本为：${resp.rulesVersion}）`);
         hiddenIds.clear();
         await loadRulesFromMain();
+        setVersionInfo(resp.rulesVersion, resp.rulesVersion); // 本地已是最新，云端与当前一致
       } else {
+        dismissRulesProgressToast();
         window.app?.toast('error', (resp && resp.message) || '规则库更新失败');
       }
     } catch (e) {
+      dismissRulesProgressToast();
       window.app?.toast('error', '规则库更新失败: ' + e.message);
     } finally {
+      unbindProgress?.();
       if (btn) btn.disabled = false;
     }
   }
@@ -1264,6 +1357,8 @@
     clean,
     formatSize,
     MOCK_SIZES,
+    // v3.2.1：首次进入磁盘清理页时自动检测规则库云端版本（会话内仅一次）
+    onPageEnter,
     // 审查 4-2：供 app.js 优雅关闭前判断清理任务是否在执行（执行中最长等待 10 分钟）
     isCleaning: () => isCleaning
   };

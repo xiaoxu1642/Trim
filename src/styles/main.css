@@ -2169,6 +2169,16 @@ select.field-input { cursor: pointer; appearance: auto; }
   border-bottom: 1px solid var(--border-default);
 }
 .info-row:last-child { border-bottom: none; }
+/* v3.2.1：规则库版本显示（更新规则库右侧选项区内） */
+.rules-version-info {
+  font-size: var(--fs-meta);
+  color: var(--fg-tertiary);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+/* v3.2.1：设置页「系统信息」容器隐藏——入口改为首页「系统健康度」卡连点 7 次彩蛋弹窗
+   （信息 DOM 数据仍由 app.js 填充，弹窗打开时整块移入、关闭时移回，专家模式开关可用） */
+#systemInfoSection { display: none; }
 .info-row span:first-child {
   color: var(--fg-tertiary);
 }
@@ -6426,6 +6436,38 @@ body.pv-window {
 }
 .clean-opt input { accent-color: var(--accent); cursor: pointer; }
 
+/* v3.2.1 类目重构 S2：性质标签（缓存/日志/临时/转储/隐私/更新残留/过时备份/动作）
+   只用既有语义 token 着色（AGENTS §5 禁硬编码字面色）；中性灰为主，动作/隐私用警示色 */
+.nature-tag {
+  display: inline-block;
+  font-size: 11px;
+  line-height: 1.6;
+  padding: 0 7px;
+  border-radius: 8px;
+  color: var(--fg-tertiary);
+  background: var(--bg-card-hover);
+  border: 1px solid var(--border-subtle);
+  white-space: nowrap;
+}
+.nature-tag.nature-action { color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, transparent); border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
+.nature-tag.nature-history { color: var(--warning); background: color-mix(in srgb, var(--warning) 10%, transparent); border-color: color-mix(in srgb, var(--warning) 35%, transparent); }
+
+/* 维护与特殊操作域：视觉分组但语义隔离（文档 §2.2）——顶部警示条 + 描边强化 */
+.category-group.special-group { border-color: color-mix(in srgb, var(--danger) 30%, var(--border-default)); }
+.special-group-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  margin: 8px 12px 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  border-radius: var(--radius-small);
+}
+
 /* 设置页：显示容器三项卡片 */
 .appearance-grid {
   display: grid;
@@ -8302,10 +8344,14 @@ body[data-preset-bg] .layout {
   flex-wrap: wrap;
 }
 .checkup-row-main { flex: 1 1 auto; min-width: 0; }
+/* v3.2.1：证据胶囊移入右侧操作列——每行右侧统一为「证据 + 按钮」一行垂直居中，
+   修复 head 内 evidence 换行导致的行间高度不一（图六） */
 .checkup-row-actions {
   flex: 0 0 auto;
   display: inline-flex;
+  align-items: center;
   gap: 6px;
+  flex-wrap: nowrap;
   margin-left: auto;
   align-self: center;
 }
@@ -8320,7 +8366,8 @@ body[data-preset-bg] .layout {
   overflow-wrap: anywhere;
 }
 .checkup-row-evidence {
-  margin-left: auto;
+  /* v3.2.1：evidence 移入右侧操作列，不再吃 head 的 margin-left:auto */
+  flex: 0 0 auto;
   font-size: var(--fs-meta);
   color: var(--fg-tertiary);
   border: 1px solid var(--border-default);

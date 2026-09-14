@@ -294,16 +294,28 @@
     renderStateBanner();
   }
 
-  async function load() {
+  // v3.2.1：refresh=false 走聚合持久缓存（首启扫描一次落盘，之后一直读文件）；
+  // 页面「刷新」按钮走 true 强制重新采集。专家模式与状态机仍实时读取。
+  async function load(refresh = false) {
     if (loading) return;
     loading = true;
     try {
-      const [statusResp, stateResp, progResp, expertResp] = await Promise.all([
-        window.api?.defaultapps?.status?.(),
-        window.api?.defaultapps?.getState?.(),
-        window.api?.defaultapps?.listPrograms?.(),
-        window.api?.appearance?.getExpert?.()
-      ]);
+      const loadAll = window.api?.defaultapps?.loadAll;
+      let statusResp, progResp;
+      let stateResp;
+      if (loadAll) {
+        const resp = await loadAll(refresh);
+        statusResp = resp?.statusResp;
+        progResp = resp?.progResp;
+        stateResp = resp?.stateResp;
+      } else {
+        [statusResp, stateResp, progResp] = await Promise.all([
+          window.api?.defaultapps?.status?.(),
+          window.api?.defaultapps?.getState?.(),
+          window.api?.defaultapps?.listPrograms?.()
+        ]);
+      }
+      const expertResp = await window.api?.appearance?.getExpert?.();
       if (statusResp?.success) statusData = statusResp.data;
       if (stateResp?.success) stateData = stateResp.state;
       if (progResp?.success) programs = progResp.data;
@@ -510,7 +522,8 @@
 
   // ==================== 初始化 ====================
   function init() {
-    document.getElementById('btnDaRefresh')?.addEventListener('click', load);
+    // v3.2.1：「刷新」= 强制重新采集并覆盖缓存
+    document.getElementById('btnDaRefresh')?.addEventListener('click', () => load(true));
     document.getElementById('btnDaApplyXml')?.addEventListener('click', applyXml);
     document.getElementById('btnDaRemovePolicy')?.addEventListener('click', removeXmlPolicy);
     document.getElementById('btnDaOpenSettings')?.addEventListener('click', () => {

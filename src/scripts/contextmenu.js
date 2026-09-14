@@ -546,15 +546,15 @@
     }
   }
 
-  async function scan() {
+  // v3.2.1：refresh=false 优先读持久缓存（首启扫描一次落盘，之后一直读文件，init 时自动加载）；
+  // true 强制重新扫描并覆盖缓存。删除/启停后走 true 保证拿到最新状态。
+  async function scan(refresh = false) {
     if (isScanning) return;
     isScanning = true;
-    items = [];
-    iconMap = {};
-    hasScanned = false;
+    if (refresh) { items = []; iconMap = {}; hasScanned = false; }
 
     const container = document.getElementById('contextMenuList');
-    if (container) {
+    if (container && !hasScanned) {
       container.innerHTML = `<div class="empty-state">
         <svg viewBox="0 0 24 24" width="48" height="48" fill="currentColor" opacity="0.5" class="spin">
           <path d="M12 4V2A10 10 0 0 0 2 12h2a8 8 0 0 1 8-8z"/>
@@ -565,7 +565,7 @@
 
     try {
       if (window.api?.contextmenu) {
-        const resp = await window.api.contextmenu.scan();
+        const resp = await window.api.contextmenu.scan(refresh);
         if (!resp.success) throw new Error(resp.message);
         items = resp.data;
       } else {
@@ -657,8 +657,11 @@
   }
 
   function init() {
-    document.getElementById('btnScanContext')?.addEventListener('click', scan);
+    // 「扫描」按钮 = 强制真实扫描并覆盖缓存（v3.2.1 缓存政策）
+    document.getElementById('btnScanContext')?.addEventListener('click', () => scan(true));
     document.getElementById('btnRestoreMenu')?.addEventListener('click', restore);
+    // v3.2.1：进入页面自动加载缓存（首次无缓存时自动扫描一次并落盘）
+    scan(false);
 
     document.querySelectorAll('#contextFilter .filter-tab').forEach(el => {
       el.addEventListener('click', () => setFilter(el.dataset.filter));

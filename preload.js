@@ -96,6 +96,14 @@ contextBridge.exposeInMainWorld('api', {
     execute: (items, force = false, toRecycle = false, autoRebuild = false) => ipcRenderer.invoke('cleanup:execute', { items, force, toRecycle, autoRebuild }),
     // P2 规则库在线更新：从发布源下载并经校验后写入数据目录（防降级 + 原子替换）
     updateRules: () => ipcRenderer.invoke('cleanup:update-rules'),
+    // v3.2.1：规则库版本检测（只读，远端验签后仅返回 rulesVersion，不写盘）
+    checkRulesVersion: () => ipcRenderer.invoke('cleanup:check-rules-version'),
+    // v3.2.1：规则库下载进度（0-99，主进程流式推送；返回解绑函数）
+    onRulesDownloadProgress: (callback) => {
+      const handler = (_, data) => callback(data);
+      ipcRenderer.on('cleanup:rules-download-progress', handler);
+      return () => ipcRenderer.removeListener('cleanup:rules-download-progress', handler);
+    },
     // 审查 4-4：回收站失败项经用户红色确认后永久删除重试（目标由主进程白名单留存，渲染层不可指定）
     retryFailedDelete: () => ipcRenderer.invoke('cleanup:retry-failed-delete'),
     // P3 条目明细：枚举单个条目的文件清单（只读，供明细弹窗展示）
@@ -123,7 +131,8 @@ contextBridge.exposeInMainWorld('api', {
 
   // 右键菜单
   contextmenu: {
-    scan: () => ipcRenderer.invoke('contextmenu:scan'),
+    // v3.2.1：refresh=false 优先读持久缓存（首启扫描一次落盘）；true 强制重新扫描
+    scan: (refresh = false) => ipcRenderer.invoke('contextmenu:scan', { refresh }),
     // 传递完整扫描项（包含 regPath/source），这样注册表项和“发送到”文件都能正确备份
     backup: (items) => ipcRenderer.invoke('contextmenu:backup', { items }),
     remove: (items) => ipcRenderer.invoke('contextmenu:remove', { items }),
@@ -313,6 +322,8 @@ contextBridge.exposeInMainWorld('api', {
   defaultapps: {
     status: () => ipcRenderer.invoke('defaultapps:status'),
     listPrograms: () => ipcRenderer.invoke('defaultapps:list-programs'),
+    // v3.2.1：聚合加载（status+programs 持久缓存，refresh=true 强制重新采集）
+    loadAll: (refresh = false) => ipcRenderer.invoke('defaultapps:load-all', { refresh }),
     applyXml: (entries) => ipcRenderer.invoke('defaultapps:apply-xml', { entries }),
     removeXmlPolicy: () => ipcRenderer.invoke('defaultapps:remove-xml-policy'),
     setUcpd: (disable, entries, originalStart) => ipcRenderer.invoke('defaultapps:set-ucpd', { disable, entries, originalStart }),
@@ -412,7 +423,7 @@ contextBridge.exposeInMainWorld('api', {
 
   // 启动项管理：扫描 / 启停 / 删除 / 打开所在位置 / 添加
   startup: {
-    scan: () => ipcRenderer.invoke('startup:scan'),
+    scan: (refresh = false) => ipcRenderer.invoke('startup:scan', { refresh }),
     toggle: (items, enable) => ipcRenderer.invoke('startup:toggle', { items, enable }),
     remove: (items) => ipcRenderer.invoke('startup:delete', { items }),
     openLocation: (targetPath) => ipcRenderer.invoke('startup:openlocation', { path: targetPath }),

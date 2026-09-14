@@ -1467,20 +1467,20 @@ function gitFetchRulesFile() {
   });
 }
 
-handleSafe('cleanup:update-rules', async (event) => {
-  const currentVersion = Number(CLEANUP_SCRIPT.rules()?.rulesVersion) || 0;
+// 更新源清单（update / check-version 共用）
+function buildRulesSources() {
   const override = loadRulesUpdateOverride();
-  const sources = [
+  return [
     ...(override?.urls || []),
     ...RULES_UPDATE_URLS.map(url => ({ url, headers: override?.headers || {} }))
   ].slice(0, 16);
-  const seen = new Set();
-  const attempts = [];
-  let lastError = '';
-  // 内容校验链（审查 1-1）：尺寸 → 验签 → JSON 结构 → 条目形状 → 版本防降级。
-  // 验签用内置公钥（rules-signature.js），任何源（含 gh-proxy / update-source.json 自定义源）
-  // 都只是传输通道，内容必须自证可信——签名未通过直接拒绝，不再依赖「源可信」假设。
-  const validate = (text) => {
+}
+
+// 内容校验器（审查 1-1 全链：尺寸 → 验签 → JSON 结构 → 条目形状 → 版本防降级）
+// 验签用内置公钥（rules-signature.js），任何源（含 gh-proxy / update-source.json 自定义源）
+// 都只是传输通道，内容必须自证可信——签名未通过直接拒绝，不再依赖「源可信」假设。
+function makeRulesValidator(currentVersion) {
+  return (text) => {
     if (!text || text.length < RULES_MIN_SIZE) return { error: '内容过小，疑似异常响应' };
     if (text.length > RULES_MAX_SIZE) return { error: '内容过大，疑似异常响应' };
     const sig = RULES_SIG.verifyRulesSignature(text);
@@ -1494,17 +1494,14 @@ handleSafe('cleanup:update-rules', async (event) => {
     if (version < currentVersion) return { error: `下载版本(${version})低于当前版本(${currentVersion})，已拒绝（防降级）` };
     return { version, text };
   };
-  const writeValidated = (result) => {
-    const dir = CLEANUP_SCRIPT.dataRulesDir();
-    fs.mkdirSync(dir, { recursive: true });
-    const target = path.join(dir, 'rules.json');
-    const tmp = target + '.downloading';
-    fs.writeFileSync(tmp, result.text, 'utf8');
-    fs.renameSync(tmp, target);
-    writeLog('info', `清理规则库已更新: rulesVersion=${result.version}`);
-    return { success: true, rulesVersion: result.version };
-  };
+}
 
+// 拉取远端规则文本（含 git 回退）；onProgress(percent 0-99) 可选——update 时推下载进度给渲染层
+async function fetchRemoteRulesText(currentVersion, onProgress) {
+  const validate = makeRulesValidator(currentVersion);
+  const sources = buildRulesSources();
+  const seen = new Set();
+  let lastError = '';
   for (const src of sources) {
     const url = typeof src === 'string' ? src : src.url;
     if (!url || seen.has(url)) continue;
@@ -1522,11 +1519,36 @@ handleSafe('cleanup:update-rules', async (event) => {
       if (!resp.ok) { lastError = `HTTP ${resp.status}`; continue; }
       const declared = Number(resp.headers.get('content-length') || 0);
       if (declared > RULES_MAX_SIZE) { lastError = '响应体超过尺寸上限'; continue; }
-      const text = await readBodyLimited(resp, RULES_MAX_SIZE);
+      // 流式累计下载进度（content-length 已知按字节比，未知按 512KB 估计档），update 场景推送渲染层
+      let text;
+      if (onProgress) {
+        const reader = resp.body && typeof resp.body.getReader === 'function' ? resp.body.getReader() : null;
+        if (reader) {
+          const chunks = [];
+          let total = 0;
+          let lastPct = 0;
+          let tooBig = false;
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            total += value.byteLength;
+            if (total > RULES_MAX_SIZE) { try { await reader.cancel(); } catch (_) {} tooBig = true; break; }
+            chunks.push(value);
+            const est = declared > 0 ? declared : 512 * 1024;
+            const pct = Math.min(99, Math.round((total / est) * 100));
+            if (pct > lastPct) { lastPct = pct; try { onProgress(pct); } catch (_) {} }
+          }
+          if (tooBig) { lastError = '响应体超过尺寸上限'; continue; }
+          text = Buffer.concat(chunks).toString('utf8');
+        } else {
+          text = await readBodyLimited(resp, RULES_MAX_SIZE);
+        }
+      } else {
+        text = await readBodyLimited(resp, RULES_MAX_SIZE);
+      }
       const checked = validate(text);
       if (checked.error) { lastError = checked.error; continue; }
-      const done = writeValidated(checked);
-      return { ...done, source: url };
+      return { ok: true, text: checked.text, version: checked.version, source: url };
     } catch (e) {
       lastError = e.name === 'AbortError' ? '下载超时' : e.message;
     }
@@ -1536,21 +1558,47 @@ handleSafe('cleanup:update-rules', async (event) => {
   const gitText = await gitFetchRulesFile();
   if (gitText) {
     const checked = validate(gitText);
-    if (checked.error) {
-      lastError = checked.error + '（本机 git 已取到远程规则）';
-    } else {
-      const done = writeValidated(checked);
-      attempts.push('git');
-      return { ...done, source: 'git:origin/main' };
-    }
+    if (checked.error) return { ok: false, error: checked.error + '（本机 git 已取到远程规则）', source: 'git' };
+    return { ok: true, text: checked.text, version: checked.version, source: 'git:origin/main' };
   }
+  return { ok: false, error: lastError, source: null };
+}
 
-  const revertible = (lastError || '').includes('版本') || (lastError || '').includes('防降级');
-  const hint = fs.existsSync(path.join(__dirname, '.git'))
-    ? (revertible ? '（远程规则版本未更新或低于本地，请先在源仓库发布新规则）' : '（已尝试本机 git 回退仍失败，请检查网络或远程分支）')
-    : '（HTTP 发布源不可达；私有仓库请先公开仓库，或在数据目录 update-source.json 配置可访问源）';
-  writeLog('warn', `清理规则库更新失败: ${lastError}`);
-  return { success: false, message: '所有发布源均不可用或校验未通过：' + lastError + hint };
+// 更新规则库：拉取 → 校验 → 原子落盘；下载进度经 cleanup:rules-download-progress 推送渲染层（v3.2.1）
+handleSafe('cleanup:update-rules', async (event) => {
+  const currentVersion = Number(CLEANUP_SCRIPT.rules()?.rulesVersion) || 0;
+  const sender = event.sender;
+  try { sender.send('cleanup:rules-download-progress', { percent: 0 }); } catch (_) {}
+  const result = await fetchRemoteRulesText(currentVersion, (pct) => {
+    try { sender.send('cleanup:rules-download-progress', { percent: pct }); } catch (_) {}
+  });
+  if (!result.ok) {
+    const revertible = (result.error || '').includes('版本') || (result.error || '').includes('防降级');
+    const hint = fs.existsSync(path.join(__dirname, '.git'))
+      ? (revertible ? '（远程规则版本未更新或低于本地，请先在源仓库发布新规则）' : '（已尝试本机 git 回退仍失败，请检查网络或远程分支）')
+      : '（HTTP 发布源不可达；私有仓库请先公开仓库，或在数据目录 update-source.json 配置可访问源）';
+    writeLog('warn', `清理规则库更新失败: ${result.error}`);
+    return { success: false, message: '所有发布源均不可用或校验未通过：' + result.error + hint };
+  }
+  const dir = CLEANUP_SCRIPT.dataRulesDir();
+  fs.mkdirSync(dir, { recursive: true });
+  const target = path.join(dir, 'rules.json');
+  const tmp = target + '.downloading';
+  fs.writeFileSync(tmp, result.text, 'utf8');
+  fs.renameSync(tmp, target);
+  writeLog('info', `清理规则库已更新: rulesVersion=${result.version}`);
+  return { success: true, rulesVersion: result.version, source: result.source };
+});
+
+// v3.2.1：规则库版本检测（轻量只读）——拉远端并验签后仅读取 rulesVersion，不写盘。
+// 「更新规则库」旁的（当前版本为：x，云端版本为：y）显示与有更新 toast 由渲染层触发。
+handleSafe('cleanup:check-rules-version', async () => {
+  const currentVersion = Number(CLEANUP_SCRIPT.rules()?.rulesVersion) || 0;
+  const result = await fetchRemoteRulesText(currentVersion, null);
+  if (!result.ok) {
+    return { success: false, currentVersion, message: result.error || '检测失败' };
+  }
+  return { success: true, currentVersion, remoteVersion: result.version, hasUpdate: result.version > currentVersion, source: result.source };
 });
 
 // ==================== 磁盘清理 · Rust 原生查找器 IPC ====================
@@ -1907,7 +1955,39 @@ handleSafe('finder:open-backup-dir', async (event) => {
 // ==================== 右键菜单管理 IPC ====================
 const CONTEXTMENU_SCRIPT = require('./src/scripts-powershell/contextmenu-scripts');
 
-handleSafe('contextmenu:scan', async (event) => {
+// ==================== 扫描结果持久缓存（v3.2.1，用户裁定） ====================
+// 政策：体检与硬件信息、启动项管理、默认应用接管、右键菜单管理——仅首次扫描一次并
+// 写入 %APPDATA%\Trim\<name>.json；之后一律只读缓存文件，直到用户点「重新扫描」（refresh=true）
+// 才真正重新扫描并覆盖缓存。与 system-info.json（硬件信息）同一模式。
+function loadScanCache(name) {
+  try {
+    const file = path.join(APP_DATA_DIR, name);
+    if (fs.existsSync(file)) {
+      const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+      if (data && data.timestamp && data.data != null) return data;
+    }
+  } catch (e) { writeLog('warn', `读取扫描缓存 ${name} 失败: ${e.message}`); }
+  return null;
+}
+
+function saveScanCache(name, data) {
+  try {
+    const file = path.join(APP_DATA_DIR, name);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    SECURITY.atomicWriteJson(file, { timestamp: Date.now(), data });
+    return true;
+  } catch (e) { writeLog('error', `保存扫描缓存 ${name} 失败: ${e.message}`); return false; }
+}
+
+handleSafe('contextmenu:scan', async (event, { refresh = false } = {}) => {
+  // v3.2.1：优先读持久缓存（首次扫描后一直读文件，refresh=true 才真正重扫）
+  if (!refresh) {
+    const cached = loadScanCache('contextmenu-scan.json');
+    if (cached) {
+      lastContextmenuSnapshot = snapshotById(cached.data);
+      return { success: true, data: cached.data, cached: true, cachedAt: cached.timestamp };
+    }
+  }
   lastContextmenuSnapshot = new Map();
   const script = CONTEXTMENU_SCRIPT.scan();
   const scriptPath = writeTempScript(script);
@@ -1928,6 +2008,7 @@ handleSafe('contextmenu:scan', async (event) => {
       writeLog('info', `扫描右键菜单完成: ${data.length} 项`);
       const normalized = data.map((item, index) => ({ ...item, id: String(item.id || item.regPath || index) }));
       lastContextmenuSnapshot = snapshotById(normalized);
+      saveScanCache('contextmenu-scan.json', normalized);
       return { success: true, data: normalized };
     } catch (e) {
       return { success: false, message: '解析失败' };
@@ -2832,7 +2913,16 @@ handleSafe('optimizer:list-restore', async () => {
 const STARTUP = require('./src/scripts-powershell/startup-scripts');
 
 // 扫描启动项（注册表 Run/RunOnce、启动文件夹、登录/开机计划任务）
-handleSafe('startup:scan', async (event) => {
+// v3.2.1：优先读持久缓存（首次扫描后一直读文件，refresh=true 才真正重扫）；
+// 缓存命中同样恢复快照（lastStartupSnapshot），保证启停/删除的白名单校验可用
+handleSafe('startup:scan', async (event, { refresh = false } = {}) => {
+  if (!refresh) {
+    const cached = loadScanCache('startup-scan.json');
+    if (cached) {
+      lastStartupSnapshot = snapshotById(cached.data);
+      return { success: true, data: cached.data, cached: true, cachedAt: cached.timestamp };
+    }
+  }
   lastStartupSnapshot = new Map();
   const scriptPath = writeTempScript(STARTUP.scan());
   try {
@@ -2845,6 +2935,7 @@ handleSafe('startup:scan', async (event) => {
     }
     const normalized = data.map((item, index) => ({ ...item, id: String(item.id || item.regPath || item.filePath || item.taskName || index) }));
     lastStartupSnapshot = snapshotById(normalized);
+    saveScanCache('startup-scan.json', normalized);
     return { success: true, data: normalized };
   } catch (e) {
     writeLog('error', `启动项扫描异常: ${e.message}`);
@@ -4059,11 +4150,20 @@ async function collectSystemCheckup() {
   return checkupInflight;
 }
 
+// v3.2.1：体检结果持久缓存（用户裁定：仅首次扫描一次存 checkup.json，之后一直读文件，
+// 页面「重新体检」refresh=true 才重扫并覆盖）——内存 5 分钟缓存退役，磁盘缓存无过期
 handleSafe('overview:checkup', async (event, { refresh = false } = {}) => {
-  if (!refresh && checkupCache && Date.now() - checkupCache.at < 5 * 60 * 1000) {
-    return { success: true, data: { checks: checkupCache.checks, at: checkupCache.at }, cached: true };
+  if (!refresh) {
+    const cached = loadScanCache('checkup.json');
+    if (cached) {
+      return { success: true, data: { checks: cached.data, at: cached.timestamp }, cached: true };
+    }
   }
-  return collectSystemCheckup();
+  const resp = await collectSystemCheckup();
+  if (resp && resp.success && Array.isArray(resp.data?.checks)) {
+    saveScanCache('checkup.json', resp.data.checks);
+  }
+  return resp;
 });
 
 handleSafe('diskbench:run', async (event, options = {}) => {
@@ -5788,6 +5888,55 @@ handleSafe('defaultapps:write-class', async (event, { entries } = {}) => {
 // 状态机读取（跨重启续接）：渲染层据此渲染「继续写入 / 恢复 UCPD / 重做」等面板
 handleSafe('defaultapps:get-state', async () => {
   return { success: true, state: resolveDefaultAppsState() };
+});
+
+// v3.2.1：默认应用接管聚合加载——status/listPrograms 两个 PowerShell 采集打包持久缓存，
+// 首次扫描后一直读文件；refresh=true（页面「刷新」按钮）才重新采集。getState 为轻量文件读实时取。
+handleSafe('defaultapps:load-all', async (event, { refresh = false } = {}) => {
+  if (!refresh) {
+    const cached = loadScanCache('defaultapps-scan.json');
+    if (cached && cached.data) {
+      const { statusResp, progResp } = cached.data;
+      if (statusResp?.success && progResp?.success) {
+        return {
+          success: true, cached: true, cachedAt: cached.timestamp,
+          statusResp, progResp, stateResp: { success: true, state: resolveDefaultAppsState() }
+        };
+      }
+    }
+  }
+  const [statusResp, progResp] = await Promise.all([
+    (async () => {
+      const scriptPath = writeTempScript(DEFAULTAPPS_SCRIPT.status());
+      try {
+        const { stdout, code, stderr } = await runPowerShellFile(scriptPath, { timeout: 30000 });
+        if (code !== 0 || !stdout.trim()) return { success: false, message: stderr || '状态查询失败' };
+        const data = JSON.parse(stdout.trim().split('\n').filter(l => l.trim().startsWith('{')).pop());
+        return { success: true, data, state: resolveDefaultAppsState() };
+      } catch (e) {
+        return { success: false, message: e.message };
+      } finally {
+        try { fs.unlinkSync(scriptPath); } catch (e) {}
+      }
+    })(),
+    (async () => {
+      const scriptPath = writeTempScript(DEFAULTAPPS_SCRIPT.listPrograms());
+      try {
+        const { stdout, code, stderr } = await runPowerShellFile(scriptPath, { timeout: 45000 });
+        if (code !== 0 || !stdout.trim()) return { success: false, message: stderr || '程序枚举失败' };
+        const data = JSON.parse(stdout.trim().split('\n').filter(l => l.trim().startsWith('{')).pop());
+        return { success: true, data };
+      } catch (e) {
+        return { success: false, message: e.message };
+      } finally {
+        try { fs.unlinkSync(scriptPath); } catch (e) {}
+      }
+    })()
+  ]);
+  if (statusResp?.success && progResp?.success) {
+    saveScanCache('defaultapps-scan.json', { statusResp, progResp });
+  }
+  return { success: true, statusResp, progResp, stateResp: { success: true, state: resolveDefaultAppsState() } };
 });
 
 handleSafe('defaultapps:clear-state', async () => {

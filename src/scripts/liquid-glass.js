@@ -742,10 +742,16 @@
     // 横向 tab 栏保持胶囊；侧边栏菜单项是小圆角（--radius-medium），非胶囊
     const radius = vertical ? 10 : h / 2;
 
+    // v3.2.1（滑块误挤压修复·方案A）：目标坐标与尺寸与上次完全一致时不加挤压类——
+    // 修复「点磁盘清理子分段时 refreshAll(true) 让 #sidebar 玻璃块无意义鼓一下」：
+    // 位置零位移却从 scaleX(1) 过渡到 scaleX(1.05) 再回弹。切菜单项时坐标必变，动画照旧。
+    const unchanged = state.lastX === x && state.lastY === y &&
+                      state.lastW === w && state.lastH === h;
+
     if (!animate) thumb.classList.add('lg-no-anim');
 
     // 移动中轻微拉伸（液态挤压感），落位后由 transitionend 回弹恢复
-    if (animate && !document.body.classList.contains('lg-reduce-motion')) {
+    if (animate && !unchanged && !document.body.classList.contains('lg-reduce-motion')) {
       thumb.classList.add('lg-moving');
     }
 
@@ -763,6 +769,9 @@
     thumb.style.setProperty('--lg-x', x + 'px');
     thumb.style.borderRadius = radius + 'px';
     state.lastX = x;
+    state.lastY = y;
+    state.lastW = w;
+    state.lastH = h;
 
     // 性能护栏（AGENTS §7 / 方案三-3）：侧边栏菜单项面积约为横向 tab 两倍，
     // 折射滤镜像素级开销翻倍——侧栏滑块只开普通磨砂（blur+saturate），不开 SVG 折射贴图
@@ -781,7 +790,8 @@
     if (!animate) {
       void thumb.offsetWidth; // 跳过一次过渡后再恢复动画
       requestAnimationFrame(() => thumb.classList.remove('lg-no-anim'));
-    } else {
+    } else if (!unchanged) {
+      // 位置未变时不挂监听（无过渡可触发；避免连续快速点击叠 once 监听器与兜底定时器）
       thumb.addEventListener('transitionend', (ev) => {
         if (ev.propertyName === 'transform') thumb.classList.remove('lg-moving');
       }, { once: true });

@@ -1,6 +1,6 @@
 {
   "name": "trim",
-  "version": "3.2.0",
+  "version": "3.2.1",
   "description": "Trim",
   "main": "main.js",
   "author": "xiaoxu",
@@ -36,7 +36,7 @@
     "copyright": "Copyright © 2026 xiaoxu",
     "electronDist": "node_modules/electron/dist",
     "directories": {
-      "output": "D:\\KaiFa\\Trim goujian\\build-release",
+      "output": "build-release",
       "buildResources": "build"
     },
     "files": [
