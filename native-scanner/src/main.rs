@@ -1389,6 +1389,13 @@ fn main() {
             let _ = std::io::Write::flush(&mut std::io::stdout());
             std::process::exit(code);
         }
+        "checklocked" => {
+            // 清理前占用检测（v3.3.4）：stdin = {files:[{path,id}]}，输出被占用文件与占用进程。
+            // 只读探测，不结束任何进程；结束进程由主进程按渲染层确认后执行。
+            let code = cleanup_scan::run_checklocked();
+            let _ = std::io::Write::flush(&mut std::io::stdout());
+            std::process::exit(code);
+        }
         "delete" => {
             // 审查v4-L4：路径取原始 OsString，命令名与格式校验用 lossy 字符串
             let mut items: Vec<(String, OsString)> = Vec::new();

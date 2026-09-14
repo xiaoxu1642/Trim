@@ -926,6 +926,78 @@
     if (label) label.textContent = cleaning ? '清理中...' : '开始清理';
   }
 
+  // v3.3.4：清理前占用检测弹窗。返回：
+  //   null            —— 无占用/检测不可用/无计划清单，调用方照常清理
+  //   'cancel'        —— 用户关闭弹窗（×/ESC/背景），放弃本次清理
+  //   'kill'          —— 用户选择「立即结束进程」，占用进程已结束，照常清理全部
+  //   { skipIds }     —— 用户选择「不结束并放弃清理它们」，返回应跳过的条目 id 集合
+  async function offerCloseLocked(ids) {
+    if (!ids.length || !window.api?.cleanup?.checkLocked) return null;
+    let info = null;
+    try {
+      const resp = await window.api.cleanup.checkLocked(ids);
+      if (!resp || !resp.success) return null; // 检测不可用不阻塞清理（执行侧仍会如实报残留）
+      info = resp;
+    } catch (e) {
+      return null;
+    }
+    const procs = Array.isArray(info.procs) ? info.procs : [];
+    if (!procs.length) return null; // 无占用
+    // 可结束进程（非系统关键）；critical 进程只展示不提供结束入口
+    const killable = procs.filter(p => !p.critical);
+    const critical = procs.filter(p => p.critical);
+    if (!killable.length && !critical.length) return null;
+    const skipIds = new Set(Object.keys(info.lockedByItem || {}));
+    if (!window.modal?.create) return null; // ds/modal 未加载时优雅降级为直接清理
+
+    return new Promise(resolve => {
+      let settled = false;
+      const finish = v => { if (!settled) { settled = true; resolve(v); } };
+      const appCount = Object.entries(info.byApp || {}).sort((a, b) => b[1] - a[1]);
+      const listRows = appCount.map(([app, cnt]) =>
+        `<div class="lock-app-row"><span class="lock-app-name" data-tip="${escapeHtml(app)}">${escapeHtml(app)}</span><span class="lock-app-count">${cnt} 个文件</span></div>`
+      ).join('');
+      const criticalNote = critical.length
+        ? `<div class="lock-critical-note">另有系统关键进程占用（${critical.map(p => escapeHtml(p.app)).join('、')}），不提供结束入口，将被跳过。</div>`
+        : '';
+      const ctrl = window.modal.create({
+        id: 'lockModal-' + Date.now(),
+        title: '部分文件正在被使用',
+        bodyHtml: `
+          <div class="confirm-message">以下应用正在使用要清理的文件，目前无法清理，您可以关闭它们以正常清理。</div>
+          <div class="lock-app-list">${listRows}</div>
+          ${criticalNote}`,
+        footerHtml: `
+          <span class="model-picker-spacer"></span>
+          <button class="btn btn-secondary" data-lock="skip" type="button">不结束并放弃清理它们</button>
+          <button class="btn btn-primary" data-lock="kill" type="button">立即结束进程</button>`,
+        onClose() { finish('cancel'); }
+      });
+      const killBtn = ctrl.footer.querySelector('[data-lock="kill"]');
+      const skipBtn = ctrl.footer.querySelector('[data-lock="skip"]');
+      if (!killable.length) {
+        // 全部为系统关键进程：不提供结束入口，只允许放弃这些条目
+        killBtn.disabled = true;
+        killBtn.setAttribute('data-tip', '占用进程为系统关键进程，不支持结束');
+      }
+      killBtn.addEventListener('click', async () => {
+        killBtn.disabled = true;
+        killBtn.textContent = '正在结束...';
+        try {
+          await window.api.cleanup.killLockedProcesses();
+        } catch (e) { /* 结束失败仍继续，执行侧会如实报残留 */ }
+        // 进程退出到句柄释放有短暂延迟，等一拍再进入清理
+        await new Promise(r => setTimeout(r, 1200));
+        finish('kill');
+        ctrl.close();
+      });
+      skipBtn.addEventListener('click', () => {
+        finish({ skipIds });
+        ctrl.close();
+      });
+    });
+  }
+
   // 清理
   async function clean() {
     if (isCleaning || selectedIds.size === 0) return;
@@ -973,7 +1045,23 @@
       }
     }
 
-    const allItems = Array.from(selectedIds).map(id => scanResults.get(id)).filter(Boolean);
+    // v3.3.4：清理前占用检测——被占用的文件会清理失败，提前告知并给用户处置选择。
+    // 只在常规清理项（有扫描计划清单）上做检测；文件清理项（FILECLEAN_IDS）不走此通道。
+    const lockIds = Array.from(selectedIds).filter(id => scanResults.has(id) && !FILECLEAN_IDS.includes(id));
+    let abandonIds = new Set();
+    const lockDecision = await offerCloseLocked(lockIds);
+    if (lockDecision === 'cancel') {
+      isCleaning = false;
+      setCleaningBtn(false);
+      updateUI();
+      return;
+    }
+    if (lockDecision && lockDecision.skipIds) abandonIds = lockDecision.skipIds;
+
+    const allItems = Array.from(selectedIds)
+      .filter(id => !abandonIds.has(id))
+      .map(id => scanResults.get(id))
+      .filter(Boolean);
     // 分离常规清理项和文件清理项
     const regularItems = allItems.filter(i => !FILECLEAN_IDS.includes(i.id));
     const fileCleanItems = allItems.filter(i => FILECLEAN_IDS.includes(i.id));
@@ -1030,6 +1118,8 @@
           totalFreed: (regularResult.totalFreed || 0) + fcFreed,
           success: (regularResult.success || 0) + fcSuccess,
           failed: (regularResult.failed || 0) + fcFailed,
+          // v3.3.4 文案纠偏：partial（部分成功，其余文件被占用）与 failed（硬失败）分开上报
+          partial: regularResult.partial || 0,
           skipped: regularResult.skipped || 0,
           details: [...(regularResult.details || []), ...fcDetails]
         };
@@ -1085,6 +1175,9 @@
         if (result.failed > 0) {
           window.app?.toast('warning', `${result.failed} 项清理失败（可能文件被占用）`);
           maybeOfferElevation(`${result.failed} 项清理失败，可能需要管理员权限才能删除这些文件。`);
+        } else if (result.partial > 0) {
+          // v3.3.4 文案纠偏：部分成功不是失败——多数文件已清理，仅少数被占用未删
+          window.app?.toast('warning', `${result.partial} 项部分清理完成（仅少数文件被占用未删）`);
         }
         // 审查 4-4：回收站失败项 → 红色确认后改永久删除（回收站被禁用/已满时的降级出口）
         const trashFailures = Array.isArray(result.trashFailures) ? result.trashFailures : [];
@@ -1185,14 +1278,19 @@
   }
 
   // ==================== 规则库版本显示与检测（v3.2.1 / v3.3.0 三段版本） ====================
-  // 「更新规则库」右侧（当前版本为：x，winapp2 版本为：y，云端版本为：z）；
+  // 「更新规则库」右侧（当前版本为：x，winapp2 版本为：y，云端 winapp2 版本为：z）；
   // 首次进入磁盘清理页自动检测远端（远端验签后只读版本号，不落盘）；
-  // 有更新 toast 提示；每次会话只自动检测一次
+  // 有更新 toast 提示；每次会话只自动检测一次。
+  // v3.3.4 文案澄清：远端取的是发布源（官方 GitHub 仓库）里的规则库，其携带的正是 winapp2 基线
+  // 版本号，故第三段明确写作「云端 winapp2 版本」；连不上官方库（网络/源不可达）时该段显示 --。
+  // v3.3.4 语义修正：三段分别是「本机规则库版本」「本机 winapp2 基线版本」「云端 winapp2 基线版本」。
+  // 第三段必须取远端规则库里的 winapp2Version（而不是远端 rulesVersion）——否则会显示成本机规则库
+  // 版本号，与「winapp2」语义不符（实测错显为 20260914 而非 260730）。
   let versionChecked = false;
 
-  function setVersionInfo(cur, winapp2, remote) {
+  function setVersionInfo(curRules, localWinapp2, remoteWinapp2) {
     const el = document.getElementById('rulesVersionInfo');
-    if (el) el.textContent = `（当前版本为：${cur ?? '--'}，winapp2 版本为：${winapp2 ?? '--'}，云端版本为：${remote ?? '--'}）`;
+    if (el) el.textContent = `（当前版本为：${curRules ?? '--'}，winapp2 版本为：${localWinapp2 ?? '--'}，云端 winapp2 版本为：${remoteWinapp2 ?? '--'}）`;
   }
 
   function onPageEnter() {
@@ -1201,12 +1299,12 @@
     if (!window.api?.cleanup?.checkRulesVersion) return;
     window.api.cleanup.checkRulesVersion().then((resp) => {
       if (resp && resp.success) {
-        setVersionInfo(resp.currentVersion, resp.currentWinapp2Version, resp.remoteVersion);
+        setVersionInfo(resp.currentVersion, resp.currentWinapp2Version, resp.remoteWinapp2Version);
         if (resp.hasUpdate) {
           window.app?.toast('info', `规则库有新版本：v${resp.remoteVersion}（当前 v${resp.currentVersion}），可点击「更新规则库」升级`, 6000);
         }
       } else {
-        // 检测失败（网络/源不可达）：云端显示 --，本地版本照常展示，不打扰
+        // 检测失败（网络/源不可达）：云端 winapp2 显示 --，本地版本照常展示，不打扰
         setVersionInfo(resp?.currentVersion ?? null, resp?.currentWinapp2Version ?? null, null);
       }
     }).catch(() => {});

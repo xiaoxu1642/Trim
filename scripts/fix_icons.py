@@ -1,93 +1,114 @@
 # -*- coding: utf-8 -*-
-"""修复 Trim 图标四角白点 v2：用严格阈值区分紫色主体与白色背景/柔和阴影。"""
-from PIL import Image, ImageDraw, ImageFilter
+"""Trim 图标生成器 v3：由 source.png 生成全套 PNG + ICO（含小尺寸圆角修正）。
+
+v3（2026-09-14，图标替换批次）重写要点：
+  1) 素材形态变更：新 source.png 的圆角面即整张画布（四角为白色切角），
+     不再需要 v2 的「按主体包围盒裁切」——裁切对全画布圆角图会让包围盒判定漂移。
+  2) 每个尺寸独立应用圆角蒙版：直接下采样会把 2px 级圆角平均掉，小尺寸四角残留白点
+     （实测 16px 角 alpha≈50、12px 更高）。改为「先缩放、再按目标尺寸圆角半径重新蒙版」。
+  3) <=16px 不羽化：蒙版羽化会把邻近不透明像素的 alpha 溢到角点，白角复现；
+     2px 圆角下硬边无可见锯齿。
+  4) 手工组装 ICO：PIL 的 ICO 保存会漏帧（实测 8 帧写入后只剩 7 帧、丢 96x96），
+     改为按 ICO 格式显式写入全部帧（PNG 压缩帧，Vista+ 支持）。
+
+用法：py -3.13 scripts/fix_icons.py（需要 Pillow）
+"""
+from PIL import Image, ImageDraw, ImageFilter, ImageChops
+import io
 import os
 import shutil
+import struct
 
 # 脚本位于 scripts/ 下，仓库根取自身位置的上一级（源码换位置后仍可运行）
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SRC = os.path.join(ROOT, "src", "assets", "ico", "source.png")
+ICO_DIR = os.path.join(ROOT, "src", "assets", "ico")
+SRC = os.path.join(ICO_DIR, "source.png")
+SQUARED = os.path.join(ICO_DIR, "source_squared.png")
 
-img = Image.open(SRC).convert("RGBA")
-W, H = img.size
-px = img.load()
+PNG_SIZES = [12, 16, 24, 32, 48, 64, 96]
+ICO_SIZES = [16, 24, 32, 48, 64, 96, 128, 256]
 
-def is_body(p):
-    """紫色主体（排除白背景与浅色阴影）：饱和度足够或亮度足够低"""
-    r, g, b = p[0], p[1], p[2]
-    return (max(r, g, b) - min(r, g, b) > 25) or (max(r, g, b) < 205)
 
-# 1) 主体外接框（行/列内主体像素计数，抗单点噪声）
-col_hits = [0] * W
-row_hits = [0] * H
-for y in range(0, H, 2):
-    for x in range(0, W, 2):
-        if is_body(px[x, y]):
-            col_hits[x] += 1
-            row_hits[y] += 1
-xs = [x for x in range(W) if col_hits[x] >= 3]
-ys = [y for y in range(H) if row_hits[y] >= 3]
-left, right, top, bottom = min(xs), max(xs), min(ys), max(ys)
-bw, bh = right - left + 1, bottom - top + 1
-print(f"body bbox: ({left},{top})-({right},{bottom}) size={bw}x{bh}")
+def measure_radius(img):
+    """圆角半径：沿主对角线找首个不透明点，d = r * (1 - 1/√2) ≈ 0.2929 r"""
+    W, H = img.size
+    px = img.load()
+    d = next((i for i in range(min(W, H)) if px[i, i][3] > 8), None)
+    return round(d / 0.2929) if d else int(min(W, H) * 0.15)
 
-# 2) 圆角半径：主体顶行最左着色点
-top_row_x = None
-for x in range(left, right + 1):
-    if is_body(px[x, top + 2]):
-        top_row_x = x
-        break
-radius = (top_row_x - left) if top_row_x else int(min(bw, bh) * 0.22)
-print(f"corner radius ≈ {radius}px ({radius/min(bw,bh)*100:.1f}%)")
 
-# 3) 圆角矩形蒙版：缩 1px 吃掉白色 AA 边，再羽化
-mask = Image.new("L", (W, H), 0)
-d = ImageDraw.Draw(mask)
-d.rounded_rectangle([left + 1, top + 1, right - 1, bottom - 1], radius=radius, fill=255)
-mask = mask.filter(ImageFilter.MinFilter(3)).filter(ImageFilter.GaussianBlur(1.1))
+def frame(src, size, r_src):
+    """单尺寸成品：缩放 + 按目标尺寸圆角半径蒙版（<=16px 不羽化，防白角溢出）"""
+    im = src.resize((size, size), Image.LANCZOS)
+    r = max(2, round(r_src * size / src.size[0]))
+    mask = Image.new("L", (size, size), 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, size - 1, size - 1], radius=r, fill=255)
+    if size > 16:
+        mask = mask.filter(ImageFilter.GaussianBlur(0.5))
+    im.putalpha(ImageChops.darker(im.getchannel("A"), mask))
+    return im
 
-# 4) 应用蒙版
-r_, g_, b_, _ = img.split()
-img = Image.merge("RGBA", (r_, g_, b_, mask))
-print("corner alphas:", [img.getpixel(p)[3] for p in [(2, 2), (W - 3, 2), (2, H - 3), (W - 3, H - 3)]])
 
-# 5) 输出
-ico_dir = os.path.join(ROOT, "src", "assets", "ico")
-# 不就地覆盖 source.png：源图是唯一的原始素材，重跑时二次裁切会因
-# 透明角导致主体包围盒判定漂移。裁切结果另存为 source_squared.png。
-img.save(os.path.join(ico_dir, "source_squared.png"))
-for s in [12, 16, 24, 32, 48, 64, 96]:
-    img.resize((s, s), Image.LANCZOS).save(os.path.join(ico_dir, f"icon_{s}x{s}.png"))
+def main():
+    # 素材：优先用已裁切成品；缺失时由 source.png 生成（全画布圆角蒙版，缩 1px 吃白 AA 边）
+    if os.path.exists(SQUARED):
+        src = Image.open(SQUARED).convert("RGBA")
+    else:
+        src = Image.open(SRC).convert("RGBA")
+        W, H = src.size
+        r = measure_radius(src)
+        mask = Image.new("L", (W, H), 0)
+        ImageDraw.Draw(mask).rounded_rectangle([1, 1, W - 2, H - 2], radius=r, fill=255)
+        mask = mask.filter(ImageFilter.MinFilter(3)).filter(ImageFilter.GaussianBlur(1.1))
+        src.putalpha(ImageChops.darker(src.getchannel("A"), mask))
+        src.save(SQUARED)
 
-# ICO 以最大帧 256 为基底、小帧 append（PIL 只会从 >= 目标尺寸的帧缩小，
-# 基底若是 16px 则只写入 16x16 一帧，导致桌面图标模糊且白角外露）
-ico_sizes = [16, 24, 32, 48, 64, 96, 128, 256]
-frames = [img.resize((s, s), Image.LANCZOS) for s in ico_sizes]
-frames[-1].save(os.path.join(ico_dir, "Trim.ico"), format="ICO",
-                append_images=frames[:-1])
+    r_src = measure_radius(src)
+    print(f"source {src.size[0]}x{src.size[1]}, corner radius ≈ {r_src}px ({r_src / src.size[0] * 100:.1f}%)")
 
-# 构建器（Tauri 安装器工程）可能位于本仓库内或同级的独立目录，按候选顺序解析。
-# 找不到时只跳过并提示，绝不凭空创建 trim-installer 幽灵目录。
-BUILDER_CANDIDATES = [
-    os.path.join(ROOT, "trim-installer"),
-    os.path.join(os.path.dirname(ROOT), "Trim goujian", "trim-installer"),
-]
-builder = next((p for p in BUILDER_CANDIDATES if os.path.isdir(p)), None)
+    for s in PNG_SIZES:
+        frame(src, s, r_src).save(os.path.join(ICO_DIR, f"icon_{s}x{s}.png"))
+    print("PNG 已生成:", ", ".join(f"{s}x{s}" for s in PNG_SIZES))
 
-brand_ico = os.path.join(ico_dir, "Trim.ico")
-if builder is None:
-    print("WARN: 未找到 trim-installer 构建器目录，跳过构建器图标同步")
-else:
-    inst_assets = os.path.join(builder, "src", "assets")
-    os.makedirs(inst_assets, exist_ok=True)
-    img.resize((192, 192), Image.LANCZOS).save(os.path.join(inst_assets, "trim-192.png"))
-    img.resize((32, 32), Image.LANCZOS).save(os.path.join(inst_assets, "trim-32.png"))
+    # ICO：手工组装，保证帧完整
+    blobs = []
+    for s in ICO_SIZES:
+        b = io.BytesIO()
+        frame(src, s, r_src).save(b, format="PNG", optimize=True)
+        blobs.append(b.getvalue())
+    header = struct.pack("<HHH", 0, 1, len(ICO_SIZES))
+    offset = 6 + 16 * len(ICO_SIZES)
+    entries = b""
+    for s, data in zip(ICO_SIZES, blobs):
+        dim = 0 if s >= 256 else s  # ICO 中 256 以 0 表示
+        entries += struct.pack("<BBBBHHII", dim, dim, 0, 0, 1, 32, len(data), offset)
+        offset += len(data)
+    ico_path = os.path.join(ICO_DIR, "Trim.ico")
+    with open(ico_path, "wb") as f:
+        f.write(header + entries + b"".join(blobs))
+    print("ICO 已生成:", ico_path, len(ICO_SIZES), "帧")
 
-    # Tauri 图标必须与 src/assets/ico/Trim.ico 逐字节一致：就地重采样会丢帧、
-    # 产生与 Electron 端不同的图标位图，因此直接复制成品 ico。
-    dst_ico = os.path.join(builder, "src-tauri", "icons", "icon.ico")
-    os.makedirs(os.path.dirname(dst_ico), exist_ok=True)
-    shutil.copyfile(brand_ico, dst_ico)
-    print("builder synced ->", builder)
+    # 构建器（Tauri 安装器工程）可能位于本仓库内或同级的独立目录，按候选顺序解析。
+    # 找不到时只跳过并提示，绝不凭空创建 trim-installer 幽灵目录。
+    BUILDER_CANDIDATES = [
+        os.path.join(ROOT, "trim-installer"),
+        os.path.join(os.path.dirname(ROOT), "Trim goujian", "trim-installer"),
+    ]
+    builder = next((p for p in BUILDER_CANDIDATES if os.path.isdir(p)), None)
+    if builder is None:
+        print("WARN: 未找到 trim-installer 构建器目录，跳过构建器图标同步")
+    else:
+        inst_assets = os.path.join(builder, "src", "assets")
+        os.makedirs(inst_assets, exist_ok=True)
+        frame(src, 192, r_src).save(os.path.join(inst_assets, "trim-192.png"))
+        frame(src, 32, r_src).save(os.path.join(inst_assets, "trim-32.png"))
+        # Tauri 图标必须与 src/assets/ico/Trim.ico 逐字节一致：就地重采样会丢帧、
+        # 产生与 Electron 端不同的图标位图，因此直接复制成品 ico。
+        dst_ico = os.path.join(builder, "src-tauri", "icons", "icon.ico")
+        os.makedirs(os.path.dirname(dst_ico), exist_ok=True)
+        shutil.copyfile(ico_path, dst_ico)
+        print("builder synced ->", builder)
 
-print("done v2")
+
+if __name__ == "__main__":
+    main()

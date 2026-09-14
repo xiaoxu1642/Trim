@@ -1308,7 +1308,9 @@ handleSafe('cleanup:execute', async (event, { items, force, toRecycle, autoRebui
       data.recycledBytes = recycledBytes;
       data.recycledCount = recycledCount;
       data.success = (data.details || []).filter(d => d.status === 'ok').length;
-      data.failed = (data.details || []).filter(d => d.status === 'error' || d.status === 'partial').length;
+      // v3.3.4 文案纠偏：partial 单列（部分移入回收站成功），不计入 failed
+      data.failed = (data.details || []).filter(d => d.status === 'error').length;
+      data.partial = (data.details || []).filter(d => d.status === 'partial').length;
       data.skipped = (data.details || []).filter(d => d.status === 'skip').length;
     }
     data.trashFailures = trashFailures || []; // 审查 4-4：渲染层据此弹「改为永久删除」引导
@@ -1319,7 +1321,17 @@ handleSafe('cleanup:execute', async (event, { items, force, toRecycle, autoRebui
       const dts = data.details || [];
       const nPartial = dts.filter(d => d.status === 'partial').length;
       const nResidual = dts.reduce((s, d) => s + (Number(d.residual) > 0 ? 1 : 0), 0);
-      writeLog('info', `清理完成: 实测释放 ${Number(data.totalFreed) || 0} 字节, 成功 ${data.success || 0}, 失败 ${data.failed || 0}, 跳过 ${data.skipped || 0}, 部分成功 ${nPartial}, 有残留 ${nResidual} 项`);
+      // v3.3.4 文案纠偏：partial 计入 PS 的 failed，但语义是「部分成功」（其余文件被占用），
+      // 不应让用户看到「清理失败」。这里把两者拆开上报，渲染层据此区分提示。
+      data.failed = dts.filter(d => d.status === 'error').length;
+      data.partial = nPartial;
+      writeLog('info', `清理完成: 实测释放 ${Number(data.totalFreed) || 0} 字节, 成功 ${data.success || 0}, 失败 ${data.failed || 0}, 部分成功 ${nPartial}, 跳过 ${data.skipped || 0}, 有残留 ${nResidual} 项`);
+      // v3.3.4 明细落日志：逐项 id/status/message（截断防御，避免超长日志）
+      for (const d of dts) {
+        const msg = String(d.message || '').slice(0, 200);
+        writeLog('info', `  清理明细 [${d.status}] ${d.id}${d.name ? '（' + String(d.name).slice(0, 60) + '）' : ''}: ${msg}（释放 ${Number(d.freed) || 0} 字节, 残留 ${Number(d.residual) || 0}）`);
+      }
+      // 成功判据：硬失败（error）为 0 即算成功；partial 属「部分成功」，由渲染层另行提示
       return { success: Number(data.failed || 0) === 0, data };
     } catch (e) {
       return { success: false, message: '解析结果失败', raw: stdout };
@@ -1790,6 +1802,116 @@ function runFinderCleanupScan({ categories, configuredPaths, rulesJson, onStdout
 }
 
 const FINDER_SCAN_TYPES = ['duplicates', 'bigfiles', 'empty', 'appdata'];
+
+// ==================== 清理前占用检测（v3.3.4） ====================
+// 只读探测走 finder.exe checklocked（独占探测过滤 + Restart Manager 识别占用进程应用名）；
+// 结束进程是危险操作：PID 白名单仅来自最近一次 check-locked 的非系统关键进程返回，
+// 且每次新检测覆盖白名单，防止「检测 A 文件后延时结束 B 进程」的窗口。
+
+// 最近一次占用检测的进程白名单（pid -> {app, critical}），cleanup:kill-locked-processes 唯一依据
+let lastLockCheckProcs = [];
+
+handleSafe('cleanup:check-locked', async (event, { ids } = {}) => {
+  const snapshot = cleanupSnapshots.get(event.sender.id) || new Map();
+  const wanted = Array.isArray(ids) ? ids.filter(s => typeof s === 'string' && snapshot.has(s)) : [];
+  const files = [];
+  for (const id of wanted) {
+    const it = snapshot.get(id);
+    if (it && Array.isArray(it.files)) {
+      for (const f of it.files) {
+        if (f && typeof f.path === 'string' && f.path) files.push({ path: f.path, id });
+      }
+    }
+  }
+  lastLockCheckProcs = [];
+  if (!files.length) return { success: true, locked: [], byApp: {}, procs: [], lockedByItem: {}, scanned: 0, truncated: false };
+  const PLAN_LOCK_CAP = 20000; // 占用检测防呆上限（与扫描计划清单同量级）
+  const truncated = files.length > PLAN_LOCK_CAP;
+  const list = files.slice(0, PLAN_LOCK_CAP);
+  const exe = resolveFinderExe();
+  if (!exe) return { success: false, message: '未找到原生扫描器 finder.exe' };
+  return await new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(exe, ['checklocked'], { windowsHide: true });
+    } catch (e) {
+      return resolve({ success: false, message: String(e.message) });
+    }
+    registerBackendChild(child, exe, ['checklocked']);
+    let settled = false;
+    let timer = null;
+    let stderr = '';
+    let buf = '';
+    const locked = [];
+    const lockedByItem = new Map();
+    const byApp = new Map();
+    const procs = new Map();
+    const finish = (v) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      try { child.kill(); } catch (e) {}
+      resolve(v);
+    };
+    child.on('error', (err) => finish({ success: false, message: String(err.message) }));
+    child.stdout.on('data', (d) => {
+      buf += d.toString('utf8');
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).replace(/\r$/, '');
+        buf = buf.slice(nl + 1);
+        if (!line.startsWith('@@LOCKED@@')) continue;
+        try {
+          // 前缀 '@@LOCKED@@' 恰 10 字符（勿与 '@@PLANFILE@@' 的 12 混淆，错位会让解析静默失败）
+          const pf = JSON.parse(line.slice('@@LOCKED@@'.length));
+          if (!pf || typeof pf.path !== 'string' || !pf.path) continue;
+          locked.push(pf);
+          if (pf.id) lockedByItem.set(pf.id, (lockedByItem.get(pf.id) || 0) + 1);
+          for (const p of Array.isArray(pf.procs) ? pf.procs : []) {
+            if (typeof p.pid !== 'number' || typeof p.app !== 'string' || !p.app) continue;
+            byApp.set(p.app, (byApp.get(p.app) || 0) + 1);
+            if (!procs.has(p.pid)) procs.set(p.pid, { pid: p.pid, app: p.app, critical: !!p.critical });
+          }
+        } catch (e) {}
+      }
+    });
+    child.stderr.on('data', (d) => { stderr += d.toString('utf8'); });
+    child.on('close', (code) => {
+      if (code !== 0) return finish({ success: false, message: stderr || `占用检测退出码 ${code}` });
+      lastLockCheckProcs = [...procs.values()].filter(p => !p.critical);
+      finish({
+        success: true,
+        locked,
+        byApp: Object.fromEntries(byApp),
+        procs: [...procs.values()],
+        lockedByItem: Object.fromEntries(lockedByItem),
+        scanned: list.length,
+        truncated
+      });
+    });
+    timer = setTimeout(() => finish({ success: false, message: '占用检测超时' }), 60000);
+    child.stdin.on('error', () => {});
+    child.stdin.write(JSON.stringify({ files: list }));
+    child.stdin.end();
+  });
+});
+
+handleSafe('cleanup:kill-locked-processes', async () => {
+  if (!lastLockCheckProcs.length) return { success: true, killed: [], failed: [] };
+  const killed = [];
+  const failed = [];
+  for (const p of lastLockCheckProcs) {
+    try {
+      process.kill(p.pid);
+      killed.push(p);
+    } catch (e) {
+      failed.push({ ...p, message: e.message });
+    }
+  }
+  lastLockCheckProcs = []; // 一次性白名单：结束动作完成后即失效
+  writeLog('warn', `结束占用进程（用户确认）: 成功 ${killed.length} 个${failed.length ? `，失败 ${failed.length} 个（${failed.map(f => `${f.app}#${f.pid}`).join(', ')}）` : ''}`);
+  return { success: true, killed, failed };
+});
 
 handleSafe('finder:scan', async (event, { scanType, paths, minSize, count, minSizeMb }) => {
   if (!FINDER_SCAN_TYPES.includes(scanType)) return { success: false, message: '未知扫描类型' };

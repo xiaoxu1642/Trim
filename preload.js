@@ -106,6 +106,9 @@ contextBridge.exposeInMainWorld('api', {
     },
     // 审查 4-4：回收站失败项经用户红色确认后永久删除重试（目标由主进程白名单留存，渲染层不可指定）
     retryFailedDelete: () => ipcRenderer.invoke('cleanup:retry-failed-delete'),
+    // v3.3.4：清理前占用检测（只读）与「结束占用进程」（PID 白名单由主进程最近一次检测结果决定）
+    checkLocked: (ids) => ipcRenderer.invoke('cleanup:check-locked', { ids }),
+    killLockedProcesses: () => ipcRenderer.invoke('cleanup:kill-locked-processes'),
     // P3 条目明细：枚举单个条目的文件清单（只读，供明细弹窗展示）
     itemDetail: (id, path = '') => ipcRenderer.invoke('cleanup:item-detail', { id, path }),
     onScanProgress: (callback) => {

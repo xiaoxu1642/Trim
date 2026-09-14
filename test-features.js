@@ -1357,9 +1357,18 @@ check('双引擎对拍：cleanup 扫描 PS 与 Rust 逐字段一致（P3）', ()
   const locker = spawn(psExe(), ['-NoProfile', '-Command',
     "$h = [System.IO.File]::Open(" + lit(lockPath) + ", 'Open', 'Read', 'None'); Start-Sleep -Seconds 90; $h.Dispose()"],
     { windowsHide: true, stdio: 'ignore' });
-  const lockState = String(runPs(
-    "try { $h = [System.IO.File]::Open(" + lit(lockPath) + ", 'Open', 'Read', 'None'); $h.Dispose(); Write-Output 'unlocked' } catch { Write-Output 'locked' }\n"
-  )).trim().split(/\r?\n/).pop();
+  const lockState = (() => {
+    // pwsh 冷启动 1-2s：单次探测会跑在持锁进程就绪之前（实测偶发），改为轮询确认
+    let state = 'unlocked';
+    for (let i = 0; i < 6; i++) {
+      state = String(runPs(
+        "try { $h = [System.IO.File]::Open(" + lit(lockPath) + ", 'Open', 'Read', 'None'); $h.Dispose(); Write-Output 'unlocked' } catch { Write-Output 'locked' }\n"
+      )).trim().split(/\r?\n/).pop();
+      if (state === 'locked') break;
+      spawnSync(psExe(), ['-NoProfile', '-Command', 'Start-Sleep -Milliseconds 600'], { windowsHide: true });
+    }
+    return state;
+  })();
   if (lockState !== 'locked') throw new Error('独占锁未生效（locker 启动失败），无法验证锁定口径');
 
   const configured = { p3Cache: dirB }; // configuredPaths 覆盖：pathPs 求值路径存在但被覆盖为 dirB
@@ -1450,6 +1459,98 @@ check('双引擎对拍：cleanup 扫描 PS 与 Rust 逐字段一致（P3）', ()
     try { fs.rmSync(dirMissing, { recursive: true, force: true }); } catch (e) {}
     runPs("reg.exe delete '" + regKey + "' /f 2>&1 | Out-Null\n");
   }
+});
+
+// v3.3.4：清理前占用检测（Rust checklocked + 渲染层弹窗）与清理结果文案纠偏
+check('v3.3.4 占用检测链路：IPC 双侧对齐 + kill 通道不入只读白名单', () => {
+  const mainSrc = fs.readFileSync(abs('main.js'), 'utf8');
+  const preloadSrc = fs.readFileSync(abs('preload.js'), 'utf8');
+  for (const ch of ['cleanup:check-locked', 'cleanup:kill-locked-processes']) {
+    if (!mainSrc.includes(`'${ch}'`)) throw new Error('main.js 缺少通道 ' + ch);
+    if (!preloadSrc.includes(`'${ch}'`)) throw new Error('preload.js 缺少通道 ' + ch);
+  }
+  // 结束进程是危险操作，绝不允许进「跳过来源校验」的只读白名单
+  const wl = mainSrc.match(/const SIDE_EFFECT_FREE = new Set\(\[([\s\S]*?)\]\);/);
+  if (!wl) throw new Error('未找到 SIDE_EFFECT_FREE 白名单');
+  if (wl[1].includes('cleanup:kill-locked-processes')) throw new Error('kill 通道不得进只读白名单');
+  // kill 目标必须来自最近一次检测白名单（渲染层不可指定 PID）
+  if (!/lastLockCheckProcs/.test(mainSrc)) throw new Error('缺少占用检测进程白名单变量');
+  if (!/cleanup:kill-locked-processes[\s\S]{0,400}lastLockCheckProcs/.test(mainSrc)) {
+    throw new Error('kill 通道未消费检测白名单');
+  }
+  // 行协议前缀长度必须精确（@@LOCKED@@ 与 @@PLANFILE@@ 长度不同，错位会让解析静默失败）
+  if (!mainSrc.includes(`line.slice('@@LOCKED@@'.length)`)) {
+    throw new Error('@@LOCKED@@ 行解析未使用前缀长度（易与 12 字符的 @@PLANFILE@@ 混淆）');
+  }
+  // Rust 侧：checklocked 子命令已接线，且 RM 结构体按 4 字节对齐（u64 FILETIME 会让应用名错位）
+  const rs = fs.readFileSync(abs('native-scanner/src/main.rs'), 'utf8');
+  if (!rs.includes('"checklocked"')) throw new Error('finder 未接线 checklocked 子命令');
+  const cs = fs.readFileSync(abs('native-scanner/src/cleanup_scan.rs'), 'utf8');
+  for (const needle of ['RmStartSession', 'RmRegisterResources', 'RmGetList', 'ProcessStartTimeLow']) {
+    if (!cs.includes(needle)) throw new Error('cleanup_scan 缺少 ' + needle);
+  }
+  if (/ProcessStartTime: u64/.test(cs)) throw new Error('RM_UNIQUE_PROCESS 不得用 u64 FILETIME（4 字节对齐偏差致应用名错位）');
+});
+
+check('v3.3.4 文案纠偏：partial 不计入 failed + 占用弹窗骨架', () => {
+  const mainSrc = fs.readFileSync(abs('main.js'), 'utf8');
+  const cjs = fs.readFileSync(abs('src/scripts/cleanup.js'), 'utf8');
+  // partial（部分成功）与 error（硬失败）分开统计：failed 只收 error
+  if (!/data\.failed = dts\.filter\(d => d\.status === 'error'\)\.length/.test(mainSrc)) {
+    throw new Error('清理汇总未把 partial 从 failed 拆出');
+  }
+  if (!mainSrc.includes('data.partial = nPartial')) throw new Error('缺少 partial 上报');
+  // 回收站分支同样拆分
+  if (!/data\.partial = \(data\.details \|\| \[\]\)\.filter\(d => d\.status === 'partial'\)\.length/.test(mainSrc)) {
+    throw new Error('回收站分支未拆分 partial');
+  }
+  // 渲染层：partial 单独提示，且不再与 failed 混为一谈
+  if (!/result\.partial > 0/.test(cjs)) throw new Error('渲染层未区分 partial 提示');
+  // 占用弹窗：进程列表 + 两个按钮
+  for (const needle of ['lock-app-list', 'data-lock="kill"', 'data-lock="skip"', '不结束并放弃清理它们', '立即结束进程']) {
+    if (!cjs.includes(needle)) throw new Error('占用弹窗缺少 ' + needle);
+  }
+  // 关闭弹窗（×/ESC/背景）不得静默继续清理
+  if (!/onClose\(\) \{ finish\('cancel'\); \}/.test(cjs)) throw new Error('占用弹窗关闭未按取消处理');
+  // v3.3.4：第三段版本明确为「云端 winapp2 版本」（远端取的就是 winapp2 基线版本号）
+  const html = fs.readFileSync(abs('src/index.html'), 'utf8');
+  if (!cjs.includes('云端 winapp2 版本为：')) throw new Error('渲染层版本文案未改为「云端 winapp2 版本」');
+  if (!html.includes('云端 winapp2 版本为：--')) throw new Error('index.html 静态初值未同步新版本文案');
+  if (cjs.includes('，云端版本为：') || html.includes('，云端版本为：')) {
+    throw new Error('仍残留旧文案「云端版本为」，会与 winapp2 语义混淆');
+  }
+  // 第三段必须取远端 winapp2Version（取 remoteVersion 会错显本机规则库版本号）
+  if (!/setVersionInfo\(resp\.currentVersion, resp\.currentWinapp2Version, resp\.remoteWinapp2Version\)/.test(cjs)) {
+    throw new Error('云端段未使用 remoteWinapp2Version（winapp2 语义不符）');
+  }
+});
+
+check('v3.3.4 图标：ICO 8 帧完整且生成器与产物同源', () => {
+  const ico = fs.readFileSync(abs('src/assets/ico/Trim.ico'));
+  if (ico.readUInt16LE(0) !== 0 || ico.readUInt16LE(2) !== 1) throw new Error('Trim.ico 头非法');
+  const count = ico.readUInt16LE(4);
+  if (count !== 8) throw new Error(`Trim.ico 应为 8 帧（PIL 保存会漏帧，需手工组装），实际 ${count}`);
+  const sizes = [];
+  for (let i = 0; i < count; i++) {
+    const off = 6 + i * 16;
+    sizes.push(ico[off] === 0 ? 256 : ico[off]);
+  }
+  const expect = [16, 24, 32, 48, 64, 96, 128, 256];
+  if (sizes.join(',') !== expect.join(',')) throw new Error(`Trim.ico 帧尺寸异常: ${sizes.join(',')}`);
+  // 每帧偏移与长度必须在文件范围内（防手工组装越界）
+  for (let i = 0; i < count; i++) {
+    const off = 6 + i * 16;
+    const len = ico.readUInt32LE(off + 8);
+    const pos = ico.readUInt32LE(off + 12);
+    if (pos + len > ico.length) throw new Error(`Trim.ico 第 ${i} 帧越界`);
+  }
+  for (const s of [12, 16, 24, 32, 48, 64, 96]) {
+    if (!fs.existsSync(abs(`src/assets/ico/icon_${s}x${s}.png`))) throw new Error(`缺少 icon_${s}x${s}.png`);
+  }
+  // 生成器须保留「小尺寸不羽化」与「手工组装 ICO」两处修正，防重跑回归白角/漏帧
+  const gen = fs.readFileSync(abs('scripts/fix_icons.py'), 'utf8');
+  if (!/if size > 16:/.test(gen)) throw new Error('生成器缺少小尺寸不羽化分支');
+  if (!/struct\.pack\("<BBBBHHII"/.test(gen)) throw new Error('生成器缺少手工组装 ICO');
 });
 
 check('v2.6.0 新增 IPC 通道 main/preload 双侧对齐', () => {

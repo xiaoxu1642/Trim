@@ -888,6 +888,185 @@ pub fn expand_glob_dirs(pattern: &str, force: bool) -> Vec<String> {
     roots
 }
 
+// ==================== checklocked 子命令（清理前占用检测，v3.3.4） ====================
+// 输入：stdin JSON {"files":[{"path":"...","id":"..."}, ...]}（来自主进程扫描快照的计划清单）
+// 输出：@@LOCKED@@{"path":"...","id":"...","apps":[...],"critical":[...]} 逐个被占用文件；
+//       终止行 @@LOCKED_DONE@@{"scanned":N,"locked":M}
+// 两段式探测：独占打开（FileShare.None，与 ListDeletable.Deletable 同口径）快速过滤 →
+//   打不开且确实存在的文件逐个查 Restart Manager 拿占用进程应用名（per-file session，
+//   RM 不提供 file→process 归属，locked 文件通常为少数，per-file 开销可接受）。
+
+#[cfg(windows)]
+mod rstrtmgr {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+
+    const CCH_RM_MAX_APP_NAME: usize = 255;
+    const CCH_RM_MAX_SERVICE_NAME_SHORT: usize = 63;
+    const CCH_RM_SESSION_KEY: usize = 32;
+    const ERROR_MORE_DATA: i32 = 234;
+
+    #[repr(C)]
+    struct RM_UNIQUE_PROCESS {
+        dwProcessId: u32,
+        // FILETIME 本体是 { DWORD low, DWORD high }，4 字节对齐、共 8 字节——
+        // 用 u64 会引入 8 字节对齐 pad，使 strAppName 错位 4 字节（实测应用名丢首 2 字符）
+        ProcessStartTimeLow: u32,
+        ProcessStartTimeHigh: u32,
+    }
+
+    #[repr(C)]
+    struct RM_PROCESS_INFO {
+        Process: RM_UNIQUE_PROCESS,
+        strAppName: [u16; CCH_RM_MAX_APP_NAME + 1],
+        strServiceShortName: [u16; CCH_RM_MAX_SERVICE_NAME_SHORT + 1],
+        ApplicationType: u32,
+        TSSessionId: u32,
+        bRestartable: i32,
+    }
+
+    impl Clone for RM_PROCESS_INFO {
+        fn clone(&self) -> Self {
+            unsafe { std::ptr::read(self) } // POD 结构体逐位复制（含数组字段，无堆所有权）
+        }
+    }
+
+    #[link(name = "rstrtmgr")]
+    #[allow(non_snake_case)]
+    extern "system" {
+        fn RmStartSession(pSessionHandle: *mut u32, dwSessionFlags: u32, strSessionKey: *mut u16) -> i32;
+        fn RmRegisterResources(
+            dwSessionHandle: u32, nFiles: u32, rgsFileNames: *const *const u16,
+            nApplications: u32, rgApplications: *const RM_PROCESS_INFO,
+            nServices: u32, rgsServiceNames: *const *const u16,
+        ) -> i32;
+        fn RmGetList(
+            dwSessionHandle: u32, pnProcInfoNeeded: *mut u32, pnProcInfo: *mut u32,
+            rgAffectedApps: *mut RM_PROCESS_INFO, lpdwRebootReasons: *mut u32,
+        ) -> i32;
+        fn RmEndSession(dwSessionHandle: u32) -> i32;
+    }
+
+    fn to_wide(s: &str) -> Vec<u16> {
+        OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+    }
+
+    /// Restart Manager 查询单个文件的占用者：返回进程列表（PID + 应用名 + 是否系统关键进程）。
+    /// RM 不提供 file→process 归属，session 只注册本文件，结果即本文件占用者。
+    pub struct RmProc {
+        pub pid: u32,
+        pub app: String,
+        pub critical: bool,
+    }
+
+    pub fn query_lockers(path: &str) -> Vec<RmProc> {
+        let mut out: Vec<RmProc> = Vec::new();
+        unsafe {
+            let mut sess: u32 = 0;
+            let mut key = [0u16; CCH_RM_SESSION_KEY + 1];
+            if RmStartSession(&mut sess, 0, key.as_mut_ptr()) != 0 {
+                return out;
+            }
+            let wide = to_wide(path);
+            let ptrs: Vec<*const u16> = vec![wide.as_ptr()];
+            let rc = RmRegisterResources(sess, 1, ptrs.as_ptr(), 0, std::ptr::null(), 0, std::ptr::null());
+            if rc == 0 {
+                let mut needed: u32 = 0;
+                let mut count: u32 = 32;
+                loop {
+                    let mut buf: Vec<RM_PROCESS_INFO> = vec![std::mem::zeroed(); count as usize];
+                    let mut reboot: u32 = 0;
+                    let rc2 = RmGetList(sess, &mut needed, &mut count, buf.as_mut_ptr(), &mut reboot);
+                    if rc2 == ERROR_MORE_DATA {
+                        count = needed;
+                        continue;
+                    }
+                    if rc2 == 0 {
+                        buf.truncate(count as usize);
+                        for pi in &buf {
+                            let len = pi.strAppName.iter().position(|&c| c == 0).unwrap_or(0);
+                            let app = String::from_utf16_lossy(&pi.strAppName[..len]);
+                            if app.is_empty() {
+                                continue;
+                            }
+                            // ApplicationType 1000 = RmCritical（系统关键进程，不提供结束入口）
+                            out.push(RmProc { pid: pi.Process.dwProcessId, app, critical: pi.ApplicationType == 1000 });
+                        }
+                    }
+                    break;
+                }
+            }
+            RmEndSession(sess);
+        }
+        out
+    }
+}
+
+#[cfg(not(windows))]
+mod rstrtmgr {
+    pub struct RmProc {
+        pub pid: u32,
+        pub app: String,
+        pub critical: bool,
+    }
+
+    pub fn query_lockers(_path: &str) -> Vec<RmProc> {
+        Vec::new()
+    }
+}
+
+/// checklocked 主流程：逐文件独占探测 → 被占用的查 RM → 行协议输出
+pub fn run_checklocked() -> i32 {
+    let mut input = String::new();
+    if std::io::stdin().read_to_string(&mut input).is_err() {
+        fatal("stdin 读取失败");
+    }
+    if input.trim().is_empty() {
+        fatal("占用检测输入为空");
+    }
+    let parsed = match parse_json(&input) {
+        Ok(p) => p,
+        Err(e) => fatal(&format!("占用检测输入解析失败: {}", e)),
+    };
+    let Some(files) = parsed.get("files").and_then(|v| v.as_arr()) else {
+        fatal("占用检测输入缺少 files 结构");
+    };
+    let mut scanned: u64 = 0;
+    let mut locked: u64 = 0;
+    for f in files {
+        let Some(path) = f.get("path").and_then(|v| v.as_str()) else { continue };
+        if path.is_empty() {
+            continue;
+        }
+        scanned += 1;
+        // 目录跳过：目录本就无法以独占读打开（属正常），计划清单理论上只含文件，此处双保险
+        if Path::new(path).metadata().map(|m| m.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        // 独占探测过滤：能独占打开（或已不存在）都不是「被占用」目标
+        if Path::new(path).metadata().is_err() {
+            continue; // 不存在 → 执行阶段自然跳过，不算占用
+        }
+        if file_deletable(Path::new(path)) {
+            continue;
+        }
+        let procs = rstrtmgr::query_lockers(path);
+        let id = f.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        // procs 携带 PID：主进程 kill 白名单（仅非 critical）来源；RM 对同一进程重复返回，主进程按 pid 去重
+        let procs_json = procs
+            .iter()
+            .map(|p| format!("{{\"pid\":{},\"app\":{},\"critical\":{}}}", p.pid, jstr(&p.app), if p.critical { "true" } else { "false" }))
+            .collect::<Vec<_>>()
+            .join(",");
+        println!("@@LOCKED@@{{\"path\":{},\"id\":{},\"procs\":[{}]}}", jstr(path), jstr(id), procs_json);
+        locked += 1;
+        flush_stdout();
+    }
+    println!("@@LOCKED_DONE@@{{\"scanned\":{},\"locked\":{}}}", scanned, locked);
+    flush_stdout();
+    0
+}
+
 // ==================== 安装检测（Test-RuleDetect 口径） ====================
 
 fn test_rule_detect(rule: &Json) -> bool {

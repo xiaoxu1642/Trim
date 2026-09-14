@@ -975,6 +975,43 @@ body {
   line-height: 1.7;
   color: var(--fg-secondary);
 }
+
+/* v3.3.4 占用检测弹窗：占用应用进程列表（应用名 + 占用文件数） */
+.lock-app-list {
+  margin-top: 12px;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-surface-2);
+}
+.lock-app-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.lock-app-row:last-child { border-bottom: none; }
+.lock-app-name {
+  color: var(--fg-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lock-app-count {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--fg-tertiary);
+}
+.lock-critical-note {
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--warning);
+}
 .confirm-danger-hint {
   display: flex;
   align-items: flex-start;
