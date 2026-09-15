@@ -8929,3 +8929,6 @@ body[data-preset-bg] .layout::before {
   gap: 24px;
   align-items: start;
 }
+
+/* v3.5.3（2026-09-15）：运行库修复成功后的行内闭环标记 */
+.rt-fixed-badge{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:550;padding:3px 10px;border-radius:999px;background:var(--success-soft);color:var(--success);white-space:nowrap}

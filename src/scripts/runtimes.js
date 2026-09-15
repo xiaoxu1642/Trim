@@ -29,6 +29,7 @@
 
   let items = [];          // 最近一次检测结果
   let scanning = false;
+  const repairedSet = new Set(); // v3.5.3：本会话修复成功的条目（行内「已修复」标记）
 
   // ==================== 雷达图 ====================
   function renderRadar() {
@@ -99,6 +100,7 @@
       const meta = ITEM_META[it.id] || { name: it.id, desc: '' };
       const evid = Array.isArray(it.evidence) ? it.evidence : [];
       const canRepair = !!(it.repair && it.repair.id);
+      const fixed = repairedSet.has(it.id) && it.status === 'ok' ? '<span class="rt-fixed-badge" data-tip="本次会话已修复成功">已修复</span>' : '';
       const repairBtn = canRepair
         ? `<button type="button" class="btn btn-danger btn-small rt-repair-btn" data-rt-repair="${escapeHtml(it.repair.id)}" data-rt-name="${escapeHtml(it.repair.name || meta.name)}">一键修复</button>`
         : (it.status === 'fail' ? '<span class="rt-no-repair" data-tip="微软官方已下架独立安装包，建议通过安装含 DirectX 9 的游戏补齐，或使用系统文件修复">暂无一键修复</span>' : '');
@@ -110,7 +112,7 @@
             <div class="rt-item-name">${escapeHtml(meta.name)}</div>
             <div class="rt-item-desc">${escapeHtml(meta.desc)}</div>
           </div>
-          ${repairBtn}
+          ${fixed}${repairBtn}
         </div>
         ${evid.length ? `<div class="rt-item-evidence">${evid.map(e => `<div class="rt-evidence-row">${escapeHtml(e)}</div>`).join('')}</div>` : ''}
       </div>`;
@@ -134,7 +136,7 @@
   }
 
   // ==================== 扫描 ====================
-  async function startCollect() {
+  async function startCollect(silent) {
     if (scanning) return;
     if (!window.api?.runtimes?.collect) {
       window.app?.toast('warning', '当前环境不支持运行库检测');
@@ -142,7 +144,7 @@
     }
     scanning = true;
     const btn = document.getElementById('btnRuntimesScan');
-    if (btn) btn.disabled = true;
+    if (btn) { btn.disabled = true; btn.dataset.origText = btn.textContent; btn.textContent = '扫描中…'; }
     items = [{ id: 'placeholder', status: 'scanning' }];
     // 扫描中：列表骨架 + 雷达节点转扫描态
     renderRadar();
@@ -159,7 +161,7 @@
       renderList();
       updateRadar();
       renderSummary(resp.data.summary);
-      window.app?.toast('success', `运行库扫描完成，共 ${resp.data.summary.total} 项`);
+      if (!silent) window.app?.toast('success', `运行库扫描完成，共 ${resp.data.summary.total} 项`);
     } catch (e) {
       items = [];
       renderList();
@@ -168,7 +170,7 @@
       window.app?.toast('error', '运行库检测失败: ' + e.message);
     } finally {
       scanning = false;
-      if (btn) btn.disabled = false;
+      if (btn) { btn.disabled = false; btn.textContent = btn.dataset.origText || '开始扫描'; }
     }
   }
 
@@ -189,6 +191,8 @@
       { danger: true, dangerHint: '安装程序来自微软官方直链并经哈希校验；请仅在理解用途后执行。' }
     );
     if (!ok) return;
+    // v3.5.3：重渲染会重建列表节点，先锁定目标条目 id（id 跨扫描稳定）
+    const targetItem = items.find(x => x.repair && x.repair.id === actionId);
     const btn = document.querySelector(`[data-rt-repair="${actionId}"]`);
     if (btn) { btn.disabled = true; btn.textContent = '准备中…'; }
     const unbind = window.api.runtimes.onProgress?.((d) => {
@@ -211,11 +215,20 @@
       } else {
         window.app?.toast('error', (resp && resp.message) || `「${actionName}」修复未成功`);
       }
-      if (resp && Array.isArray(resp.items)) {
+      if (resp && Array.isArray(resp.items) && resp.items.length) {
         items = resp.items;
         renderList();
         updateRadar();
         renderSummary(resp.summary);
+      }
+      // v3.5.3：修复成功后只读复检一次，按钮与状态按最新事实重建；
+      // 需重启才生效的组件会保留修复入口并给出提示（不再出现「修复成功但按钮消失」的死端）。
+      if (resp && resp.success) {
+        await startCollect(true);
+        const after = targetItem ? items.find(x => x.id === targetItem.id) : null;
+        if (after && after.status !== 'ok') {
+          window.app?.toast('info', `「${actionName}」已安装；部分组件需重启电脑后完全生效`);
+        }
       }
     } catch (e) {
       window.app?.toast('error', '修复异常: ' + e.message);

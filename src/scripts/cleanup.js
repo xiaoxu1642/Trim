@@ -1319,7 +1319,11 @@
 
   function setVersionInfo(curRules, localWinapp2, remoteWinapp2) {
     const el = document.getElementById('rulesVersionInfo');
-    if (el) el.textContent = `（当前版本为：${curRules ?? '--'}，winapp2 版本为：${localWinapp2 ?? '--'}，云端 winapp2 版本为：${remoteWinapp2 ?? '--'}）`;
+    if (!el) return;
+    // v3.5.3（2026-09-15）：云端 winapp2 版本与本地一致时，追加「无需更新」字样
+    const base = `（当前版本为：${curRules ?? '--'}，winapp2 版本为：${localWinapp2 ?? '--'}，云端 winapp2 版本为：${remoteWinapp2 ?? '--'}）`;
+    const upToDate = remoteWinapp2 != null && localWinapp2 != null && String(remoteWinapp2) === String(localWinapp2);
+    el.textContent = upToDate ? `${base} · 无需更新` : base;
   }
 
   function onPageEnter() {

@@ -161,27 +161,21 @@
     const bodyHtml = `
           <div class="summary-cards rt-sr-cards">
             <div class="summary-card">
-              <div class="summary-icon" style="--icon-bg: linear-gradient(135deg, #0EA5E9, #0284C7)">
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/></svg>
-              </div>
+              <div class="summary-icon" style="--icon-bg: var(--info-soft); color: var(--info)"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5l8 3.5v5.2c0 4.9-3.4 9.4-8 10.8-4.6-1.4-8-5.9-8-10.8V6l8-3.5z"/><path d="M8.5 12l2.4 2.4 4.6-5"/></svg></div>
               <div class="summary-info">
                 <div class="summary-value" id="restoreProtection">检测中…</div>
                 <div class="summary-label">系统保护状态</div>
               </div>
             </div>
             <div class="summary-card">
-              <div class="summary-icon" style="--icon-bg: linear-gradient(135deg, #16A34A, #15803D)">
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M4 6h16v2H4V6zm2-4h12v2H6V2zm10 10H8v2h8v-2zm4-6H4v14h16V6z"/></svg>
-              </div>
+              <div class="summary-icon" style="--icon-bg: var(--success-soft); color: var(--success)"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg></div>
               <div class="summary-info">
                 <div class="summary-value" id="restoreCount">-</div>
                 <div class="summary-label">还原点数量</div>
               </div>
             </div>
             <div class="summary-card">
-              <div class="summary-icon" style="--icon-bg: linear-gradient(135deg, #D97706, #B45309)">
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>
-              </div>
+              <div class="summary-icon" style="--icon-bg: var(--warning-soft); color: var(--warning)"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 12a8.5 8.5 0 1 0 2.8-6.3L3.5 8"/><path d="M3.5 3.5V8H8"/></svg></div>
               <div class="summary-info">
                 <div class="summary-value" id="restoreRecent">-</div>
                 <div class="summary-label">最近还原点</div>
