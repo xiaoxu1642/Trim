@@ -28,7 +28,11 @@ function stepsToPs(steps) {
   steps.forEach((s) => {
     if (s.label) L.push(`Write-Output ('· ${String(s.label).replace(/'/g, "''")}')`);
     if (s.reg) {
-      L.push('$___rf = Join-Path $env:TEMP ("tfmaint_" + [guid]::NewGuid().ToString("N") + ".reg")');
+      // MA-1（2026-09-15 v7）：.reg 中间文件改写应用私有目录（主进程 spawn 时经 TRIM_TMP
+      // 注入 %APPDATA%\Trim\tmp），不再落全局可写 %TEMP%（S10 TOCTOU）；缺 env 回退 TEMP 保功能。
+      L.push('$___tmpDir = if ($env:TRIM_TMP) { $env:TRIM_TMP } else { Join-Path $env:APPDATA "Trim\\tmp" }');
+      L.push('if (-not (Test-Path -LiteralPath $___tmpDir)) { New-Item -ItemType Directory -Path $___tmpDir -Force | Out-Null }');
+      L.push('$___rf = Join-Path $___tmpDir ("tfmaint_" + [guid]::NewGuid().ToString("N") + ".reg")');
       L.push("$___rc = @'");
       L.push(s.reg);
       L.push("'@");
@@ -105,6 +109,17 @@ Start-Sleep -Seconds 2
 $sd = Join-Path $env:WINDIR 'SoftwareDistribution'
 $cr = Join-Path $env:WINDIR 'System32\\catroot2'
 $reset = 0; $skip = 0
+  # MA-3（2026-09-15 v7）：清扫上一轮遗留的 *.old_* 缓存备份（各保留最近 1 个供回退）。
+  # 原实现每次重置都新增一个数百 MB 目录且永不清理，累积可达 GB 级。放在本次改名前执行，
+  # 本轮新备份不受影响。
+  foreach ($base in @($sd,$cr)) {
+    $baks = @(Get-ChildItem -LiteralPath (Split-Path -Parent $base) -Filter ((Split-Path -Leaf $base) + '.old_*') -Directory -ErrorAction SilentlyContinue)
+    if ($baks.Count -gt 1) {
+      $baks | Sort-Object LastWriteTime -Descending | Select-Object -Skip 1 | ForEach-Object {
+        try { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue; Write-Output ('已清理旧缓存备份: ' + $_.Name) } catch { Write-TFDiag -Stage 'maint.wu' -Mutation 'partial' -Detail ('旧备份清理失败: ' + $_.Exception.Message) }
+      }
+    }
+  }
 foreach ($d in @($sd,$cr)) {
   if (Test-Path -LiteralPath $d) {
     $bak = $d + '.old_' + (Get-Date -Format 'yyyyMMddHHmmss')

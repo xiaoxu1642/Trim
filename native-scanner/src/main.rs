@@ -1259,7 +1259,10 @@ impl ProtectRoots {
 }
 
 fn protect_roots() -> &'static ProtectRoots {
-    PROTECT_ROOT.get_or_init(ProtectRoots::default)
+    // v7-2（2026-09-15）：未注入 --protect 时不落 derive 空 Default（fail-open），
+    // 改落 default_from_env 完整兜底清单——与「带参但 JSON 损坏」路径（from_protect_json
+    // 的 Err 分支）同口径；生产链路仍以主进程注入的 protectedRootsJson() 为准。
+    PROTECT_ROOT.get_or_init(ProtectRoots::default_from_env)
 }
 
 // 与 JS normalizeForCompare 对齐的短名 fail-closed：组件含 `~\d`（8.3 短名）即拒。
@@ -1337,19 +1340,22 @@ fn permanent_delete(p: &Path, kind: &str) -> Result<(), String> {
     r.map_err(|e| e.to_string())
 }
 
-/// 删除单项：优先移入回收站（用户可还原）；目标卷不支持回收站（网络盘等）
-/// 时回退为永久删除。Ok(true)=已进回收站，Ok(false)=已永久删除，Err=失败。
+/// 删除单项：优先移入回收站（用户可还原）；回收站失败（卷不支持、COM 失败等）
+/// 时回退为永久删除，真实失败原因透传给结果行（v7-3，不得硬编码误导文案）。
+/// Ok((true,_))=已进回收站，Ok((false,Some(reason)))=已永久删除+原因，Err=失败。
 #[cfg(windows)]
-fn delete_one(p: &Path, kind: &str) -> Result<bool, String> {
-    if recycle::send_to_trash(&p.to_string_lossy()).is_ok() {
-        return Ok(true);
+fn delete_one(p: &Path, kind: &str) -> Result<(bool, Option<String>), String> {
+    // v7-3（2026-09-15）：回收站失败原因透传——任意失败（不只是卷不支持）都会触发
+    // 永久删除降级，结果行必须带真实原因，不得硬编码「卷不支持回收站」误导用户。
+    if let Err(reason) = recycle::send_to_trash(&p.to_string_lossy()) {
+        return permanent_delete(p, kind).map(|_| (false, Some(reason)));
     }
-    permanent_delete(p, kind).map(|_| false)
+    Ok((true, None))
 }
 
 #[cfg(not(windows))]
-fn delete_one(p: &Path, kind: &str) -> Result<bool, String> {
-    permanent_delete(p, kind).map(|_| false)
+fn delete_one(p: &Path, kind: &str) -> Result<(bool, Option<String>), String> {
+    permanent_delete(p, kind).map(|_| (false, Some("非 Windows 平台无回收站语义".to_string())))
 }
 
 /// 火眼眼审查 2026-09-14（M-1）：删除目标本身是 reparse point（junction/symlink）时拒绝——
@@ -1392,13 +1398,14 @@ fn cmd_delete(items: &[(String, OsString)]) {
             fs::metadata(p).map(|m| m.len()).unwrap_or(0)
         };
         match delete_one(p, kind) {
-            Ok(recycled) => {
+            Ok((recycled, trash_fail)) => {
                 ok += 1;
                 freed += sz;
                 if recycled {
                     del_item("delresult", p, kind, "ok", sz, "已移入回收站", "recycled");
                 } else {
-                    del_item("delresult", p, kind, "ok", sz, "已永久删除（目标卷不支持回收站）", "permanent");
+                    let why = trash_fail.unwrap_or_else(|| "回收站不可用".to_string());
+                    del_item("delresult", p, kind, "ok", sz, &format!("已永久删除（回收站失败: {}）", why), "permanent");
                 }
             }
             Err(e) => {

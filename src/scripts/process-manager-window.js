@@ -117,7 +117,13 @@
     el('pmCloseBtn')?.addEventListener('click', closeWindow);
     el('pmRefreshBtn')?.addEventListener('click', () => load());
     el('pmSearch')?.addEventListener('input', () => render());
-    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeWindow(); });
+    // PM-4（2026-09-15 v7）：确认框打开时 Esc 只关确认框，不再连窗口一起关。
+  // 本监听先于 confirmDialog 的 escHandler 注册（脚本初始化序），守卫命中即跳过。
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    if (document.querySelector('.usage-backdrop')) return; // 确认框在开：交给它自己的 escHandler
+    closeWindow();
+  });
     applyTheme();
     load();
   }

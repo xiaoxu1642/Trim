@@ -2092,6 +2092,76 @@ check('PE-3：外设白名单合法值集合单一来源（PERIPHERAL_ALLOWED �
   if (!main.includes('PERIPHERAL_ALLOWED')) throw new Error('main.js 缺 PERIPHERAL_ALLOWED 白名单');
 });
 
+// ==================== v3.5.2 v7 审计修复批次 ====================
+check('N-1：diskbench 白名单/空间预检三符号已在 main.js 定义并接线', () => {
+  const src = fs.readFileSync(abs('main.js'), 'utf8');
+  for (const sym of ['function isDiskBenchAllowedPath', 'function getPathFreeBytes', 'const DISKBENCH_MIN_FREE_BYTES']) {
+    if (!src.includes(sym)) throw new Error('缺少定义: ' + sym);
+  }
+  if (!src.includes('isDiskBenchAllowedPath(resolved)')) throw new Error('diskbench:run 未接线白名单');
+});
+
+check('OPT-1：高危清单服务端镜像 + confirmedHighRisk 回执双侧接线', () => {
+  const main = fs.readFileSync(abs('main.js'), 'utf8');
+  const rnd = fs.readFileSync(abs('src/scripts/optimizer.js'), 'utf8');
+  if (!main.includes('OPTIMIZER_HAZARD_IDS')) throw new Error('主进程缺高危镜像清单');
+  if (!main.includes('params.confirmedHighRisk !== true')) throw new Error('主进程未校验确认回执');
+  if (!rnd.includes('runParams.confirmedHighRisk = true')) throw new Error('渲染层未携带确认回执');
+  if (!main.includes("'disable_uac'") || !main.includes("'bcd_opt'")) throw new Error('镜像清单 id 不全');
+});
+
+check('SR-5：DMTF ±000 偏移按本地时间解释', () => {
+  const src = fs.readFileSync(abs('main.js'), 'utf8');
+  if (!src.includes('offsetMinutes === 0')) throw new Error('缺少 ±000 本地时间分支');
+});
+
+check('MA-1/MA-3：maintenance .reg 走 TRIM_TMP + wu 旧目录清扫', () => {
+  const src = fs.readFileSync(abs('src/scripts-powershell/maintenance-scripts.js'), 'utf8');
+  if (!src.includes('TRIM_TMP')) throw new Error('.reg 临时文件未走 TRIM_TMP');
+  if (!src.includes('.old_*')) throw new Error('缺 wu 旧目录清扫');
+});
+
+check('FD-4：空目录删除前空复检（empty 标记 + readdir 预检）', () => {
+  const src = fs.readFileSync(abs('main.js'), 'utf8');
+  if (!src.includes("empty: item.type === 'emptyfolder'")) throw new Error('快照缺 empty 标记');
+  if (!src.includes('空目录已不再为空')) throw new Error('缺空复检');
+});
+
+check('RT-1：运行库安装执行前 SHA-256 复核', () => {
+  const src = fs.readFileSync(abs('main.js'), 'utf8');
+  if (!src.includes('执行前复核未通过')) throw new Error('缺执行前复核');
+});
+
+check('LG-1：滤镜桶引用计数回收（useFilter/releaseFilter/sweepUnusedFilters）', () => {
+  const src = fs.readFileSync(abs('src/scripts/liquid-glass.js'), 'utf8');
+  for (const sym of ['function useFilter', 'function releaseFilter', 'function sweepUnusedFilters', 'sweepUnusedFilters() === 0']) {
+    if (!src.includes(sym)) throw new Error('缺少: ' + sym);
+  }
+});
+
+check('SET-3：models[].apiKey 掩码穿透', () => {
+  const src = fs.readFileSync(abs('main.js'), 'utf8');
+  if (!src.includes('submitted.apiKey !== undefined')) throw new Error('models apiKey 缺掩码穿透');
+});
+
+check('PM-4：进程管理窗 Esc 守卫（确认框打开时不关窗）', () => {
+  const src = fs.readFileSync(abs('src/scripts/process-manager-window.js'), 'utf8');
+  if (!src.includes("querySelector('.usage-backdrop')")) throw new Error('缺 Esc 守卫');
+});
+
+check('v7-2/v7-3：Rust protect_roots 落 default_from_env + 回收站失败原因透传', () => {
+  const rs = fs.readFileSync(abs('native-scanner/src/main.rs'), 'utf8');
+  if (!rs.includes('ProtectRoots::default_from_env)')) throw new Error('protect_roots 仍落空 Default');
+  if (!rs.includes('回收站失败: ')) throw new Error('删除结果缺真实原因');
+  if (rs.includes('已永久删除（目标卷不支持回收站）')) throw new Error('硬编码误导文案仍在');
+});
+
+check('F2：checkupCache 死代码已删除', () => {
+  const src = fs.readFileSync(abs('main.js'), 'utf8');
+  if (src.includes('checkupCache')) throw new Error('checkupCache 仍存在');
+});
+
+
 // ==================== 汇总 ====================
 console.log('');
 console.log(`结果: ${passed} 通过, ${failed} 失败`);

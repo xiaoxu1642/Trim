@@ -585,6 +585,9 @@ function runPwshChild(args, options) {
     const { timeout, diagOp, onStdout, ...spawnOptions } = options;
     const child = spawn(executable, args, {
       windowsHide: true,
+      // MA-1（2026-09-15 v7）：向全部 PS 子进程注入 TRIM_TMP（应用私有 tmp 目录），
+      // 脚本生成的中间文件（.reg 等）统一落这里，替代全局可写 %TEMP%（S10）。
+      env: Object.assign({}, process.env, { TRIM_TMP: getTempScriptDir() }),
       ...spawnOptions
     });
     registerBackendChild(child, executable, args);
@@ -2015,6 +2018,7 @@ handleSafe('finder:scan', async (event, { scanType, paths, minSize, count, minSi
         snap.set(path.resolve(item.path).toLowerCase(), {
           path: item.path,
           kind: item.type === 'emptyfolder' || item.type === 'appdata' ? 'dir' : 'file',
+          empty: item.type === 'emptyfolder',
           ts
         });
       }
@@ -2149,6 +2153,16 @@ handleSafe('finder:delete', async (event, { items }) => {
       const st = fs.statSync(it.path);
       if (it.kind === 'dir' && !st.isDirectory()) { continue; } // 类型不符：跳过
       if (it.kind === 'file' && !st.isFile()) { continue; }
+      // FD-4（2026-09-15 v7）：空目录删除前空复检——「扫描时空、删除时已非空」的
+      // 目标跳过，防止把扫描后新放入的内容整棵连进回收站（TOCTOU 剩余场景）。
+      if (it.empty && it.kind === 'dir') {
+        let childCount = 0;
+        try { childCount = fs.readdirSync(it.path).length; } catch (_) {}
+        if (childCount > 0) {
+          writeLog('warn', `finder 删除预检: 空目录已不再为空（${childCount} 项），跳过 -> ${it.path}`);
+          continue;
+        }
+      }
       preflight.push(it);
     } catch (e) {
       if (e.code === 'ENOENT') {
@@ -2540,6 +2554,14 @@ function classifyStepKinds(steps) {
   return [...kinds];
 }
 
+// OPT-1（2026-09-15 v7）：高危清单服务端镜像（与渲染层 optimizer.js HAZARD_OPTION_IDS
+// 同一份 id 集合，改动须两侧同步并跑 npm test 断言）。渲染层确认后携带 confirmedHighRisk
+// 回执，主进程见不到回执即拒绝——被攻陷渲染层无法绕过红色确认直接执行高危项。
+const OPTIMIZER_HAZARD_IDS = new Set([
+  'disable_uac', 'tf_defender', 'tf_microcode_del', 'spectre_off', 'perf_vbs_off',
+  'perf_exploit_protection_off', 'tf_svc_bulk', 'tf_drv_disable', 'bcd_opt'
+]);
+
 handleSafe('optimizer:run', async (event, { optionId, params = {} } = {}) => {
   const opt = OPTIMIZER.OPTIONS.find(o => o.id === optionId);
   if (!opt) return { success: false, message: '未知的优化选项' };
@@ -2549,6 +2571,12 @@ handleSafe('optimizer:run', async (event, { optionId, params = {} } = {}) => {
   // 还原运行也需要管理员（恢复 HKLM 键同样要写权限）；只读查询类通道不卡。
   if (!(await isAdmin())) {
     return { success: false, needAdmin: true, message: '优化操作需要管理员权限，请先提权' };
+  }
+
+  // OPT-1（2026-09-15 v7）：高危确认服务端镜像。restore 还原方向不属高危写入，不需回执。
+  if (!params.restore && OPTIMIZER_HAZARD_IDS.has(optionId) && params.confirmedHighRisk !== true) {
+    writeLog('warn', `高危优化缺少确认回执，已拒绝: ${optionId}`);
+    return { success: false, needConfirm: true, message: '高危操作缺少红色确认回执，请在界面重新确认后执行' };
   }
 
   // 内存 SVCHost 阈值：由下拉参数动态生成执行步骤（动态选项）
@@ -3160,6 +3188,12 @@ function parseDmtfDateTime(raw) {
   if (!m) return null;
   const [, y, mo, d, h, mi, s, , sign, off] = m;
   const offsetMinutes = Number(off) * (sign === '-' ? -1 : 1);
+  // SR-5（2026-09-15 v7）：DMTF 规范 ±000 = 「本地时间、时区未知」，墙钟不能直接当 UTC
+  // （东八区此前显示偏晚 8 小时）；偏移为 0 时按本地时间构造再转 UTC。
+  if (offsetMinutes === 0) {
+    const local = new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s));
+    return isNaN(local.getTime()) ? null : local.toISOString();
+  }
   const utcMs = Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s)) - offsetMinutes * 60000;
   const t = new Date(utcMs);
   return isNaN(t.getTime()) ? null : t.toISOString();
@@ -4498,7 +4532,10 @@ handleSafe('settings:save', (event, { settings } = {}) => {
       next.models[modelKey] = {
         ...currentModel,
         apiUrl: modelUrl,
-        apiKey: String(submitted.apiKey || currentModel.apiKey || '').trim(),
+        // SET-3（2026-09-15 v7）：掩码穿透——提交掩码视为未修改，保留已存真值（与平铺字段同口径）
+        apiKey: (submitted.apiKey !== undefined && String(submitted.apiKey).trim() && String(submitted.apiKey).trim() !== API_KEY_MASK)
+          ? String(submitted.apiKey).trim()
+          : (currentModel.apiKey || ''),
         model: String(submitted.model || currentModel.model || '').trim(),
         prompt: String(submitted.prompt || currentModel.prompt || '').trim(),
         customName: String(submitted.customName || currentModel.customName || '').trim(),
@@ -4742,8 +4779,7 @@ handleSafe('overview:metrics', async () => {
 
 // ==================== 系统体检（v2.6.0 P1-6，只读诊断） ====================
 // 全部只读检测，不改任何系统设置；每条结论自带证据等级（本机实测/机制明确/未验证），
-// 检测不出时如实标「未验证」，不伪造结论。结果缓存 5 分钟，避免频繁拉起 PowerShell。
-let checkupCache = null; // { at, checks }
+// 检测不出时如实标「未验证」，不伪造结论。结果走磁盘缓存（TTL 30 分钟，F1）+ 在途去重；原内存缓存写入后从不读取，已删除（F2）。
 let checkupInflight = null;
 async function collectSystemCheckup() {
   if (checkupInflight) return checkupInflight;
@@ -4754,8 +4790,7 @@ async function collectSystemCheckup() {
       if (code !== 0) throw new Error(stderr || '系统体检脚本执行失败');
       const parsed = JSON.parse(stdout.trim());
       const checks = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.checks) ? parsed.checks : []);
-      checkupCache = { at: Date.now(), checks };
-      return { success: true, data: { checks, at: checkupCache.at } };
+      return { success: true, data: { checks, at: Date.now() } };
     } catch (e) {
       return { success: false, message: e.message };
     } finally {
@@ -4784,6 +4819,25 @@ handleSafe('overview:checkup', async (event, { refresh = false } = {}) => {
   }
   return resp;
 });
+
+// N-1（2026-09-15 v7）：SP-1 半成品修复补完——此前三个符号被引用但从未定义，
+// 任何 diskbench:run 调用都会 ReferenceError（磁盘测速整条断链）。现补齐实现：
+// 白名单 = 用户主目录 + TEMP + AppData 两级目录；剩余空间经 fs.statfsSync 实测。
+const DISKBENCH_MIN_FREE_BYTES = 1024 * 1024 * 1024; // 1 GB（测速峰值写约 384 MB + 缓冲余量）
+function isDiskBenchAllowedPath(resolved) {
+  const target = path.resolve(String(resolved)).toLowerCase();
+  const roots = [os.homedir(), app.getPath('temp'), process.env.LOCALAPPDATA || '', process.env.APPDATA || '']
+    .filter(Boolean).map(p => path.resolve(p).toLowerCase());
+  return roots.some(root => target === root || target.startsWith(root + path.sep.toLowerCase()));
+}
+function getPathFreeBytes(resolved) {
+  try {
+    const st = fs.statfsSync(path.resolve(String(resolved)));
+    return Number(st.bavail) * Number(st.bsize);
+  } catch (_) {
+    return null; // statfs 不可用时不阻塞测速（与注释承诺一致）
+  }
+}
 
 handleSafe('diskbench:run', async (event, options = {}) => {
   const requestedPath = String(options?.path || '').trim();
@@ -7050,6 +7104,22 @@ handleSafe('runtimes:install', async (event, { actionId } = {}) => {
       return { success: false, message: dl.error };
     }
     localPath = dl.path;
+    // RT-1（2026-09-15 v7）：提权执行前对缓存安装包做最后一次 SHA-256 复核，
+    // 收敛「下载校验 → 提权执行」窗口内的替换风险；不符立即删除脏包并中止。
+    {
+      const meta = RUNTIMES_SCRIPT.INSTALLERS[actionId];
+      try {
+        const buf = fs.readFileSync(localPath);
+        const hash = require('crypto').createHash('sha256').update(buf).digest('hex');
+        if (hash !== meta.sha256 || buf.length !== meta.bytes) {
+          try { fs.unlinkSync(localPath); } catch (_) {}
+          writeLog('error', `运行库安装包执行前复核未通过: ${actionId}（SHA-256 不符，已删除并中止）`);
+          return { success: false, message: '安装包执行前校验未通过（SHA-256 不符），已中止' };
+        }
+      } catch (e) {
+        return { success: false, message: '安装包读取失败: ' + e.message };
+      }
+    }
   }
   let script;
   try {

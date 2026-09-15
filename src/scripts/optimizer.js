@@ -794,7 +794,11 @@
       const optName = opt.title || opt.id;
       if (t && t.el) { t.title = optName; const tune = t.el.querySelector('.toast-tune'); if (tune) tune.textContent = '正在执行「' + optName + '」…'; }
       setProgressToastProgress(1);
-      const resp = await window.api.optimizer.run(opt.id, params || {});
+      // OPT-1（2026-09-15 v7）：高危项红色确认已在上游通过，这里携带服务端镜像回执；
+      // restore 还原方向不属高危写入，不带标记。
+      const runParams = Object.assign({}, params || {});
+      if (!runParams.restore && HAZARD_OPTION_IDS.has(opt.id)) runParams.confirmedHighRisk = true;
+      const resp = await window.api.optimizer.run(opt.id, runParams);
       if (resp && resp.success) {
         finishProgressToast(true, resp.message);
         window.app?.log('info', `优化电脑完成: ${optName}`);

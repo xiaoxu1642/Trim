@@ -235,6 +235,7 @@
   const xlinkNS = 'http://www.w3.org/1999/xlink';
   let sharedDefs = null;
   const filterBuckets = new Map(); // key -> filterId
+  const filterUsers = new Map(); // filterId -> 引用元素数（LG-1 回收依据）
 
   function ensureSharedDefs() {
     if (sharedDefs && document.body.contains(sharedDefs)) return sharedDefs;
@@ -311,16 +312,40 @@
     return filter;
   }
 
-  // 滤镜桶上限（修复实锤5）：桶随 模式x尺寸x圆角 组合增长，超过上限后新组合不再
-  // 建桶（调用方退化为磨砂）。不做 LRU 淘汰——已挂元素仍引用桶内滤镜，删除节点
-  // 会让其整条 backdrop-filter 悬空失效；退磨砂可由 scheduleScan 容量回收后升级
+  // 滤镜桶上限（修复实锤5 / LG-1 2026-09-15 v7）：桶随 模式x尺寸x圆角 组合增长。
+  // 桶满时先回收「引用计数为 0」的滤镜（元素已 detach 或尺寸变更后遗留的旧桶——
+  // 它们的 backdrop-filter 已不再指向这些节点，删除 SVG 节点无副作用），仍满才退磨砂
+  // 等待回升。原实现只增不减，撞满 48 后本会话永久退化（LG-1）。
   const FILTER_BUCKETS_MAX = 48;
+
+  function useFilter(id) {
+    filterUsers.set(id, (filterUsers.get(id) || 0) + 1);
+  }
+  function releaseFilter(id) {
+    const n = (filterUsers.get(id) || 0) - 1;
+    if (n <= 0) filterUsers.delete(id);
+    else filterUsers.set(id, n);
+  }
+  function sweepUnusedFilters() {
+    const defs = sharedDefs && document.body.contains(sharedDefs) ? sharedDefs : null;
+    let removed = 0;
+    for (const [key, id] of [...filterBuckets]) {
+      if (filterUsers.has(id)) continue;
+      filterBuckets.delete(key);
+      if (defs) {
+        const node = defs.querySelector('[id="' + id + '"]');
+        if (node) node.remove();
+      }
+      removed++;
+    }
+    return removed;
+  }
 
   function getFilterId(kind, w, h, radius) {
     const key = kind + '|' + w + 'x' + h + 'r' + Math.round(radius);
     let id = filterBuckets.get(key);
     if (id) return id;
-    if (filterBuckets.size >= FILTER_BUCKETS_MAX) return null;
+    if (filterBuckets.size >= FILTER_BUCKETS_MAX && sweepUnusedFilters() === 0) return null;
     const maps = buildMaps(w, h, radius);
     id = 'lg-f-' + kind + '-' + Math.random().toString(36).slice(2, 8);
     const filterEl = buildFilterEl(id, w, h, maps, Math.min(Math.max(radius * 0.85, 3), 12), kind === 'full');
@@ -355,6 +380,8 @@
       const id = getFilterId(mode, w, h, st.radius);
       if (id) {
         st.refract = true;
+        st.filterId = id;
+        useFilter(id);
         refractCount++;
         setBackdrop(el, `url(#${id}) blur(${blur}px) saturate(${glassSatur}) brightness(${glassBright})`);
       } else {
@@ -390,12 +417,15 @@
     const id = getFilterId(mode, st.w, st.h, st.radius);
     if (!id) return; // 桶满，等下一轮扫描
     st.refract = true;
+    st.filterId = id;
+    useFilter(id);
     refractCount++;
     setBackdrop(el, `url(#${id}) blur(${st.blur}px) saturate(${glassSatur}) brightness(${glassBright})`);
   }
 
   function detachGlass(el, st) {
     if (st && st.refract) refractCount = Math.max(0, refractCount - 1);
+    if (st && st.filterId) { releaseFilter(st.filterId); st.filterId = null; }
     glassRo.unobserve(el);
     setBackdrop(el, '');
     el.classList.remove('lg-elastic');
@@ -406,6 +436,7 @@
   function detachAllGlass() {
     glassStates.forEach((st, el) => {
       if (st.refract) refractCount = Math.max(0, refractCount - 1);
+      if (st.filterId) releaseFilter(st.filterId);
       glassRo.unobserve(el);
       setBackdrop(el, '');
       el.classList.remove('lg-elastic');
@@ -449,10 +480,13 @@
         // 尺寸变化：重选桶（滤镜随尺寸重建，位移贴图走缓存）；超预算则降回磨砂
         refractCount = Math.max(0, refractCount - 1);
         st.refract = false;
+        if (st.filterId) { releaseFilter(st.filterId); st.filterId = null; }
         if (withinRefractBudget(w, h, st.radius)) {
           const id = getFilterId(mode, w, h, st.radius);
           if (id) {
             st.refract = true;
+            st.filterId = id;
+            useFilter(id);
             refractCount++;
             setBackdrop(el, `url(#${id}) blur(${st.blur}px) saturate(${glassSatur}) brightness(${glassBright})`);
             return;
