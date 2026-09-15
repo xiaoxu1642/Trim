@@ -437,6 +437,10 @@ function localDateStr(d = new Date()) {
 
 function writeLog(level, message) {
   ensureLogDir();
+  // LOG-2（2026-09-15）：level/message 兜底转字符串，避免非字符串入参抛 TypeError
+  // （log:write 直接透传渲染层入参，未知上游可传任意值）。
+  level = String(level || 'info');
+  message = String(message ?? '');
   // 审查 L-1（2026-09-14）：日志时间戳与日志文件名改用本地时间，避免 UTC 与东八区差 8 小时
   // 导致排查时误判时序（00:00–07:59 产生的日志落进前一天文件）。
   // LOG-1（2026-09-15）：真正统一为 localDateStr —— 此前 read/export 端仍各自
@@ -1965,7 +1969,7 @@ handleSafe('finder:scan', async (event, { scanType, paths, minSize, count, minSi
       }
       if (!resolved.found.length) {
         writeLog('warn', 'finder 默认扫描目录均不存在');
-        return { success: false, message: '默认扫描目录均不存在（Downloads/Desktop/Documents/Pictures/C:\\yule），请在「扫描目录」中手动填写' };
+        return { success: false, message: '默认扫描目录均不存在（Downloads/Desktop/Documents/Pictures），请在「扫描目录」中手动填写' };
       }
       plist = resolved.found;
     } else {
@@ -3332,7 +3336,7 @@ handleSafe('optimizer:list-restore', async () => {
     '  if (-not $dl) { return }',
     '  [pscustomobject]@{ drive = $dl; allocated = [double]$_.AllocatedSpace }',
     '})',
-    '$out | ConvertTo-Json -Depth 4 -Compress'
+    "'@@RESTORE@@' + ($out | ConvertTo-Json -Depth 4 -Compress)"
   ].join('\n');
   const scriptPath = writeTempScript(script);
   try {
@@ -3343,7 +3347,10 @@ handleSafe('optimizer:list-restore', async () => {
       return { success: false, message: failLine.slice('RPFAIL|'.length) };
     }
     let data = null;
-    try { data = JSON.parse((stdout || '').trim()); } catch (e) { data = null; }
+    // SR-4（S8，2026-09-15）：@@RESTORE@@ 前缀协议解析
+    const resLine = (stdout || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean)
+      .find(l => l.startsWith('@@RESTORE@@'));
+    try { data = resLine ? JSON.parse(resLine.slice('@@RESTORE@@'.length)) : null; } catch (e) { data = null; }
     if (!data) return { success: false, message: '无法解析还原点数据' };
     if (Array.isArray(data.restorePoints)) {
       for (const rp of data.restorePoints) {
@@ -5372,8 +5379,12 @@ handleSafe('memory:processes', async (event) => {
     const { stdout, code, timedOut } = await runPowerShellFile(scriptPath, { timeout: 20000 });
     if (timedOut) return { success: false, message: '读取进程列表超时' };
     if (code !== 0) return { success: false, message: '读取进程列表失败' };
+    // PM-7（S8，2026-09-15）：@@PROC@@ 前缀协议解析（裸 JSON.parse 会被额外输出污染）
+    const procLine = (stdout || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean)
+      .find(l => l.startsWith('@@PROC@@'));
+    if (!procLine) return { success: false, message: '读取进程列表失败' };
     try {
-      const data = JSON.parse(stdout.trim());
+      const data = JSON.parse(procLine.slice('@@PROC@@'.length));
       const processes = Array.isArray(data) ? data : (data ? [data] : []);
       processSnapshots.set(event.sender.id, new Map(processes
         .filter(p => Number.isInteger(Number(p.Id)) && Number(p.Id) > 0)
@@ -6032,21 +6043,61 @@ const PERIPHERAL_ALLOWED = {
 // 数据即白名单：渲染层只传 id，命令原文从数据文件查询，绝不接受用户拼接输入。
 const QUICKCMDS = require('./src/scripts/quickcmds-data');
 
+// QC-1（2026-09-15）：结构化白名单启动，替代 exec('start "" ' + item.cmd) 的
+// cmd.exe 字符串拼接。cmd 现均为编译期常量，但为潜在的动态来源留纵深：任何
+// shell 元字符（; | & > < ^ ` ( ) [ ] { } $）在启动时即被拒绝，绝不进 cmd.exe。
+// 启动原语按执行物形态分流：URI → openExternal；.msc/.cpl → openPath（ShellExecute，
+// CreateProcess 无法直接执行）；其余裸应用名 / .exe / 带参系统工具 → spawn 参数数组。
+const QUICKCMD_METACHAR = /[;&|><^`()\[\]{}$]/;
+function tokenizeQuickCmd(cmd) {
+  const out = [];
+  const re = /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\S+/g;
+  let m;
+  while ((m = re.exec(cmd))) out.push(m[0].replace(/^["']|["']$/g, ''));
+  return out;
+}
+function expandQuickEnv(t) {
+  return t
+    .replace(/%temp%/gi, os.tmpdir())
+    .replace(/%appdata%/gi, process.env.APPDATA || '')
+    .replace(/%userprofile%/gi, os.homedir());
+}
+function runQuickCmd(item) {
+  const toks = tokenizeQuickCmd(item.cmd).map(expandQuickEnv);
+  if (!toks.length || !toks[0]) return { ok: false, message: '空指令' };
+  if (toks.some(t => QUICKCMD_METACHAR.test(t))) {
+    writeLog('error', `快捷指令含被拒元字符，拒绝执行: ${item.id}`);
+    return { ok: false, message: '指令包含不允许的字符' };
+  }
+  const exe = toks[0];
+  const args = toks.slice(1);
+  const failLog = (stage, e) => writeLog('warn', `快捷指令 ${stage} 失败 ${item.id}: ${e && e.message || e}`);
+  // URI（ms-settings: 等）：仅无参数时识别
+  if (args.length === 0 && /^[a-z][a-z0-9+.-]*:/i.test(exe)) {
+    shell.openExternal(exe).catch((e) => failLog('openExternal', e));
+    return { ok: true };
+  }
+  // .msc / .cpl：ShellExecute 解析
+  if (/\.(msc|cpl)$/i.test(exe)) {
+    const target = args.length ? toks.join(' ') : exe;
+    shell.openPath(expandQuickEnv(target)).then((errMsg) => {
+      if (errMsg) failLog('openPath', errMsg);
+    }).catch((e) => failLog('openPath', e));
+    return { ok: true };
+  }
+  // 其余裸应用名 / .exe / 带参系统工具（control/explorer/cmd/powershell/perfmon 等）：spawn
+  const cp = spawn(exe, args, { detached: true });
+  cp.on('error', (e) => failLog('spawn', e));
+  cp.unref();
+  return { ok: true };
+}
+
 handleSafe('quickcmds:run', async (event, id) => {
   const item = QUICKCMDS.CMDS.find(c => c.id === id);
   if (!item) return { success: false, message: '未知指令' };
-  try {
-    // 与解包原实现一致：cmd shell 启动（命令为编译期常量，无注入面），
-    // start "" 分离新进程不闪黑窗；cmd /k 类命令自动保持窗口便于查看输出。
-    exec(`start "" ${item.cmd}`, { windowsHide: true, timeout: 15000 }, (err) => {
-      if (err) writeLog('warn', `快捷指令退出码异常: ${item.name}: ${err.message}`);
-    });
-    writeLog('info', `快捷指令: ${item.name} (${item.cmd})`);
-    return { success: true };
-  } catch (e) {
-    writeLog('error', `快捷指令失败: ${item.name}: ${e.message}`);
-    return { success: false, message: e.message };
-  }
+  const r = runQuickCmd(item);
+  writeLog('info', `快捷指令: ${item.name} (${item.cmd}) ${r.ok ? '' : '→ ' + (r.message || '')}`);
+  return { success: r.ok, message: r.message };
 });
 
 handleSafe('peripheral:open-window', async () => {
@@ -6098,7 +6149,15 @@ handleSafe('peripheral:query', async () => {
   try {
     const { stdout, code, stderr } = await runPowerShellFile(scriptPath, { timeout: 20000 });
     if (code !== 0) return { success: false, message: stderr || '读取当前外设设置失败' };
-    return { success: true, data: JSON.parse(stdout.trim()) };
+    // S8（2026-09-15）：前缀协议解析，避免额外 PS 输出污染 JSON.parse
+    const resLine = (stdout || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean)
+      .find(l => l.startsWith('@@PERIPHERAL@@'));
+    if (!resLine) return { success: false, message: '读取当前外设设置失败' };
+    try {
+      return { success: true, data: JSON.parse(resLine.slice('@@PERIPHERAL@@'.length)) };
+    } catch (e) {
+      return { success: false, message: '解析外设设置失败' };
+    }
   } catch (e) {
     return { success: false, message: e.message };
   } finally { try { fs.unlinkSync(scriptPath); } catch (e) {} }

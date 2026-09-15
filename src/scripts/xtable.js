@@ -359,10 +359,12 @@
         if (w <= 0 || w === lastW) return; // 宽度未变化时跳过（重渲染由 relayout 强制布局）
         force(animate);
       }
-      window.addEventListener('resize', () => {
+      // LG-6（2026-09-15）：命名 resize 处理器，dispose 可解除绑定（原匿名箭头解绑不了）
+      const onWindowResize = () => {
         clearTimeout(resizeTimer);
         resizeTimer = setTimeout(() => check(true), 120); // resize 防抖 120ms
-      }, { passive: true });
+      };
+      window.addEventListener('resize', onWindowResize, { passive: true });
       syncObserver();
       return {
         relayout(animate) { force(!!animate); syncObserver(); },
@@ -370,6 +372,7 @@
           disposed = true;
           if (ro) { ro.disconnect(); ro = null; roTarget = null; }
           clearTimeout(resizeTimer);
+          window.removeEventListener('resize', onWindowResize);
         }
       };
     }

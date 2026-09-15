@@ -161,10 +161,8 @@ public static class Priv {
 const PROCESSES_SCRIPT = `
 $ErrorActionPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-Get-Process -ErrorAction SilentlyContinue |
-  Sort-Object WorkingSet64 -Descending |
-  Select-Object -First 300 Id, ProcessName, @{n='mem';e={[long]$_.WorkingSet64}}, Path |
-  ConvertTo-Json -Compress
+$procs = @(Get-Process -ErrorAction SilentlyContinue | Sort-Object WorkingSet64 -Descending | Select-Object -First 300 Id, ProcessName, @{n='mem';e={[long]$_.WorkingSet64}}, Path)
+'@@PROC@@' + ($procs | ConvertTo-Json -Compress)
 `;
 
 // ==================== 顽固软件专杀 ====================

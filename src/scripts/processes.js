@@ -71,6 +71,10 @@
   // root: 容器元素；processes: 数组；opts: { onKill(pid, name), toast(type,msg), filter, icons }
   function renderTree(root, processes, opts) {
     if (!root) return;
+    // PM-5（2026-09-15）：重渲染前销毁旧虚拟滚动实例——createVirtualList 会挂
+    // container scroll + window resize 监听，搜索框每次 input 触发重建若不销毁即
+    // 每敲一字符泄漏一对监听（S12 家族；xtable destroy 已含监听解绑）。
+    if (activeVL) { try { activeVL.destroy?.(); } catch (_) {} activeVL = null; }
     opts = opts || {};
     const kw = String(opts.filter || '').trim().toLowerCase();
     const list = processes.filter(p => {

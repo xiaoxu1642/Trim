@@ -49,8 +49,8 @@
       disks: join(raw.disks, d => [d.name, d.capacity ? `实际容量 ${d.capacity}` : '', d.media ? `类型 ${d.media}` : ''].filter(Boolean).join(' ')),
       monitors: (() => {
         const s = join(raw.monitors, m => [m.name, m.width && m.height ? `分辨率 ${m.width}×${m.height}` : '', m.refresh ? `刷新率 ${m.refresh}Hz` : '', m.size ? `屏幕尺寸 ${m.size}` : ''].filter(Boolean).join(' '));
-        // 未读到有效显示器或仅读到通用名称时，兜底为默认显示器（SANC G41）
-        if (!s || /(?:^|[\s；])(?:Generic(?: PnP)? Monitor|默认监视器|通用即插即用监视器)(?:[\s；]|$)/i.test(s) || s.length <= 20) return PREVIEW.monitors;
+        // F6（2026-09-15）：不再回填开发者机型——检测失败/仅读到通用名时如实显示 '--',
+        // 避免把伪造的"显示器"当真机信息展示给用户（原兜底来自开发者本机 SANC G41）。
         return s;
       })(),
       memory: join(raw.memory, m => [m.manufacturer, m.part, m.capacity, m.speed ? `${m.speed} MHz` : ''].filter(Boolean).join(' ')),

@@ -10,11 +10,12 @@ const QUERY_SCRIPT = `
 function Get-TFDword([string]$p, [string]$n) {
   try { [int](Get-ItemPropertyValue -LiteralPath $p -Name $n -ErrorAction Stop) } catch { -1 }
 }
-[pscustomobject]@{
+$q = [pscustomobject]@{
   win32 = Get-TFDword 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\PriorityControl' 'Win32PrioritySeparation'
   keyboard = Get-TFDword 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\kbdclass\\Parameters' 'KeyboardDataQueueSize'
   mouse = Get-TFDword 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\mouclass\\Parameters' 'MouseDataQueueSize'
-} | ConvertTo-Json -Compress
+}
+'@@PERIPHERAL@@' + ($q | ConvertTo-Json -Compress)
 `;
 
 const APPLY_SCRIPT = `

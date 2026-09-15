@@ -670,20 +670,23 @@
     initPwshFeedback();
 
     // 初始化各模块
-    cleanup.init();
-    contextmenu.init();
-    optimizer.init();
-    netspeed.init();
-    realtime.init();
-    diskbench.init();
-    deviceinfo.init();
-    overview.init();
-    sysrestore.init();
-    memoryclean.init();
-    startup.init();
-    window.maintenance?.init?.();
-    window.defaultapps?.init?.();
-    window.netcheck?.init?.();
+    // LG-7（2026-09-15）：页面模块 init 逐个 try/catch——此前裸调用，任一模块抛错会
+    // 让 window.app 未及时挂载、所有 window.app?.toast?.() 静默变空操作，比卡死更难诊断。
+    const safeInit = (mod, name) => { try { mod?.init?.(); } catch (e) { console.warn(`[Trim] 模块 ${name} 初始化失败:`, e); } };
+    safeInit(cleanup, 'cleanup');
+    safeInit(contextmenu, 'contextmenu');
+    safeInit(optimizer, 'optimizer');
+    safeInit(netspeed, 'netspeed');
+    safeInit(realtime, 'realtime');
+    safeInit(diskbench, 'diskbench');
+    safeInit(deviceinfo, 'deviceinfo');
+    safeInit(overview, 'overview');
+    safeInit(sysrestore, 'sysrestore');
+    safeInit(memoryclean, 'memoryclean');
+    safeInit(startup, 'startup');
+    safeInit(window.maintenance, 'maintenance');
+    safeInit(window.defaultapps, 'defaultapps');
+    safeInit(window.netcheck, 'netcheck');
 
     // 磁盘清理分段视图：分段栏点击切换（液态滑块由 liquid-glass.js 统一监听跟随）
     document.getElementById('cleanupTabs')?.addEventListener('click', (e) => {

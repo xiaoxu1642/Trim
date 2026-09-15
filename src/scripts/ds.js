@@ -28,7 +28,7 @@
   function badge(type, text, { dotless = false, title = '', small = false } = {}) {
     const el = document.createElement('span');
     el.className = 'ds-badge ' + (BADGE_VARIANT[type] || 'neutral') + (dotless ? ' dotless' : '') + (small ? ' sm' : '');
-    if (title) el.title = title;
+    if (title) el.setAttribute('data-tip', title); // LG-3（2026-09-15）：data-tip 替代原生 title（下方委托收敛；badgeHtml 同款）
     el.textContent = text == null ? '' : String(text);
     return el;
   }
@@ -124,7 +124,7 @@
   function sw({ checked = false, label = '', title = '', id = '', onChange = null } = {}) {
     const wrap = document.createElement('label');
     wrap.className = 'toggle-switch';
-    if (title) wrap.title = title;
+    if (title) wrap.setAttribute('data-tip', title); // LG-3（2026-09-15）：data-tip 替代原生 title
     const input = document.createElement('input');
     input.type = 'checkbox';
     input.checked = !!checked;

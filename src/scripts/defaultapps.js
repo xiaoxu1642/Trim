@@ -106,7 +106,7 @@
     }
     const policy = statusData && statusData.policyPath
       ? '<div class="da-policy-row"><span class="ds-badge ds-badge-accent">策略生效中</span>' +
-        '<span class="da-ucpd-hint" title="' + escapeHtml(statusData.policyPath) + '">DefaultAssociationsConfiguration 已配置</span></div>'
+        '<span class="da-ucpd-hint" data-tip="' + escapeHtml(statusData.policyPath) + '">DefaultAssociationsConfiguration 已配置</span></div>'
       : '';
     row.innerHTML = '<div class="da-ucpd-line">' + badge + '</div>' + policy;
   }
