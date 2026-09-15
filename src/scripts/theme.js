@@ -33,8 +33,8 @@
       defs.setAttribute('height', '0');
       defs.style.position = 'absolute';
       defs.innerHTML = '<defs><linearGradient id="ringGradient" x1="0%" y1="0%" x2="100%" y2="100%">' +
-        '<stop offset="0%" stop-color="var(--accent, #8B8EE0)"/>' +
-        '<stop offset="100%" stop-color="var(--accent, #8B8EE0)"/>' +
+        '<stop offset="0%" stop-color="var(--accent, #6A59C9)"/>' +
+        '<stop offset="100%" stop-color="var(--accent, #6A59C9)"/>' +
         '</linearGradient></defs>';
       defs.id = 'ringGradientDef';
       document.body.appendChild(defs);

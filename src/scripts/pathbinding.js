@@ -646,7 +646,7 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
       const ap2 = loadAppearance();
       delete ap2.accent;
       saveAppearance(ap2);
-      if (accentInput) accentInput.value = '#8B8EE0';
+      if (accentInput) accentInput.value = '#6A59C9';
       window.app?.toast('success', '已恢复默认强调色');
     });
 

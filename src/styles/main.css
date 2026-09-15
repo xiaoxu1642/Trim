@@ -140,7 +140,7 @@
   --duration-fast: 160ms;
   --duration-base: 220ms;
   --duration-slow: 320ms;
-  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-standard: cubic-bezier(0.23, 1, 0.32, 1); /* 雾屿 V1：柔和 ease-out（原 M2 legacy 0.4,0,0.2,1） */
   --ease-emphasized: cubic-bezier(0.1, 0.9, 0.2, 1);
 
   /* 字体管理：全局字体族 / 字号缩放（基准 16px）/ 字重缩放（基准 400）
@@ -163,8 +163,8 @@
    声明元素处求值——:root 上的合成结果永远用暗色 tint，浅色必须在 .theme-light
    里重申 --surface-tint 与四个合成声明，var() 才会按白基色重新解析。 */
 .theme-light {
-  --bg-base: #F5F6F8;
-  --bg-mica: rgba(245, 246, 248, 0.88);
+  --bg-base: #F6F4FB;
+  --bg-mica: rgba(246, 244, 251, 0.88);
   --bg-acrylic: rgba(255, 255, 255, 0.72);
   --surface-tint: 255 255 255;
   --bg-card: rgb(var(--surface-tint) / var(--surface-alpha-card));
@@ -174,28 +174,30 @@
   --bg-surface-1: var(--bg-card);
   --bg-surface-2: var(--bg-elevated);
   --bg-surface-3: var(--bg-input);
-  --bg-overlay: rgba(20, 24, 40, 0.38);
+  --bg-overlay: rgba(30, 25, 52, 0.38);
 
-  --fg-primary: #1C1E24;
-  --fg-secondary: #4B505B;
-  --fg-tertiary: #6A7080;
-  --fg-disabled: rgba(28, 30, 36, 0.34);
+  --fg-primary: #292536;
+  --fg-secondary: #5C5770;
+  --fg-tertiary: #767191;
+  --fg-disabled: rgba(41, 37, 54, 0.34);
 
-  --border-default: rgba(20, 24, 40, 0.09);
-  --border-strong: rgba(20, 24, 40, 0.16);
-  --border-subtle: rgba(20, 24, 40, 0.06);
-  --bg-app: #F5F6F8;
-  --bg-hover: #E9EBEF;
+  --border-default: rgba(41, 37, 54, 0.09);
+  --border-strong: rgba(41, 37, 54, 0.16);
+  --border-subtle: rgba(41, 37, 54, 0.06);
+  --bg-app: #F6F4FB;
+  --bg-hover: #ECE9F5;
 
-  /* 品牌强调色（浅色覆盖）：深紫 #5E62C6，白字对比 ≈ 5.9:1（AA/AAA），
-     自身作文字于浅底对比 ≈ 5.6:1；--accent-soft 为选中高亮底色。 */
-  --accent: #5E62C6;
-  --accent-hover: #4F53B4;
-  --accent-press: #44489E;
-  --border-accent: #5E62C6;
-  --accent-light: rgba(94, 98, 198, 0.06);
-  --accent-soft: rgba(94, 98, 198, 0.06);
-  --accent-glow: rgba(94, 98, 198, 0.28);
+  /* 品牌强调色（浅色覆盖 · 雾屿 V1，2026-09-15）：薰衣草 #6A59C9，
+     白字对比 ≈ 5.4:1（AA），自身作文字于浅底 ≈ 5.4:1；--accent-soft 为选中高亮底色。
+     冷调薰衣草替换原深紫 #5E62C6（方向 A「淡紫雾屿」拍板落地）；
+     已避开默认靛蓝与紫渐变；用户自定义 accent 仍经 pathbinding.applyAccent 运行时覆盖。 */
+  --accent: #6A59C9;
+  --accent-hover: #5948BD;
+  --accent-press: #4D3DA8;
+  --border-accent: #6A59C9;
+  --accent-light: rgba(106, 89, 201, 0.08);
+  --accent-soft: rgba(106, 89, 201, 0.08);
+  --accent-glow: rgba(106, 89, 201, 0.28);
   --accent-text: #FFFFFF;
 
   /* 语义色（浅色下加深以保证可读）+ soft 底 */
@@ -222,12 +224,12 @@
   --surface-solid: #FFFFFF;
 
   /* 浅色下白卡需轻投影分离；浮层投影更深 */
-  --shadow-flyout: 0 8px 24px rgba(20, 24, 40, 0.16);
-  --shadow-card: 0 1px 3px rgba(20, 24, 40, 0.06);
-  --shadow-tooltip: 0 4px 12px rgba(20, 24, 40, 0.14);
+  --shadow-flyout: 0 8px 24px rgba(58, 48, 120, 0.16);
+  --shadow-card: 0 1px 3px rgba(58, 48, 120, 0.07);
+  --shadow-tooltip: 0 4px 12px rgba(58, 48, 120, 0.14);
   /* 批次：悬浮岛侧边栏 —— 浅色岛浮影（冷墨低透明，浅色下投影更克制） */
-  --shadow-island: 0 1px 2px rgba(20, 24, 40, 0.06), 0 6px 18px rgba(20, 24, 40, 0.10);
-  --shadow-island-flyout: 0 4px 10px rgba(20, 24, 40, 0.10), 0 14px 36px rgba(20, 24, 40, 0.16);
+  --shadow-island: 0 1px 2px rgba(58, 48, 120, 0.06), 0 6px 18px rgba(58, 48, 120, 0.10);
+  --shadow-island-flyout: 0 4px 10px rgba(58, 48, 120, 0.10), 0 14px 36px rgba(58, 48, 120, 0.16);
 }
 
 /* ================================================================

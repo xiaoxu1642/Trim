@@ -34,7 +34,8 @@
 
 - 零前端框架，**不新增 npm 依赖**（确需先征得同意）；index.html **禁内联 script**（CSP 静默拦截）；脚本加载顺序：ds.js 先于一切 `window.ds` 使用方，spotlight.js 在 liquid-glass.js 之后。
 - 主进程共享 Node 模块放 `src/main/`；新增 IPC 必须同步 preload.js 白名单与 `window.api`。
-- 设计系统：只用 main.css 既有 token；圆角 ≤8px（胶囊/徽章除外），禁大圆角与彩色渐变；`prefers-reduced-motion` 无动画；文本一律转义禁拼 HTML；提示用 `data-tip` 不用 title；新交互先查 ds 有无现成件。
+- 设计系统：只用 main.css 既有 token；圆角走既有档位（small 6 / btn 8 / medium 10 / large 14，胶囊/徽章除外），禁彩色渐变与装饰性氛围光；`prefers-reduced-motion` 无动画；文本一律转义禁拼 HTML；提示用 `data-tip` 不用 title；新交互先查 ds 有无现成件。
+- 视觉语言「雾屿 V1」（2026-09-15，方向 A 拍板落地）：theme-light 中性色温紫调（bg #F6F4FB / ink #292536 / 边框紫调 rgba）、默认 accent #6A59C9（白字 5.4:1）、阴影淡紫染色 rgba(58,48,120,…)、--ease-standard 柔和 ease-out(0.23,1,0.32,1)；设置页自定义 accent 仍运行时覆盖默认值。
 - 主窗口 1294×870 最小尺寸、独立窗口黑闪握手、预览窗纯黑底——均为刻意设计，禁止「优化」删除（详见 architecture 第二、八节）。
 - 最大化/还原路径禁止原生材质操作；`body.win-maximized`、`data-material="none"` 必须完全不透明。
 - 图标统一放 `src/assets/ico/`（生成器 `scripts/fix_icons.py`），根目录不再留 `ico/`；文件路径类资源移动后，package.json files 清单与全部引用同步改。

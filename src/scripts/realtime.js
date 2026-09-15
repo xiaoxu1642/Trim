@@ -306,7 +306,7 @@
 
     const gridColor = cssVar('--border-default', 'rgba(0,0,0,0.08)');
     const textColor = cssVar('--fg-tertiary', '#888888');
-    const downColor = cssVar('--accent', '#8B8EE0');
+    const downColor = cssVar('--accent', '#6A59C9');
     const upColor = cssVar('--success', '#16A34A');
 
     const padL = 56, padR = 12, padT = 10, padB = 22;
@@ -587,7 +587,7 @@
 
     const gridColor = cssVar('--border-default', 'rgba(0,0,0,0.08)');
     const textColor = cssVar('--fg-tertiary', '#888888');
-    const downColor = cssVar('--accent', '#8B8EE0');
+    const downColor = cssVar('--accent', '#6A59C9');
     const upColor = cssVar('--success', '#16A34A');
 
     const padL = 56, padR = 12, padT = 10, padB = 22;
