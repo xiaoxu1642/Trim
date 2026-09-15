@@ -2026,7 +2026,9 @@ function buildScript(steps) {
       L.push("$___rc = @'");
       L.push(s.reg);
       L.push("'@");
-      L.push('Set-Content -Path $___rf -Value $___rc -Encoding ASCII');
+      // OPT-3（2026-09-15）：ASCII 编码会把注册表中非 ASCII（中文路径/名称/locale 值）写坏，
+      // 而 reg.exe import 本就约定 UTF-16 LE(.reg 官方编码，带 BOM)。改 Unicode 保真。
+      L.push('Set-Content -Path $___rf -Value $___rc -Encoding Unicode');
       L.push('& reg.exe import $___rf *> $null');
       L.push(`if ($LASTEXITCODE -ne 0) { $failedSteps++; Write-TFDiag -Stage 'optimizer.reg' -Mutation 'rolled_back' -Detail ('step ' + (${i} + 1) + ' [' + ${labelPs} + '] reg import exit=' + $LASTEXITCODE) }`);
       L.push('Remove-Item $___rf -Force -ErrorAction SilentlyContinue');
@@ -2036,11 +2038,26 @@ function buildScript(steps) {
       L.push('& $env:ComSpec /c $___cmd *> $null');
       L.push(`if ($LASTEXITCODE -ne 0) { $failedSteps++; Write-TFDiag -Stage 'optimizer.cmd' -Mutation 'partial' -Detail ('step ' + (${i} + 1) + ' [' + ${labelPs} + '] exit=' + $LASTEXITCODE) }`);
     } else if (s.service) {
-      L.push(`Stop-Service -Name '${s.service}' -Force -ErrorAction SilentlyContinue`);
-      if (s.disable) L.push(`Set-Service -Name '${s.service}' -StartupType Disabled -ErrorAction SilentlyContinue`);
-      L.push(`if (-not (Get-Service -Name '${s.service}' -ErrorAction SilentlyContinue)) { $failedSteps++; Write-TFDiag -Stage 'optimizer.service' -Mutation 'rolled_back' -Detail ('step ' + (${i} + 1) + ' [' + ${labelPs} + '] 服务不存在: ${s.service}') }`);
+      // OPT-2（2026-09-15）：s.service 统一走 psQuoteForScript 生成单引号字面量，
+      // 杜绝服务名含单引号时脱出引号拼接（当前内置常量无该字符，属前置加固）。
+      const svcPs = psQuoteForScript(s.service);
+      L.push(`Stop-Service -Name ${svcPs} -Force -ErrorAction SilentlyContinue`);
+      if (s.disable) L.push(`Set-Service -Name ${svcPs} -StartupType Disabled -ErrorAction SilentlyContinue`);
+      L.push(`if (-not (Get-Service -Name ${svcPs} -ErrorAction SilentlyContinue)) { $failedSteps++; Write-TFDiag -Stage 'optimizer.service' -Mutation 'rolled_back' -Detail ('step ' + (${i} + 1) + ' [' + ${labelPs} + '] 服务不存在: ' + ${svcPs}) }`);
     } else if (s.pwsh) {
+      // SR-1（2026-09-15）：此前 pwsh 步骤原样裸拼、成败无人记账；又因 PS_PREAMBLE 的
+      // `trap { continue }` 会把 -ErrorAction Stop 的终止性错误吞掉（脚本退出码仍为 0），
+      // 导致 create-restore 恒报成功、还原点门禁被架空。改为逐步骤 try/catch + 强制 Stop
+      // （try/catch 优先于 trap，可正常捕获）→ 异常即 $failedSteps++ 并留诊断。
+      L.push('$___eap = $ErrorActionPreference');
+      L.push('try {');
+      L.push("  $ErrorActionPreference = 'Stop'");
       L.push(s.pwsh);
+      L.push('} catch {');
+      L.push(`  $failedSteps++; Write-TFDiag -Stage 'optimizer.pwsh' -Mutation 'failed' -Detail ('step ' + (${i} + 1) + ' [' + ${labelPs} + '] ' + $_.Exception.Message)`);
+      L.push('} finally {');
+      L.push('  $ErrorActionPreference = $___eap');
+      L.push('}');
     }
     L.push(`Write-Output "@@PROGRESS:${pct}@@"`);
   });

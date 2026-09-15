@@ -35,6 +35,7 @@ const SYNTAX_FILES = [
   'src/main/optimization-state.js',
   'src/main/ps-rule-path-eval.js',
   'src/main/ps-protect-path.js',
+  'src/main/pwsh-runtime.js',
   'src/main/version-migrations.js',
   'src/scripts-powershell/cleanup-scripts.js',
   'src/scripts-powershell/maintenance-scripts.js',
@@ -641,6 +642,37 @@ check('保护判定 JS/PS 同口径对拍（D18）', () => {
   if (psFlags.length !== jsFlags.length) throw new Error('条数不符 js=' + jsFlags.length + ' ps=' + psFlags.length);
   const diffs = jsFlags.map((v, i) => (v === psFlags[i] ? null : vectors[i] + ' js=' + v + ' ps=' + psFlags[i])).filter(Boolean);
   if (diffs.length) throw new Error('两侧口径分歧：' + diffs.join(' | '));
+});
+
+// FD-2（2026-09-15）：JS/Rust 双层保护清单三端同源——Rust is_protected_path 用主进程
+// 注入的 protectedRootsJson()，判定语义须与 JS isPathProtected 逐字一致。此前 Rust
+// 各自硬编码：C:\Windows / Program Files / ProgramData / C:\$Recycle.Bin 过度拦截
+// （制造 FD-1 假失败），%APPDATA%\Trim 反向漏防。本断言喂同一批向量到 JS 与
+// finder.exe `protectcheck --protect <json>`，两侧 0/1 必须完全一致。
+check('保护判定 JS/Rust 同口径对拍（FD-2）', () => {
+  const P = require(abs('src/main/ps-protect-path.js'));
+  const exe = path.join(__dirname, 'native-scanner', 'target', 'release', 'finder.exe');
+  if (!fs.existsSync(exe)) throw new Error('缺少 finder.exe，请先 cargo build --release');
+  const home = process.env.USERPROFILE;
+  const vectors = [
+    process.env.WINDIR, path.join(process.env.WINDIR, 'Temp'), 'C:\\', 'c:', 'C:\\PROGRA~1',
+    home, path.join(home, 'Documents'), process.env.APPDATA, process.env.LOCALAPPDATA,
+    'D:\\System Volume Information', path.join(process.env.APPDATA, 'Trim'),
+    path.join(process.env.WINDIR, 'System32', 'config'),
+    path.join(process.env.USERPROFILE, 'Downloads', 'cleanup-test.dat'),
+    '\\\\?\\' + process.env.WINDIR, '\\\\server\\share\\foo.dat'
+  ];
+  const jsFlags = vectors.map((v) => (P.isPathProtected(v) ? 1 : 0));
+  const { spawnSync } = require('child_process');
+  const rs = spawnSync(exe, ['protectcheck', '--protect', P.protectedRootsJson(), ...vectors],
+    { encoding: 'utf8', timeout: 30000, windowsHide: true });
+  if (rs.status !== 0) throw new Error('Rust protectcheck 退出码 ' + rs.status + ': ' + String(rs.stderr).slice(0, 150));
+  const line = String(rs.stdout || '').trim().split(/\r?\n/).pop() || '';
+  if (!/^[01,]+$/.test(line)) throw new Error('Rust 判定输出不可解析：' + line.slice(0, 120));
+  const rustFlags = line.split(',').map(Number);
+  if (rustFlags.length !== jsFlags.length) throw new Error('条数不符 js=' + jsFlags.length + ' rust=' + rustFlags.length);
+  const diffs = jsFlags.map((v, i) => (v === rustFlags[i] ? null : vectors[i] + ' js=' + v + ' rust=' + rustFlags[i])).filter(Boolean);
+  if (diffs.length) throw new Error('JS/Rust 两侧口径分歧：' + diffs.join(' | '));
 });
 
 // ---- v2.2 第3批（D2/D4）：删除粒度下沉 contents + 注册表删除前 .reg 备份 ----
@@ -1551,6 +1583,27 @@ check('v3.3.4 图标：ICO 8 帧完整且生成器与产物同源', () => {
   const gen = fs.readFileSync(abs('scripts/fix_icons.py'), 'utf8');
   if (!/if size > 16:/.test(gen)) throw new Error('生成器缺少小尺寸不羽化分支');
   if (!/struct\.pack\("<BBBBHHII"/.test(gen)) throw new Error('生成器缺少手工组装 ICO');
+});
+
+check('v3.3.4 内置 pwsh 运行时：IPC 双侧对齐 + 状态通道只读白名单', () => {
+  const mainSrc = fs.readFileSync(abs('main.js'), 'utf8');
+  const preloadSrc = fs.readFileSync(abs('preload.js'), 'utf8');
+  for (const ch of ['pwsh:status', 'pwsh:prepare']) {
+    if (!mainSrc.includes(`'${ch}'`)) throw new Error('main.js 缺少通道 ' + ch);
+    if (!preloadSrc.includes(`'${ch}'`)) throw new Error('preload.js 缺少通道 ' + ch);
+  }
+  // pwsh:status 是只读查询，必须入 SIDE_EFFECT_FREE 白名单
+  if (!mainSrc.includes("'pwsh:status'")) throw new Error('pwsh:status 未登记白名单');
+  // pwsh:prepare 有副作用（触发解压），绝不能入只读白名单
+  const wl = mainSrc.match(/const SIDE_EFFECT_FREE = new Set\(\[([\s\S]*?)\]\);/);
+  if (!wl) throw new Error('未找到 SIDE_EFFECT_FREE 白名单');
+  if (wl[1].includes('pwsh:prepare')) throw new Error('pwsh:prepare 不得进只读白名单');
+  // 候选链必须包含内置运行时末位注入
+  if (!mainSrc.includes('PWSH_RUNTIME.latestReadyExePath()')) throw new Error('候选链未注入内置运行时');
+  // 解压必须用 tar.exe（方案指定，避开 Expand-Archive 的长路径问题）
+  const rt = fs.readFileSync(abs('src/main/pwsh-runtime.js'), 'utf8');
+  if (!rt.includes("'tar.exe'")) throw new Error('pwsh-runtime 未使用 tar.exe 解压');
+  if (rt.includes('Expand-Archive')) throw new Error('pwsh-runtime 不得使用 Expand-Archive');
 });
 
 check('v2.6.0 新增 IPC 通道 main/preload 双侧对齐', () => {

@@ -443,6 +443,9 @@
     }
     try {
       const resp = await window.api.contextmenu.toggle(payloads.map(p => ({
+        // 审查 CM-15（2026-09-15）：主进程 validateSnapshotItems 强制要求请求体带 id，
+        // 漏传会让整批切换被判「不是最近一次扫描结果」直接拒绝（100% 失效）。
+        id: p.item.id,
         name: p.item.name,
         regPath: p.item.regPath || p.item.location || '',
         source: p.item.source,
@@ -527,6 +530,8 @@
         const backupResp = await window.api.contextmenu.backup([item]);
         if (!backupResp?.success) throw new Error(backupResp?.message || '备份失败，已停止删除');
         const resp = await window.api.contextmenu.remove([{
+          // 审查 CM-15：remove 同样要求 id 才能通过快照校验（否则项未删却报错）
+          id: item.id,
           name: item.name, regPath: item.regPath, risk: item.risk, source: item.source, clsid: item.clsid, category: item.category
         }]);
         if (!resp.success) throw new Error(resp.message);

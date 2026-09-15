@@ -836,7 +836,8 @@
           void state.thumb.offsetWidth;
           requestAnimationFrame(() => {
             state.thumb?.classList.remove('lg-no-anim');
-            schedulePlace(bar, !prefersReduceMotion());
+            // LG-5：统一读 reduceMotion 状态量（由 init/syncReduceMotion 维护），不再散落直查媒体查询
+            schedulePlace(bar, !reduceMotion);
           });
           return;
         }
@@ -928,6 +929,31 @@
   // ============ 事件接线 ============
   let bodyMo = null;
 
+  // LG-5（2026-09-15）：reduced-motion 实时求值——原实现 init 时读一次固化，
+  // 运行中切换系统「减少动态效果」偏好永不生效（与同库 spotlight v4-M1 修复口径一致，
+  // 也消掉本文件 934/975/372/605/757 五种读取各管一段的口径分裂）。
+  function bindReducePointerListeners(add) {
+    if (add) {
+      document.addEventListener('pointermove', onPointerMove, { passive: true });
+      document.addEventListener('pointerover', onPointerOverSheenSafe, true);
+      document.addEventListener('pointerdown', onPressIn, true);
+      document.addEventListener('pointerup', onPressOut, true);
+      document.addEventListener('pointercancel', onPressOut, true);
+    } else {
+      document.removeEventListener('pointermove', onPointerMove, { passive: true });
+      document.removeEventListener('pointerover', onPointerOverSheenSafe, true);
+      document.removeEventListener('pointerdown', onPressIn, true);
+      document.removeEventListener('pointerup', onPressOut, true);
+      document.removeEventListener('pointercancel', onPressOut, true);
+    }
+  }
+  function syncReduceMotion() {
+    const was = reduceMotion;
+    reduceMotion = prefersReduceMotion();
+    document.body.classList.toggle('lg-reduce-motion', reduceMotion);
+    if (reduceMotion !== was) bindReducePointerListeners(!reduceMotion);
+  }
+
   function init() {
     mode = readStoredMode();
     refractionSupported = detectRefractionSupport();
@@ -943,6 +969,14 @@
       const onTrChange = (e) => { envNoTransparency = !!(e && e.matches); applyEnv(); };
       if (typeof trMQ.addEventListener === 'function') trMQ.addEventListener('change', onTrChange);
       else if (typeof trMQ.addListener === 'function') trMQ.addListener(onTrChange);
+    } catch (e) { /* 老环境无该媒体查询，忽略 */ }
+
+    // LG-5（2026-09-15）：系统「减少动态效果」偏好运行中切换 → 实时重求值并按需挂/摘指针监听
+    try {
+      const rmMQ = window.matchMedia('(prefers-reduced-motion: reduce)');
+      const onRmChange = () => syncReduceMotion();
+      if (typeof rmMQ.addEventListener === 'function') rmMQ.addEventListener('change', onRmChange);
+      else if (typeof rmMQ.addListener === 'function') rmMQ.addListener(onRmChange);
     } catch (e) { /* 老环境无该媒体查询，忽略 */ }
     if (window.api?.appearance?.getEnv) {
       window.api.appearance.getEnv().then((env) => {
@@ -967,19 +1001,16 @@
       const tab = e.target && e.target.closest ? e.target.closest(TAB_SELECTOR) : null;
       if (tab) {
         const bar = tab.closest(BAR_SELECTOR);
-        if (bar && states.has(bar)) schedulePlace(bar, !prefersReduceMotion());
+        // LG-5：同上，统一读 reduceMotion 状态量
+        if (bar && states.has(bar)) schedulePlace(bar, !reduceMotion);
       }
       scheduleScan();
     }, true);
 
-    if (prefersReduceMotion()) document.body.classList.add('lg-reduce-motion');
-    else {
-      document.addEventListener('pointermove', onPointerMove, { passive: true });
-      document.addEventListener('pointerover', onPointerOverSheenSafe, true);
-      document.addEventListener('pointerdown', onPressIn, true);
-      document.addEventListener('pointerup', onPressOut, true);
-      document.addEventListener('pointercancel', onPressOut, true);
-    }
+    // LG-5（2026-09-15）：统一走 syncReduceMotion 同一口径——按初始值挂指针监听，
+    // 运行中偏好切换由上面的 matchMedia change 监听接管（原静态块读一次即固化）
+    document.body.classList.toggle('lg-reduce-motion', reduceMotion);
+    bindReducePointerListeners(!reduceMotion);
 
     // 字体加载完成会改变标签/按钮尺寸，重新对齐
     if (document.fonts && document.fonts.ready) {

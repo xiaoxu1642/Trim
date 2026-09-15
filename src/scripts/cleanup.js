@@ -699,6 +699,15 @@
   function onScanProgress(payload) {
     if (!isScanning || !payload || !payload.item) return;
     const r = payload.item;
+    // FC-4（2026-09-15）：fileclean 扫描期间主进程推送 id 前缀 `__fileclean:` 的占位进度项，
+    // 只更新进度条（不写入 scanResults/streamTotals、不触发行/分组渲染），扫描完成后由
+    // fileclean.scan 的返回结果统一落真实数据。
+    const isSentinel = typeof r.id === 'string' && r.id.startsWith('__fileclean:');
+    if (isSentinel) {
+      const pct0 = payload.total > 0 ? Math.min(90, (payload.done / payload.total) * 90) : 0;
+      setProgress(pct0, `扫描中... ${Math.floor(payload.done)}/${payload.total} 项 · ${Math.round(pct0)}%`);
+      return;
+    }
     scanResults.set(r.id, r);
     if (r.size > 0) {
       const gk = groupKeyForItem(r.id);
@@ -791,14 +800,17 @@
         }
         results = resp.data;
 
-        // 文件清理项独立扫描
+        // 文件清理项独立扫描（FC-4：传 total/doneBase 让主进程与常规条目共用同一进度条；
+        // total = 常规则数 + fileclean 项数，与渲染层 ALL_IDS 口径一致）
         const pathConfig = window.pathbinding?.getConfig?.() || {};
+        const scanTotal = regularIds.length + FILECLEAN_IDS.length;
+        let fcDoneBase = regularIds.length;
         for (const id of FILECLEAN_IDS) {
           const item = getItemById(id);
           if (!item || !item.fileCleanType) continue;
           const customPath = item.fileCleanType === 'qq' ? pathConfig.qqFileDir : pathConfig.wechatFileDir;
           try {
-            const fcResp = await window.api.fileclean.scan(item.fileCleanType, customPath);
+            const fcResp = await window.api.fileclean.scan(item.fileCleanType, customPath, scanTotal, fcDoneBase);
             if (fcResp.success && fcResp.data) {
               fileCleanData.set(id, fcResp.data);
               results.push({
@@ -832,6 +844,8 @@
               exists: false
             });
           }
+          // FC-4：本条目扫完，进度基准前移一位，供下一个 fileclean 条目使用
+          fcDoneBase++;
         }
       } else {
         // 浏览器预览模式：使用模拟数据
@@ -1088,8 +1102,11 @@
         let regularResult = { totalFreed: 0, success: 0, failed: 0, skipped: 0, details: [] };
         if (regularItems.length > 0) {
           const resp = await window.api.cleanup.execute(regularItems, force, toRecycle, autoRebuild);
-          if (!resp.success) throw new Error(resp.message);
-          regularResult = resp.data;
+          // 审查 S5（2026-09-15）：主进程 success = 硬失败(error)为 0，partial 不计入。
+          // 只要回传了 data 就必须读（否则部分成功/失败时整批统计与逐项明细被丢弃，
+          // 与 finder:delete / fileclean:execute 的双通道协议对齐）；仅通道级失败才抛错。
+          if (resp && resp.data) regularResult = resp.data;
+          else if (!resp || !resp.success) throw new Error((resp && resp.message) || '清理失败');
         }
 
         // 文件清理
@@ -1099,10 +1116,13 @@
           const data = fileCleanData.get(item.id);
           if (data && data.files && data.files.length > 0) {
             const fcResp = await window.api.fileclean.execute(data.files);
-            if (fcResp.success) {
-              fcFreed += fcResp.data.totalFreed;
-              fcSuccess += fcResp.data.success;
-              fcFailed += fcResp.data.failed;
+            // 审查 FC-2/S5（2026-09-15）：原实现只判 success、无 else 分支，
+            // 任一文件失败（被占用乃常态）就会把整批统计与逐项明细静默丢弃。
+            // 改为始终读取 data 如实累加；通道级失败也落一条 error 明细，不再「消失」。
+            if (fcResp && fcResp.data) {
+              fcFreed += fcResp.data.totalFreed || 0;
+              fcSuccess += fcResp.data.success || 0;
+              fcFailed += fcResp.data.failed || 0;
               fcDetails.push(...(fcResp.data.details || []).map(d => ({
                 id: item.id,
                 name: item.name,
@@ -1110,6 +1130,15 @@
                 freed: d.freed,
                 message: d.message || ''
               })));
+            } else {
+              fcFailed += data.files.length;
+              fcDetails.push({
+                id: item.id,
+                name: item.name,
+                status: 'error',
+                freed: 0,
+                message: (fcResp && fcResp.message) || '文件清理失败'
+              });
             }
           }
         }

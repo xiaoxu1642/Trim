@@ -24,6 +24,8 @@ const RULES_SIG = require('./src/main/rules-signature');
 // require('../main/ps-protect-path') 加载同一文件（同绝对路径→同 require 缓存），
 // 因此这里 configureProtectedRoots 补全的清单会被 PS 侧注入逻辑直接读到。
 const PROTECT_PATH = require('./src/main/ps-protect-path');
+// 内置 PowerShell 7 运行时（v3.3.x，方案 A 兜底）—— 解压/版本管理/候选链末位注入
+const PWSH_RUNTIME = require('./src/main/pwsh-runtime');
 // 批次：自动更新接入（electron-updater + GitHub Releases，仅打包后生效）
 const UPDATER = require('./src/main/updater');
 
@@ -68,11 +70,17 @@ const cleanupSnapshots = new Map(); // webContentsId -> Map(item.id -> item)
 // 单条目 10 万行、全扫描 100 万行，超限即停止收集（正常内置/自定义规则远达不到）。
 const PLAN_CAP_PER_ITEM = 100000;
 const PLAN_CAP_TOTAL = 1000000;
-let lastContextmenuSnapshot = new Map();
-let lastStartupSnapshot = new Map();
-let lastProcessSnapshot = new Map();
+// CM-6 / SU-5 / M-4（2026-09-15，S3）：原三个模块级单全局快照未按 sender.id 隔离，
+// 多窗口并发时 A 窗的扫描结果会被 B 窗覆盖，启停/删除/结束校验串台。改为 per-sender Map。
+const contextmenuSnapshots = new Map(); // sender.id -> Map(item.id -> item)
+const startupSnapshots = new Map();     // sender.id -> Map(item.id -> item)
+const processSnapshots = new Map();     // sender.id -> Map(pid -> { Id, ProcessName, Path })
 // finder 删除只允许操作最近一次 Rust 扫描返回的路径，避免渲染层构造任意删除目标。
-let lastFinderSnapshot = new Map();
+// FD-7（2026-09-15，S3）：原单槽位 Map 被「最近一次扫描」整体重置——先扫重复再扫大文件，
+// 回重复页删除即全报「删除目标已过期」。改为按 sender.id 分槽，且槽内扫描结果合并累积
+// （渲染层只发送当前列表里的路径，累积不会放出未展示项的删除能力；目标已消失由 FD-4 预检剔除）。
+const finderSnapshots = new Map(); // sender.id -> Map(pathLower -> { path, kind, ts })
+const FINDER_SNAPSHOT_SLOT_MAX = 500000; // 单槽上限：防无界累积，超限清最老一半
 
 const MAIN_WINDOW_MIN_WIDTH = 1294;
 const MAIN_WINDOW_MIN_HEIGHT = 870;
@@ -158,6 +166,7 @@ const SIDE_EFFECT_FREE = new Set([
   'overview:checkup',                                          // 系统体检（v2.6.0 只读诊断）
   'runtimes:collect',                                          // 运行库只读检测（v3.3.0；install 通道绝不入白名单）
   'updater:get-mirror',                                        // 更新镜像偏好读取（v2.6.0）
+  'pwsh:status',                                                // 内置 pwsh 运行时状态查询（只读）
   'appearance:get-env', 'diag:dwm-conflict',                   // 环境状态/注入工具检测结果读取（v2.8.0）
   'paths:load', 'realtime:adapters', 'realtime:report-list',   // 路径配置/网络适配器/测速报告列表
   'defaultapps:status', 'defaultapps:list-programs',           // 默认应用状态/ProgId 枚举（只读采集，v3.0）
@@ -419,16 +428,23 @@ function flushLogSync() {
   }
 }
 
+// LOG-1（2026-09-15）：本地日期/时间统一出口。写日志、log:read 默认、log:export
+// 三处共用，杜绝 UTC 与本地口径漂移。函数声明提升，定义位置不影响引用。
+const pad2 = n => String(n).padStart(2, '0');
+function localDateStr(d = new Date()) {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
 function writeLog(level, message) {
   ensureLogDir();
   // 审查 L-1（2026-09-14）：日志时间戳与日志文件名改用本地时间，避免 UTC 与东八区差 8 小时
   // 导致排查时误判时序（00:00–07:59 产生的日志落进前一天文件）。
-  const pad = n => String(n).padStart(2, '0');
+  // LOG-1（2026-09-15）：真正统一为 localDateStr —— 此前 read/export 端仍各自
+  // toISOString().slice(0,10)（UTC），东八区 00:00–07:59 读/导会看前一天文件。
   const d = new Date();
-  const localStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-  const localDate = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const localStr = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
   const line = `[${localStr}] [${level.toUpperCase()}] ${message}\n`;
-  const logFile = path.join(LOG_DIR, `app-${localDate}.log`);
+  const logFile = path.join(LOG_DIR, `app-${localDateStr(d)}.log`);
   logQueue.push({ file: logFile, line });
   if (!logFlushScheduled) {
     logFlushScheduled = true;
@@ -445,12 +461,12 @@ const PWSH_PROBE_FAIL_TTL_MS = 60000;
 let pwshProbeFailedAt = 0;
 let pwshProbeError = null;
 
-function isPowerShell7Executable(executable) {
+function isPowerShell7Executable(executable, timeoutMs = 5000) {
   try {
     const result = spawnSync(
       executable,
       ['-NoProfile', '-NonInteractive', '-Command', '$PSVersionTable.PSVersion.Major'],
-      { encoding: 'utf8', windowsHide: true, timeout: 5000 }
+      { encoding: 'utf8', windowsHide: true, timeout: timeoutMs }
     );
     return result.status === 0 && Number(result.stdout.trim()) >= 7;
   } catch (e) {
@@ -491,12 +507,27 @@ function resolvePowerShell7Path() {
     } catch (e) { /* 不存在则跳过 */ }
   }
 
+  // ⑤ 内置运行时（方案 A 兜底，v3.3.x）—— 排到候选链最末位，仅当 .ready 标记存在
+  // 时才加入；用户自装版本优先（尊重用户环境、避免版本分裂）。
+  const builtIn = PWSH_RUNTIME.latestReadyExePath();
+  if (builtIn) candidates.push(builtIn);
+
   for (const candidate of candidates) {
     if (fs.existsSync(candidate) && isPowerShell7Executable(candidate)) {
       powerShell7Path = candidate;
       pwshProbeError = null; // 审查v4-M7：探测成功即解除负缓存
       return powerShell7Path;
     }
+  }
+
+  // 所有候选都落空：判断是否有内置 zip 可解压，有的话返回带特殊 code 的错误，
+  // 让调用方（启动探测）可以触发异步解压而不是直接报"请安装"。
+  if (PWSH_RUNTIME.resolveBundledZip()) {
+    const error = new Error('未找到 PowerShell 7（pwsh.exe），正在准备内置运行时…');
+    error.code = 'PWSH7_PREPARING';
+    pwshProbeFailedAt = Date.now();
+    pwshProbeError = error;
+    throw error;
   }
 
   const error = new Error('未找到 PowerShell 7（pwsh.exe），请先安装 PowerShell 7 后重试。');
@@ -1033,7 +1064,7 @@ handleSafe('log:write', (event, { level, message }) => {
 
 handleSafe('log:read', async (event, { date } = {}) => {
   try {
-    const requestedDate = date || new Date().toISOString().slice(0, 10);
+    const requestedDate = date || localDateStr();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(requestedDate)) return '读取日志失败: 日期格式无效';
     const logFile = path.join(LOG_DIR, `app-${requestedDate}.log`);
     if (!isPathUnderRoot(logFile, LOG_DIR)) return '读取日志失败: 路径无效';
@@ -1066,7 +1097,7 @@ handleSafe('log:export', async () => {
       filters: [{ name: '文本文件', extensions: ['txt', 'log'] }]
     });
     if (result.canceled || !result.filePath) return { success: false, message: '已取消' };
-    const logFile = path.join(LOG_DIR, `app-${new Date().toISOString().slice(0, 10)}.log`);
+    const logFile = path.join(LOG_DIR, `app-${localDateStr()}.log`);
     if (fs.existsSync(logFile)) {
       fs.copyFileSync(logFile, result.filePath);
       return { success: true, path: result.filePath };
@@ -1289,7 +1320,8 @@ handleSafe('cleanup:execute', async (event, { items, force, toRecycle, autoRebui
         }
         perItem.set(entry.id, st);
       }
-      if (trashFailures.length) lastTrashFailures = trashFailures;
+      // J-1（S3）：写入本 sender 分槽，多窗口并发清理互不串台
+      if (trashFailures.length) trashFailureSlots.set(sender.id, trashFailures);
       let recycledBytes = 0, recycledCount = 0;
       for (const d of data.details || []) {
         if (d.status !== 'recycle') continue;
@@ -1347,10 +1379,12 @@ handleSafe('cleanup:execute', async (event, { items, force, toRecycle, autoRebui
 
 // 审查 4-4：回收站失败项的永久删除重试——只处理最近一次 cleanup:execute 留存的失败项
 //（主进程白名单，渲染层不能指定任意路径），渲染层需先弹红色确认（modal.js confirmDanger）再调用。
-let lastTrashFailures = [];
+// J-1（2026-09-15，S3）：原模块级单全局 `lastTrashFailures` 未按 sender.id 隔离，
+// 多窗口并发清理时 A 窗的失败项会被 B 窗的清理覆盖，重试串台。改为 per-sender Map。
+const trashFailureSlots = new Map(); // sender.id -> failures[]
 handleSafe('cleanup:retry-failed-delete', async (event) => {
-  const targets = lastTrashFailures;
-  lastTrashFailures = []; // 取走即清空：重试只处理最近一批，且同一批不会被二次重删
+  const targets = trashFailureSlots.get(event.sender.id) || [];
+  trashFailureSlots.delete(event.sender.id); // 取走即清空：重试只处理最近一批，且同一批不会被二次重删
   if (!targets.length) return { success: false, message: '没有待重试的失败项' };
   writeLog('warn', `开始永久删除回收站失败项: ${targets.length} 项`);
   flushLogSync(); // 审查v4-L3：危险操作执行前强制刷盘
@@ -1965,16 +1999,27 @@ handleSafe('finder:scan', async (event, { scanType, paths, minSize, count, minSi
         if (sender && !sender.isDestroyed()) sender.send('finder:progress', { scanType, scanned: n });
       }
     });
-    lastFinderSnapshot = new Map();
+    // FD-7（2026-09-15，S3）：写入本 sender 分槽并合并累积，不再整体重置全局快照
+    let snap = finderSnapshots.get(sender.id);
+    if (!snap) {
+      snap = new Map();
+      finderSnapshots.set(sender.id, snap);
+    }
+    const ts = Date.now();
     for (const item of items) {
       if (item && typeof item.path === 'string') {
-        lastFinderSnapshot.set(path.resolve(item.path).toLowerCase(), {
+        snap.set(path.resolve(item.path).toLowerCase(), {
           path: item.path,
-          kind: item.type === 'emptyfolder' || item.type === 'appdata' ? 'dir' : 'file'
+          kind: item.type === 'emptyfolder' || item.type === 'appdata' ? 'dir' : 'file',
+          ts
         });
       }
     }
-    writeLog('info', `finder ${scanType} 完成: ${items.length} 项`);
+    if (snap.size > FINDER_SNAPSHOT_SLOT_MAX) {
+      const entries = [...snap.entries()].sort((a, b) => (a[1].ts || 0) - (b[1].ts || 0));
+      for (let i = 0; i < entries.length / 2; i++) snap.delete(entries[i][0]);
+    }
+    writeLog('info', `finder ${scanType} 完成: ${items.length} 项（快照槽 ${snap.size} 条）`);
     return { success: true, data: items };
   } catch (e) {
     writeLog('error', `finder ${scanType} 失败: ${e.message}`);
@@ -2079,8 +2124,10 @@ function saveDeleteManifest(batchId, entries) {
 
 handleSafe('finder:delete', async (event, { items }) => {
   const requested = (Array.isArray(items) ? items : []).filter(it => it && typeof it.path === 'string').slice(0, 500);
+  // FD-7（2026-09-15，S3）：只认本 sender 分槽内的路径（跨窗口/跨页签互不覆盖）
+  const snap = finderSnapshots.get(event.sender.id);
   const safe = requested.map(it => {
-    const known = lastFinderSnapshot.get(path.resolve(it.path).toLowerCase());
+    const known = snap ? snap.get(path.resolve(it.path).toLowerCase()) : null;
     return known ? { path: known.path, kind: known.kind } : null;
   });
   if (safe.some(it => !it)) return { success: false, message: '删除目标已过期，请重新扫描后再试' };
@@ -2088,15 +2135,38 @@ handleSafe('finder:delete', async (event, { items }) => {
   if (!validSafe.length) return { success: false, message: '没有可删除的项' };
   const protectedHits = validSafe.filter(it => isProtectedDeletePath(it.path));
   if (protectedHits.length) return { success: false, message: `包含受保护的系统路径，已拒绝：${protectedHits[0].path}` };
-  const args = [];
+  // FD-4（2026-09-15）：删除前空复检 —— 目标不存在直接剔除（防止扫描到删除
+  // 期间目标已被移动/删除，而 Rust 侧「已删=成功」会把不存在的也计入释放空间）。
+  // 目录型额外校验非空：空目录的「删除=成功」是合理操作，但大小为 0 且用户可能
+  // 误以为释放了空间，这里保留目录条目但在详情里标记 size=0 让 UI 如实展示。
+  const preflight = [];
   for (const it of validSafe) {
+    try {
+      const st = fs.statSync(it.path);
+      if (it.kind === 'dir' && !st.isDirectory()) { continue; } // 类型不符：跳过
+      if (it.kind === 'file' && !st.isFile()) { continue; }
+      preflight.push(it);
+    } catch (e) {
+      if (e.code === 'ENOENT') {
+        writeLog('warn', `finder 删除预检: 目标已不存在，跳过 -> ${it.path}`);
+      } else {
+        writeLog('warn', `finder 删除预检失败: ${it.path} -> ${e.message}`);
+      }
+    }
+  }
+  if (!preflight.length) return { success: true, data: { totalFreed: 0, success: 0, failed: 0, skipped: validSafe.length, recycled: 0, details: [], manifestPath: null } };
+  const args = [];
+  for (const it of preflight) {
     const kind = it.kind === 'dir' ? 'dir' : 'file';
     args.push(kind, String(it.path));
   }
   try {
-    writeLog('info', `finder 删除(原生): ${validSafe.length} 项`);
+    writeLog('info', `finder 删除(原生): ${preflight.length} 项`);
     flushLogSync(); // 审查v4-L3：危险操作执行前强制刷盘
-    const results = await runRustScanner('delete', args);
+    // FD-2（2026-09-15）：把 JS 权威保护清单（protectedRootsJson）注入 Rust，
+    // 删除侧三端同源，替换 Rust 各自硬编码（此前 Rust 过度拦截制造假失败，
+    // %APPDATA%\Trim 又反向漏防）。ensureProtectedConfigured 已在 2107 行先行补齐。
+    const results = await runRustScanner('delete', ['--protect', PROTECT_PATH.protectedRootsJson(), ...args]);
     const details = (Array.isArray(results) ? results : []).filter(r => r && r.type === 'delresult');
     let totalFreed = 0, success = 0, failed = 0, recycled = 0;
     for (const d of details) {
@@ -2121,7 +2191,10 @@ handleSafe('finder:delete', async (event, { items }) => {
       }));
     const manifestPath = saveDeleteManifest(batchId, manifestEntries);
     writeLog('info', `finder 删除完成: 成功 ${success}（回收站 ${recycled}）失败 ${failed} 释放 ${totalFreed} 字节${manifestPath ? ` 清单 ${path.basename(manifestPath)}` : ''}`);
-    return { success: failed === 0, data: { totalFreed, success, failed, skipped, recycled, details, manifestPath } };
+    // 审查 FD-1/S5（2026-09-15）：success 语义改为「通道执行成功」。原 `success: failed===0`
+    // 叠加渲染层 `if (!resp.success) throw`：任一文件失败即丢弃整批 resp.data，
+    // 已删项不从列表移除、用户只看到「删除失败」（磁盘可能已删 99 个），属破坏性结果错报。
+    return { success: true, data: { totalFreed, success, failed, skipped, recycled, details, manifestPath } };
   } catch (e) {
     writeLog('error', `finder 删除异常: ${e.message}`);
     return { success: false, message: e.message };
@@ -2205,11 +2278,11 @@ handleSafe('contextmenu:scan', async (event, { refresh = false } = {}) => {
   if (!refresh) {
     const cached = loadScanCache('contextmenu-scan.json');
     if (cached) {
-      lastContextmenuSnapshot = snapshotById(cached.data);
+      contextmenuSnapshots.set(event.sender.id, snapshotById(cached.data));
       return { success: true, data: cached.data, cached: true, cachedAt: cached.timestamp };
     }
   }
-  lastContextmenuSnapshot = new Map();
+  contextmenuSnapshots.set(event.sender.id, new Map());
   const script = CONTEXTMENU_SCRIPT.scan();
   const scriptPath = writeTempScript(script);
   try {
@@ -2228,7 +2301,7 @@ handleSafe('contextmenu:scan', async (event, { refresh = false } = {}) => {
       if (!Array.isArray(data)) throw new Error('结果不是数组');
       writeLog('info', `扫描右键菜单完成: ${data.length} 项`);
       const normalized = data.map((item, index) => ({ ...item, id: String(item.id || item.regPath || index) }));
-      lastContextmenuSnapshot = snapshotById(normalized);
+      contextmenuSnapshots.set(event.sender.id, snapshotById(normalized));
       saveScanCache('contextmenu-scan.json', normalized);
       return { success: true, data: normalized };
     } catch (e) {
@@ -2242,7 +2315,7 @@ handleSafe('contextmenu:scan', async (event, { refresh = false } = {}) => {
 handleSafe('contextmenu:backup', async (event, { items, clsids } = {}) => {
   // 兼容旧版调用方：新版传完整 items，旧版若只传 clsids 则无法导出路径，直接返回明确错误
   const backupItems = Array.isArray(items) ? items : (Array.isArray(clsids) ? clsids : []);
-  const safeBackupItems = validateSnapshotItems(backupItems, lastContextmenuSnapshot);
+  const safeBackupItems = validateSnapshotItems(backupItems, contextmenuSnapshots.get(event.sender.id) || new Map());
   if (!safeBackupItems) return { success: false, message: '备份项不是最近一次扫描结果，已拒绝执行' };
   if (!backupItems.length) return { success: false, message: '没有可备份的右键菜单项' };
   if (safeBackupItems.some(item => !item || typeof item !== 'object' || !item.regPath)) {
@@ -2270,9 +2343,15 @@ handleSafe('contextmenu:backup', async (event, { items, clsids } = {}) => {
 
 handleSafe('contextmenu:remove', async (event, { items, clsids } = {}) => {
   const removeItems = Array.isArray(items) ? items : (Array.isArray(clsids) ? clsids : []);
-  const safeRemoveItems = validateSnapshotItems(removeItems, lastContextmenuSnapshot);
+  const safeRemoveItems = validateSnapshotItems(removeItems, contextmenuSnapshots.get(event.sender.id) || new Map());
   if (!safeRemoveItems) return { success: false, message: '删除项不是最近一次扫描结果，已拒绝执行' };
   if (!safeRemoveItems.length) return { success: false, message: '没有可删除的右键菜单项' };
+  // CM-3（S4，2026-09-15）：HKLM/HKCR 作用域的右键菜单写操作需要管理员，
+  // 无权限直接拒绝并给提权入口，避免静默失败（权限不足时 PS 只在详情里报失败）。
+  const hasHklm = safeRemoveItems.some(it => it && /^(HKEY_LOCAL_MACHINE|HKEY_CLASSES_ROOT|HKLM|HKCR)\\/i.test(String(it.regPath || '')));
+  if (hasHklm && !(await isAdmin())) {
+    return { success: false, needAdmin: true, message: '涉及系统级右键菜单的操作需要管理员权限，请先提权' };
+  }
   const script = CONTEXTMENU_SCRIPT.remove(safeRemoveItems);
   const scriptPath = writeTempScript(script);
   try {
@@ -2294,14 +2373,27 @@ handleSafe('contextmenu:remove', async (event, { items, clsids } = {}) => {
 
 // 启停切换右键菜单项（勾选=启用，取消=禁用；禁用为可逆操作，不做备份）
 handleSafe('contextmenu:toggle', async (event, { items } = {}) => {
-  const safeItems = validateSnapshotItems(items, lastContextmenuSnapshot);
+  const safeItems = validateSnapshotItems(items, contextmenuSnapshots.get(event.sender.id) || new Map());
   if (!safeItems) return { success: false, message: '切换项不是最近一次扫描结果，已拒绝执行' };
+  // 审查 CM-16（2026-09-15）：validateSnapshotItems 返回的是快照副本，其 enabled 为扫描时状态，
+  // 会把调用方的目标态整体覆盖 → 勾选/取消退化成 no-op（与 CM-15 叠加时功能双重失效）。
+  // 这里按 id 回挂调用方意图；regPath / source / clsid 仍取快照值，防渲染层篡改副作用参数。
+  const wantedEnabled = new Map();
+  for (const it of (Array.isArray(items) ? items : [])) {
+    if (it && typeof it.id === 'string') wantedEnabled.set(it.id, !!it.enabled);
+  }
   const toggleItems = safeItems
     .filter(it => it && typeof it === 'object' && it.regPath && it.source)
     .map(it => ({
-      name: it.name || '', regPath: it.regPath, source: it.source, enabled: !!it.enabled
+      name: it.name || '', regPath: it.regPath, source: it.source,
+      enabled: wantedEnabled.has(it.id) ? wantedEnabled.get(it.id) : !!it.enabled
     }));
   if (!toggleItems.length) return { success: false, message: '没有可切换的菜单项' };
+  // CM-3（S4，2026-09-15）：HKLM/HKCR 作用域的右键菜单写操作需要管理员
+  const hasHklm = toggleItems.some(it => it && /^(HKEY_LOCAL_MACHINE|HKEY_CLASSES_ROOT|HKLM|HKCR)\\/i.test(String(it.regPath || '')));
+  if (hasHklm && !(await isAdmin())) {
+    return { success: false, needAdmin: true, message: '涉及系统级右键菜单的操作需要管理员权限，请先提权' };
+  }
   const script = CONTEXTMENU_SCRIPT.toggle(toggleItems);
   const scriptPath = writeTempScript(script);
   try {
@@ -2447,6 +2539,13 @@ function classifyStepKinds(steps) {
 handleSafe('optimizer:run', async (event, { optionId, params = {} } = {}) => {
   const opt = OPTIMIZER.OPTIONS.find(o => o.id === optionId);
   if (!opt) return { success: false, message: '未知的优化选项' };
+
+  // OPT-1（S4，2026-09-15）：高危优化全部走 HKLM，无管理员权限一律拒绝并提示提权，
+  // 避免「静默 no-op 报成功」把还原点门禁和红色确认架空。
+  // 还原运行也需要管理员（恢复 HKLM 键同样要写权限）；只读查询类通道不卡。
+  if (!(await isAdmin())) {
+    return { success: false, needAdmin: true, message: '优化操作需要管理员权限，请先提权' };
+  }
 
   // 内存 SVCHost 阈值：由下拉参数动态生成执行步骤（动态选项）
   let steps;
@@ -3103,17 +3202,92 @@ handleSafe('optimizer:check-restore', async () => {
   }
 });
 
+// SR-1（2026-09-15）：读取还原点数量，供「创建后回读」使用。
+// 查询失败返回 null（与「确有 0 个还原点」严格区分，避免把查询故障当成创建失败）。
+async function countRestorePoints() {
+  const script = [
+    '$ErrorActionPreference = "Stop"',
+    'try {',
+    '  $rp = @(Get-ComputerRestorePoint)',
+    '  Write-Output ("RPCOUNT|" + $rp.Count)',
+    '} catch {',
+    '  Write-Output ("RPERROR|" + $_.Exception.Message)',
+    '}'
+  ].join('\n');
+  const scriptPath = writeTempScript(script);
+  try {
+    const { stdout } = await runPowerShellFile(scriptPath, { timeout: 30000 });
+    const line = (stdout || '').split(/\r?\n/).map(s => s.trim()).find(l => l.startsWith('RPCOUNT|'));
+    if (!line) return null;
+    const n = Number(line.slice('RPCOUNT|'.length));
+    return Number.isFinite(n) ? n : null;
+  } catch (e) {
+    return null;
+  } finally {
+    try { fs.unlinkSync(scriptPath); } catch (e) {}
+  }
+}
+
+// 轮询等待还原点数量增长（WMI CreateRestorePoint 为异步，返回后可能尚未落盘）。
+// 返回最新数量，或查询失败时的 null（不误判）。
+async function waitRestorePointIncrease(before, maxMs = 15000) {
+  if (before == null) return null;
+  const deadline = Date.now() + maxMs;
+  let last = before;
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 1500));
+    const n = await countRestorePoints();
+    if (n == null) return null;
+    last = n;
+    if (n > before) return n;
+  }
+  return last;
+}
+
 // 创建系统还原点（复用 tf_restore_point 的脚本）
 handleSafe('optimizer:create-restore', async (event) => {
   const opt = OPTIMIZER.OPTIONS.find(o => o.id === 'tf_restore_point');
   const steps = opt && opt.steps ? opt.steps : [];
   if (!steps.length) return { success: false, message: '缺少还原点脚本' };
+  // SR-3（S6，2026-09-15）：补 OPT_STATE 记账 + 注册表备份。原 create-restore 旁路
+  // optimizer:run，step1（解除 24h 创建频率限制，写 HKLM）不进状态页、不备份原值，
+  // 用户想回退时无据可查。这里与 optimizer:run 同口径：执行前记账 + 备份 step1 的 reg。
+  if (OPT_STATE.ready()) {
+    try {
+      OPT_STATE.recordPending('tf_restore_point', { title: opt.title, kinds: classifyStepKinds(steps) });
+    } catch (e) {
+      writeLog('warn', `创建还原点记账失败: ${e.message}`);
+    }
+  }
+  const before = await countRestorePoints();
   const scriptPath = writeTempScript(OPTIMIZER.buildScript(steps));
   try {
-    const { code } = await runPowerShellFile(scriptPath, { timeout: 120000 });
-    return { success: code === 0, message: code === 0 ? '已创建系统还原点' : '系统还原点创建失败，请手动创建' };
+    const { stdout, code } = await runPowerShellFile(scriptPath, { timeout: 120000, diagOp: 'optimizer.create-restore' });
+    // 三条件判定：退出码 0 + 走到 @@DONE@@ + 无失败步骤（缺一不可）
+    const out = String(stdout || '');
+    const failedMatch = /@@FAILED:(\d+)@@/.exec(out);
+    const failedSteps = failedMatch ? Number(failedMatch[1]) : 0;
+    const ok = code === 0 && out.includes('@@DONE@@') && failedSteps === 0;
+    if (ok && OPT_STATE.ready()) {
+      try { OPT_STATE.markApplied('tf_restore_point', 'pass'); } catch (_) {}
+    } else if (!ok && OPT_STATE.ready()) {
+      try { OPT_STATE.remove('tf_restore_point'); } catch (_) {}
+    }
+    if (!ok) {
+      writeLog('warn', `创建系统还原点未成功: code=${code} failedSteps=${failedSteps}`);
+      return { success: false, message: '系统还原点创建失败，请手动创建（需管理员权限，且至少一个卷已开启系统保护）' };
+    }
+    // 创建后回读：还原点数量必须增加，否则视为「报成功但实际没建」
+    const after = await waitRestorePointIncrease(before);
+    if (before != null && after != null && after <= before) {
+      writeLog('warn', `创建还原点回读未增长: ${before} -> ${after}`);
+      return { success: false, message: '未检测到新还原点，创建可能被系统限制或仍在进行，请稍后在「系统还原点管理」核对' };
+    }
+    writeLog('info', `已创建系统还原点 (${before == null ? '?' : before} -> ${after == null ? '?' : after})`);
+    return { success: true, message: '已创建系统还原点' };
   } catch (e) {
     writeLog('error', `创建还原点异常: ${e.message}`);
+    if (OPT_STATE.ready()) { try { OPT_STATE.remove('tf_restore_point'); } catch (_) {} }
     return { success: false, message: e.message };
   } finally {
     try { fs.unlinkSync(scriptPath); } catch (e) {}
@@ -3123,19 +3297,27 @@ handleSafe('optimizer:create-restore', async (event) => {
 // 列出所有系统还原点 + 各卷系统保护状态（供"系统还原点管理"页面）。
 // created 输出原始 DMTF 串由 Node 侧 parseDmtfDateTime 解析（PS7 不加载
 // System.Management 程序集，见 optimizer:check-restore 处说明）。
+// SR-2（2026-09-15）：此前首行 SilentlyContinue 吞掉 Get-ComputerRestorePoint 的
+// "拒绝访问"（未提权），非提权返回空数据且 success:true，UI 把"查不到"当"保护已关闭"
+// 红色告警。现改 Stop + try/catch + 三态错误码，查询故障如实返回（与 check-restore 同口径）。
 handleSafe('optimizer:list-restore', async () => {
   const script = [
-    '$ErrorActionPreference = "SilentlyContinue"',
+    '$ErrorActionPreference = "Stop"',
     '$out = @{}',
-    '$rps = @(Get-ComputerRestorePoint)',
-    '$out.restorePoints = @($rps | Sort-Object CreationTime -Descending | ForEach-Object {',
-    '  [pscustomobject]@{',
-    '    seq = $_.SequenceNumber;',
-    '    desc = $_.Description;',
-    '    created = $_.CreationTime;',
-    '    type = $_.RestorePointType',
-    '  }',
-    '})',
+    'try {',
+    '  $rps = @(Get-ComputerRestorePoint)',
+    '  $out.restorePoints = @($rps | Sort-Object CreationTime -Descending | ForEach-Object {',
+    '    [pscustomobject]@{',
+    '      seq = $_.SequenceNumber;',
+    '      desc = $_.Description;',
+    '      created = $_.CreationTime;',
+    '      type = $_.RestorePointType',
+    '    }',
+    '  })',
+    '} catch {',
+    '  Write-Output ("RPFAIL|" + $_.Exception.Message)',
+    '  exit 0',
+    '}',
     // 全局禁用标志（DisableSR=1 表示全局关闭系统保护）
     '$globalDisable = 0',
     '$srKey = Get-ItemProperty "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore" -ErrorAction SilentlyContinue',
@@ -3155,6 +3337,11 @@ handleSafe('optimizer:list-restore', async () => {
   const scriptPath = writeTempScript(script);
   try {
     const { stdout } = await runPowerShellFile(scriptPath, { timeout: 30000 });
+    const failLine = (stdout || '').split(/\r?\n/).map(s => s.trim()).find(l => l.startsWith('RPFAIL|'));
+    if (failLine) {
+      writeLog('warn', `列出还原点失败: ${failLine.slice('RPFAIL|'.length)}`);
+      return { success: false, message: failLine.slice('RPFAIL|'.length) };
+    }
     let data = null;
     try { data = JSON.parse((stdout || '').trim()); } catch (e) { data = null; }
     if (!data) return { success: false, message: '无法解析还原点数据' };
@@ -3177,16 +3364,16 @@ const STARTUP = require('./src/scripts-powershell/startup-scripts');
 
 // 扫描启动项（注册表 Run/RunOnce、启动文件夹、登录/开机计划任务）
 // v3.2.1：优先读持久缓存（首次扫描后一直读文件，refresh=true 才真正重扫）；
-// 缓存命中同样恢复快照（lastStartupSnapshot），保证启停/删除的白名单校验可用
+// 缓存命中同样恢复快照（startupSnapshots 按 sender.id 分槽），保证启停/删除的白名单校验可用
 handleSafe('startup:scan', async (event, { refresh = false } = {}) => {
   if (!refresh) {
     const cached = loadScanCache('startup-scan.json');
     if (cached) {
-      lastStartupSnapshot = snapshotById(cached.data);
+      startupSnapshots.set(event.sender.id, snapshotById(cached.data));
       return { success: true, data: cached.data, cached: true, cachedAt: cached.timestamp };
     }
   }
-  lastStartupSnapshot = new Map();
+  startupSnapshots.set(event.sender.id, new Map());
   const scriptPath = writeTempScript(STARTUP.scan());
   try {
     const { stdout } = await runPowerShellFile(scriptPath, { timeout: 45000 });
@@ -3197,7 +3384,7 @@ handleSafe('startup:scan', async (event, { refresh = false } = {}) => {
       return { success: false, message: '无法解析启动项数据' };
     }
     const normalized = data.map((item, index) => ({ ...item, id: String(item.id || item.regPath || item.filePath || item.taskName || index) }));
-    lastStartupSnapshot = snapshotById(normalized);
+    startupSnapshots.set(event.sender.id, snapshotById(normalized));
     saveScanCache('startup-scan.json', normalized);
     return { success: true, data: normalized };
   } catch (e) {
@@ -3210,9 +3397,15 @@ handleSafe('startup:scan', async (event, { refresh = false } = {}) => {
 
 // 启停启动项（enable=true 启用 / false 禁用；注册表与文件夹项可逆，计划任务 Disable/Enable）
 handleSafe('startup:toggle', async (event, { items = [], enable = true } = {}) => {
-  const safeItems = validateSnapshotItems(items, lastStartupSnapshot);
+  const safeItems = validateSnapshotItems(items, startupSnapshots.get(event.sender.id) || new Map());
   if (!safeItems) return { success: false, message: '启动项不是最近一次扫描结果，已拒绝执行' };
   if (!Array.isArray(items) || !items.length) return { success: false, message: '缺少启动项' };
+  // SU-1（S4，2026-09-15）：HKLM / 所有用户作用域的启动项操作必须管理员，
+  // 无权限直接拒绝并给提权入口，避免静默失败只在详情里显示"失败"。
+  const hasHklm = safeItems.some(it => it && (it.hive === 'HKLM' || it.hive === 'HKLM32' || it.scope === 'HKLM'));
+  if (hasHklm && !(await isAdmin())) {
+    return { success: false, needAdmin: true, message: '涉及「所有用户」的启动项需要管理员权限，请先提权' };
+  }
   const scriptPath = writeTempScript(STARTUP.toggle(safeItems, !!enable));
   try {
     writeLog('info', `启动项${enable ? '启用' : '禁用'} ${safeItems.length} 项`);
@@ -3231,9 +3424,14 @@ handleSafe('startup:toggle', async (event, { items = [], enable = true } = {}) =
 
 // 删除启动项（先备份到 %APPDATA%\Trim\startup-backup\deleted 再删除）
 handleSafe('startup:delete', async (event, { items = [] } = {}) => {
-  const safeItems = validateSnapshotItems(items, lastStartupSnapshot);
+  const safeItems = validateSnapshotItems(items, startupSnapshots.get(event.sender.id) || new Map());
   if (!safeItems) return { success: false, message: '启动项不是最近一次扫描结果，已拒绝执行' };
   if (!Array.isArray(items) || !items.length) return { success: false, message: '缺少启动项' };
+  // SU-1（S4，2026-09-15）：HKLM / 所有用户作用域的启动项操作必须管理员
+  const hasHklm = safeItems.some(it => it && (it.hive === 'HKLM' || it.hive === 'HKLM32' || it.scope === 'HKLM'));
+  if (hasHklm && !(await isAdmin())) {
+    return { success: false, needAdmin: true, message: '涉及「所有用户」的启动项需要管理员权限，请先提权' };
+  }
   const scriptPath = writeTempScript(STARTUP.remove(safeItems));
   try {
     writeLog('info', `启动项删除 ${safeItems.length} 项`);
@@ -3280,8 +3478,16 @@ handleSafe('startup:add', async (event, _payload = {}) => {
     const name = path.basename(filePath);
     const scriptPath = writeTempScript(STARTUP.add(filePath, name));
     try {
-      const { stderr, code } = await runPowerShellFile(scriptPath, { timeout: 20000 });
+      const { stdout, stderr, code } = await runPowerShellFile(scriptPath, { timeout: 20000 });
       if (code !== 0) return { success: false, message: stderr || '写入注册表失败' };
+      // SU-4（2026-09-15）：ADD_SCRIPT 在「同名启动项已存在」时输出 `EXISTS:<原值>`（不再静默覆盖）。
+      // 原实现丢弃 stdout 只判退出码 → 冲突时仍报成功（实际未写任何项），用户被假成功误导。
+      // 改为识别并存档冲突，渲染层据此给出友好提示。
+      const out = (stdout || '').trim();
+      if (out.startsWith('EXISTS:')) {
+        writeLog('warn', `添加启动项冲突: ${name} 已存在，未重复添加`);
+        return { success: false, exists: true, name, message: '同名的开机启动项已存在，未重复添加' };
+      }
       writeLog('info', `添加启动项: ${filePath}`);
       return { success: true, path: filePath, name };
     } finally {
@@ -3814,13 +4020,115 @@ async function callBaiduWebSummary({ url, key, model, instruction, query, timeou
   }
 }
 
+// ==================== 内置 PowerShell 7 运行时（v3.3.x，方案 A 兜底） ====================
+// 状态机：'idle' | 'extracting' | 'ready' | 'error'
+let pwshRuntimeStatus = 'idle';
+let pwshRuntimeMessage = '';
+let pwshRuntimeProgress = 0;
+let pwshPreparePromise = null; // 解压 Promise，供 IPC 查询/等待
+
+function setPwshStatus(status, { message = '', progress = null } = {}) {
+  pwshRuntimeStatus = status;
+  if (message) pwshRuntimeMessage = message;
+  if (progress !== null) pwshRuntimeProgress = progress;
+  // 广播到所有渲染进程（首页/设置页可能都在展示状态）
+  for (const win of BrowserWindow.getAllWindows()) {
+    try { win.webContents.send('pwsh:status', getPwshStatusSnapshot()); } catch (_) {}
+  }
+}
+
+function getPwshStatusSnapshot() {
+  return {
+    status: pwshRuntimeStatus,
+    message: pwshRuntimeMessage,
+    progress: pwshRuntimeProgress,
+    version: PWSH_RUNTIME.PWSH_VERSION,
+    path: powerShell7Path || '',
+  };
+}
+
+// 启动期 pwsh 探测 + 必要时后台异步解压内置运行时。
+// 设计原则：先建窗口再后台准备（坑 7：不解压阻塞 createWindow）；
+// 有用户自装版本直接用；全落空才解压内置 zip（方案 A 兜底）。
+async function ensurePwshRuntimeAsync() {
+  if (pwshPreparePromise) return pwshPreparePromise;
+  pwshPreparePromise = (async () => {
+    try {
+      // 先探测：命中任意候选（含已就绪的内置版）直接返回
+      const existing = resolvePowerShell7Path();
+      setPwshStatus('ready', { message: `PowerShell 7 就绪：${existing}`, progress: 100 });
+      return { status: 'ready', path: existing };
+    } catch (e) {
+      if (e.code !== 'PWSH7_PREPARING') {
+        // 连内置 zip 都没有：如实报 error
+        setPwshStatus('error', { message: e.message });
+        throw e;
+      }
+    }
+    // 需要解压内置运行时
+    setPwshStatus('extracting', { message: '正在准备 PowerShell 7 运行环境（首次启动约需 10-30 秒）', progress: 0 });
+    try {
+      const result = await PWSH_RUNTIME.extractBundledRuntime({
+        isPwsh7Executable: (exe, timeout) => isPowerShell7Executable(exe, timeout),
+        onProgress: (p) => {
+          pwshRuntimeProgress = p;
+          for (const win of BrowserWindow.getAllWindows()) {
+            try { win.webContents.send('pwsh:status', getPwshStatusSnapshot()); } catch (_) {}
+          }
+        },
+      });
+      if (result.status === 'already-ready' || result.status === 'ready') {
+        // 解压完成：直接赋值并解除负缓存（绕过下次重探测）
+        powerShell7Path = result.exe;
+        pwshProbeError = null;
+        pwshProbeFailedAt = 0;
+        setPwshStatus('ready', { message: `PowerShell 7 已就绪（内置 ${PWSH_RUNTIME.PWSH_VERSION}）`, progress: 100 });
+        writeLog('info', `内置 PowerShell 7 运行时就绪: ${result.exe}`);
+        // 顺手清理旧版本（保留当前 + 上一版）
+        try { PWSH_RUNTIME.cleanupOldVersions([result.version]); } catch (_) {}
+        return { status: 'ready', path: result.exe };
+      }
+      if (result.status === 'already-extracting') {
+        setPwshStatus('extracting', { message: '正在准备运行环境…', progress: pwshRuntimeProgress });
+        return { status: 'extracting' };
+      }
+      throw new Error('未知解压状态');
+    } catch (err) {
+      setPwshStatus('error', { message: err.message });
+      writeLog('error', `内置 PowerShell 7 运行时准备失败: ${err.message}`);
+      throw err;
+    }
+  })();
+  return pwshPreparePromise;
+}
+
+// ==================== 内置 PowerShell 7 运行时 IPC ====================
+// pwsh:status：只读查询当前运行时状态（含路径、版本、进度）
+handleSafe('pwsh:status', async () => {
+  return { success: true, data: getPwshStatusSnapshot() };
+});
+
+// pwsh:prepare：手动触发准备（用户在设置页点了「立即准备」等场景）
+handleSafe('pwsh:prepare', async () => {
+  try {
+    const result = await ensurePwshRuntimeAsync();
+    return { success: true, data: { status: result.status, path: result.path || '' } };
+  } catch (e) {
+    return { success: false, message: e.message, data: getPwshStatusSnapshot() };
+  }
+});
+
 function loadAiSettings() {
   try {
     if (fs.existsSync(SETTINGS_FILE)) {
       const s = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
        if (s && typeof s === 'object') return SECURITY.decryptSettings(s, safeStorage);
     }
-  } catch (e) {}
+  } catch (e) {
+    // SET-2（2026-09-15）：与 loadAppearance 一致，损坏先隔离再降级，
+    // 防止后续每次启动都抛错并可能影响设置页初始化。
+    quarantineFile(SETTINGS_FILE, e);
+  }
   return {};
 }
 
@@ -4451,12 +4759,15 @@ async function collectSystemCheckup() {
   return checkupInflight;
 }
 
-// v3.2.1：体检结果持久缓存（用户裁定：仅首次扫描一次存 checkup.json，之后一直读文件，
-// 页面「重新体检」refresh=true 才重扫并覆盖）——内存 5 分钟缓存退役，磁盘缓存无过期
+// v3.2.1：体检结果持久缓存；checkbox「重新体检」refresh=true 强扫并覆盖。
+// F1（2026-09-15）：此前磁盘缓存永不过期，auto-run 命中旧"正常"结果在系统恶化时仍显示正常。
+// 现加 TTL：缓存过期（默认 30 分钟）自动重扫，避免把旧数据冒充当前状态。
+const CHECKUP_CACHE_TTL_MS = 30 * 60 * 1000;
 handleSafe('overview:checkup', async (event, { refresh = false } = {}) => {
   if (!refresh) {
     const cached = loadScanCache('checkup.json');
-    if (cached) {
+    // 缓存存在且未过期才直接返回；过期则落入下方重扫，返回最新真实结果
+    if (cached && Date.now() - cached.timestamp < CHECKUP_CACHE_TTL_MS) {
       return { success: true, data: { checks: cached.data, at: cached.timestamp }, cached: true };
     }
   }
@@ -4470,14 +4781,31 @@ handleSafe('overview:checkup', async (event, { refresh = false } = {}) => {
 handleSafe('diskbench:run', async (event, options = {}) => {
   const requestedPath = String(options?.path || '').trim();
   if (!requestedPath || !fs.existsSync(requestedPath)) return { success: false, message: '测速路径不存在' };
+  let resolved;
   try {
     const stat = fs.lstatSync(requestedPath);
     if (!stat.isDirectory() || stat.isSymbolicLink()) return { success: false, message: '测速路径必须是普通目录' };
+    resolved = path.resolve(requestedPath);
   } catch (_) {
     return { success: false, message: '测速路径不可访问' };
   }
+
+  // SP-1（2026-09-15）：测速目标限定在用户可写安全区（随包在任意可写甚至系统目录
+  // 写约三百多 MB 会污染系统盘/敏感目录）。白名单 = 用户主目录 + TEMP + AppData。
+  if (!isDiskBenchAllowedPath(resolved)) {
+    writeLog('warn', `磁盘测速路径不在白名单内，已拒绝: ${resolved}`);
+    return { success: false, message: '测速路径受限，请选择用户目录（如下载、文档、桌面）或临时目录下的路径' };
+  }
+
+  // SP-1：剩余空间预检（避免写入中途耗尽磁盘；statfs 失败则跳过，不阻塞）
+  const freeBytes = getPathFreeBytes(resolved);
+  if (freeBytes !== null && freeBytes < DISKBENCH_MIN_FREE_BYTES) {
+    writeLog('warn', `磁盘测速目标盘剩余空间不足: ${resolved} free=${freeBytes}`);
+    return { success: false, message: '目标磁盘剩余空间不足，请选择空间更大的盘符（需至少约 1 GB）' };
+  }
+
   const safeOptions = {
-    path: path.resolve(requestedPath),
+    path: resolved,
     blockSize: [4096, 65536, 1048576].includes(Number(options?.blockSize)) ? Number(options.blockSize) : 1048576,
     queueDepth: 1,
     threads: 1,
@@ -4929,12 +5257,40 @@ function readRealtimeReports() {
   return out;
 }
 
+// SP-2（2026-09-15）：report-save 对渲染层 data 做 schema/体量校验，拒绝非网速报告结构。
+// 防恶意/损坏 payload 直接落盘污染报告缓存；渲染层真实结构见 realtime.js toggleRecord：
+// { createdAt, adapter, durationSec, maxDown/maxUp/minDown/minUp/avgDown/avgUp, samples[] }。
+const REALTIME_REPORT_MAX_SAMPLES = 1e6; // 超长记录防爆盘
+function validateRealtimeReport(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return { ok: false, why: '报告必须是对象' };
+  const numeric = ['durationSec', 'maxDown', 'maxUp', 'minDown', 'minUp', 'avgDown', 'avgUp'];
+  for (const k of numeric) {
+    const v = Number(data[k]);
+    if (!Number.isFinite(v) || v < 0) return { ok: false, why: `字段 ${k} 非法` };
+  }
+  if (typeof data.createdAt !== 'string' || !data.createdAt) return { ok: false, why: 'createdAt 非法' };
+  const samples = data.samples;
+  if (!Array.isArray(samples)) return { ok: false, why: 'samples 非法' };
+  if (samples.length > REALTIME_REPORT_MAX_SAMPLES) return { ok: false, why: '样本过多（超出上限）' };
+  for (const s of samples.slice(0, REALTIME_REPORT_MAX_SAMPLES)) {
+    if (!s || typeof s !== 'object' || !Number.isFinite(Number(s.t)) || !Number.isFinite(Number(s.down)) || !Number.isFinite(Number(s.up))) {
+      return { ok: false, why: '样本字段非法' };
+    }
+  }
+  return { ok: true };
+}
+
 handleSafe('realtime:report-save', (event, { data } = {}) => {
+  const check = validateRealtimeReport(data);
+  if (!check.ok) {
+    writeLog('warn', `拒绝保存网速报告（schema 校验失败）: ${check.why}`);
+    return { success: false, message: `报告数据非法，未保存（${check.why}）` };
+  }
   try {
     ensureRealtimeReportDir();
     cleanupRealtimeReports();
     const name = `realtime-${Date.now()}.json`;
-    SECURITY.atomicWriteJson(path.join(REALTIME_REPORT_DIR, name), data || {});
+    SECURITY.atomicWriteJson(path.join(REALTIME_REPORT_DIR, name), data);
     return { success: true, name };
   } catch (e) {
     writeLog('error', `保存网速报告失败: ${e.message}`);
@@ -5008,7 +5364,9 @@ handleSafe('memory:clean', async (event, { items = [] } = {}) => {
   }
 });
 
-handleSafe('memory:processes', async () => {
+// M-4（2026-09-15，S3）：进程快照按 sender.id 分槽，多窗口并发读进程列表互不串台；
+// memory:kill 的「最近一次扫描」白名单校验只认本窗口最近一次的 processSnapshots 槽。
+handleSafe('memory:processes', async (event) => {
   const scriptPath = writeTempScript(MEMORY_SCRIPT.PROCESSES_SCRIPT);
   try {
     const { stdout, code, timedOut } = await runPowerShellFile(scriptPath, { timeout: 20000 });
@@ -5017,9 +5375,9 @@ handleSafe('memory:processes', async () => {
     try {
       const data = JSON.parse(stdout.trim());
       const processes = Array.isArray(data) ? data : (data ? [data] : []);
-      lastProcessSnapshot = new Map(processes
+      processSnapshots.set(event.sender.id, new Map(processes
         .filter(p => Number.isInteger(Number(p.Id)) && Number(p.Id) > 0)
-        .map(p => [Number(p.Id), { Id: Number(p.Id), ProcessName: String(p.ProcessName || ''), Path: String(p.Path || '') }]));
+        .map(p => [Number(p.Id), { Id: Number(p.Id), ProcessName: String(p.ProcessName || ''), Path: String(p.Path || '') }])));
       return { success: true, processes };
     } catch (e) {
       return { success: false, message: '解析进程列表失败' };
@@ -5031,11 +5389,36 @@ handleSafe('memory:processes', async () => {
   }
 });
 
+// 审查 PM-1（2026-09-15）：结束进程的主进程侧二次拦截 —— 渲染层过滤可被绕过，
+// 真正的安全边界必须在主进程。黑名单只拦「结束即蓝屏/系统失能」的核心进程；
+// 另加自我防护：绝不结束 Trim 自身（含其子进程），否则用户点一下即「应用自尽」。
+const CRITICAL_PROCESS_NAMES = new Set([
+  'system', 'idle', 'registry', 'memory compression', 'secure system',
+  'smss', 'csrss', 'wininit', 'winlogon', 'services', 'lsass', 'lsaiso',
+  'svchost', 'fontdrvhost', 'dwm', 'sihost', 'ctfmon', 'explorer',
+  'audiodg', 'wudfhost', 'spoolsv', 'searchindexer', 'shellexperiencehost',
+  'startmenuexperiencehost', 'taskhostw', 'runtimebroker', 'sppsvc',
+  'wmiprvse', 'dllhost', 'securityhealthservice', 'securityhealthsystray',
+  'msmpeng', 'nissrv', 'systemsettings', 'applicationframehost', 'conhost',
+  'logonui', 'userinit', 'msiexec', 'trustedinstaller', 'tiworker',
+  'backgroundtaskhost', 'textinputhost', 'useroobebroker'
+]);
+function isCriticalProcessName(name) {
+  const n = String(name || '').toLowerCase().replace(/\.exe$/, '').trim();
+  return CRITICAL_PROCESS_NAMES.has(n);
+}
+
 handleSafe('memory:kill', async (event, { pid } = {}) => {
   const n = Number(pid);
   if (!Number.isInteger(n) || n <= 0) return { success: false, message: '无效的进程 ID' };
-  const known = lastProcessSnapshot.get(n);
+  // 自我防护：Trim 自身进程一律拒绝（无论渲染层怎么传）
+  if (n === process.pid) return { success: false, message: '不能结束 Trim 自身进程' };
+  const known = (processSnapshots.get(event.sender.id) || new Map()).get(n);
   if (!known) return { success: false, message: '进程不是最近一次扫描结果，已拒绝结束' };
+  // 关键进程黑名单：系统核心进程禁止结束（前端只读态之外的最终防线）
+  if (isCriticalProcessName(known.ProcessName)) {
+    return { success: false, message: `系统关键进程 ${known.ProcessName} 已受保护，不能结束` };
+  }
   const scriptPath = writeTempScript(MEMORY_SCRIPT.killScript(n, known.ProcessName));
   try {
     const { stdout, code, timedOut } = await runPowerShellFile(scriptPath, { timeout: 15000 });
@@ -5055,6 +5438,11 @@ handleSafe('memory:kill', async (event, { pid } = {}) => {
 
 // 顽固软件专杀：一次性结束 MuMu/UU远程/抖音/剪映/WPS/微软电脑管家 的后台常驻与守护进程
 handleSafe('memory:stubborn-kill', async (event) => {
+  // M-3（S4，2026-09-15）：批量结束进程属于特权操作，未提权时静默 no-op 会误导用户。
+  // 统一走 elevate 握手：无权限直接返回 needAdmin，由渲染层触发提权流程。
+  if (!(await isAdmin())) {
+    return { success: false, needAdmin: true, message: '顽固软件专杀需要管理员权限，请先提权' };
+  }
   const scriptPath = writeTempScript(MEMORY_SCRIPT.STUBBORN_KILL_SCRIPT);
   try {
     const { stdout, code, timedOut } = await runPowerShellFile(scriptPath, { timeout: 30000 });
@@ -5076,13 +5464,20 @@ handleSafe('memory:stubborn-kill', async (event) => {
 // 迁移至此，与 memory:stubborn-kill（立即结束进程）构成同一张「顽固软件治理」卡片的两层。
 // 属持久化策略（改服务启动类型 / 删更新任务），不提供自动还原，与优化项时代语义一致。
 handleSafe('memory:stubborn-block', async (event) => {
+  // M-3（S4，2026-09-15）：改服务启动类型 / 删计划任务都需要管理员权限
+  if (!(await isAdmin())) {
+    return { success: false, needAdmin: true, message: '顽固软件自启阻断需要管理员权限，请先提权' };
+  }
   const scriptPath = writeTempScript(MEMORY_SCRIPT.STUBBORN_BLOCK_SCRIPT);
   try {
     const { stdout, code, timedOut } = await runPowerShellFile(scriptPath, { timeout: 60000 });
     if (timedOut) return { success: false, message: '顽固软件自启阻断超时' };
     if (code !== 0) return { success: false, message: '顽固软件自启阻断执行失败' };
     try {
-      return { success: true, data: JSON.parse(stdout.trim()) };
+      const data = JSON.parse(stdout.trim());
+      // M-1（2026-09-15）：单项失败（failedCount>0）不再无条件报绿，如实降级
+      const failed = Number(data.failedCount) || 0;
+      return { success: failed === 0, partial: failed > 0, data };
     } catch (e) {
       return { success: false, message: '解析自启阻断结果失败' };
     }
@@ -5152,7 +5547,9 @@ handleSafe('paths:scan', async () => {
         if (typeof value === 'string' && value) persisted[key] = value;
         if (Array.isArray(value)) persisted[key] = value;
       }
-      persisted.lastScanAt = data.scannedAt || new Date().toISOString();
+      // SET-5（2026-09-15）：时间戳统一写 scannedAt。原写 lastScanAt，而渲染层/
+      // paths:load 只读 scannedAt → 重启后页脚恒显「尚未扫描」（键名两侧不一致）。
+      persisted.scannedAt = data.scannedAt || new Date().toISOString();
       savePathsConfig(persisted);
       writeLog('info', '路径扫描完成');
       return { success: true, data };
@@ -5171,7 +5568,21 @@ handleSafe('paths:load', () => {
 
 // 保存单个路径
 handleSafe('paths:save', (event, { key, value }) => {
-  const allowedKeys = new Set(['qqFileDir', 'wechatFileDir', 'neteaseCacheDir', 'wechatCacheDir', 'douyinCacheDir', 'qqCacheDir']);
+  // 审查 SET-1（2026-09-15）：此白名单必须与渲染层 pathbinding.js 的 GROUPS 全集
+  // （ALL_KEYS = 4 组 10 项）+ 扫描时间戳 scannedAt 保持同源。原实现漏了 4 个「安装路径」
+  // key，导致设置页可编辑却静默保存失败（readme.md:140 的承诺与实现矛盾）。
+  const allowedKeys = new Set([
+    // QQ
+    'qqInstallPath', 'qqFileDir', 'qqCacheDir',
+    // 微信
+    'wechatInstallPath', 'wechatFileDir', 'wechatCacheDir',
+    // 抖音
+    'douyinInstallPath', 'douyinCacheDir',
+    // 网易云音乐
+    'neteaseMusicInstallPath', 'neteaseCacheDir',
+    // 自动扫描时间戳（pathbinding.autoScan 会回写）
+    'scannedAt'
+  ]);
   if (!allowedKeys.has(key) || typeof value !== 'string' || value.length > 1024 || value.includes('\0')) {
     return { success: false, message: '路径配置无效' };
   }
@@ -5694,12 +6105,26 @@ handleSafe('peripheral:query', async () => {
 });
 
 // 应用三组调优值（白名单校验；-1/缺省表示该组不修改）
+// PE-3（2026-09-15）：PERIPHERAL_ALLOWED 为主进程**唯一权威**合法值集合（渲染层 GROUPS 仅供 UI 展示，
+// 判决一律以此为准）。白名单未命中的取值不再静默降级为「跳过」——否则在渲染层新增合法选项却漏更
+// 此集合时，新选项点了毫无反应、UI 却当已应用（假成功）。改为如实拒绝并提示是哪组取值非法。
 handleSafe('peripheral:apply', async (event, options = {}) => {
+  // PE-4（S4，2026-09-15）：外设优化三项全部写 HKLM，无管理员权限直接拒绝并给提权入口。
+  if (!(await isAdmin())) {
+    return { success: false, needAdmin: true, message: '外设优化需要管理员权限，请先提权' };
+  }
   const filtered = {};
+  const invalid = [];
   for (const key of ['win32', 'keyboard', 'mouse']) {
-    const v = Number(options[key]);
-    if (PERIPHERAL_ALLOWED[key].includes(v)) filtered[key] = v;
-    else filtered[key] = -1;
+    const raw = options[key];
+    // null / undefined / 空串 = 该组不修改；显式数字才参与白名单判决
+    const v = (raw === undefined || raw === null || raw === '') ? null : Number(raw);
+    if (v === null) { filtered[key] = -1; continue; }
+    if (Number.isInteger(v) && PERIPHERAL_ALLOWED[key].includes(v)) { filtered[key] = v; }
+    else { invalid.push(key); }
+  }
+  if (invalid.length) {
+    return { success: false, message: `包含未获允许的取值（${invalid.join('、')}），已拒绝本次修改` };
   }
   if (Object.values(filtered).every(v => v === -1)) {
     return { success: false, message: '没有需要应用的设置' };
@@ -5719,8 +6144,10 @@ handleSafe('peripheral:apply', async (event, options = {}) => {
 // ==================== 文件清理 IPC ====================
 // 安全约束：所有读图 / 删除操作必须限定在最近一次成功扫描的根目录（白名单）内，
 // 防止渲染进程被诱导后对任意路径执行读写（纵深防御，渲染层已有限制）。
-let lastFileCleanRoot = null; // 最近一次 fileclean:scan 成功返回的扫描根目录
-let lastFileCleanFiles = new Set(); // 最近一次扫描明确列出的文件（防止在根目录内任意指定路径）
+// 审查 FC-1（2026-09-15）：原为模块级「单槽位」全局（lastFileCleanRoot / lastFileCleanFiles），
+// QQ 与微信依次扫描会互相覆盖 → 「QQ+微信同时清理」时先扫的那一类全量报「路径不在扫描范围内」。
+// 改为按 type 分槽（Map），执行侧在全部槽位内取并集校验（合并多根语义）。
+const fileCleanScopes = new Map(); // type -> { root: string, files: Set<string> }
 
 // 校验路径是否位于允许的扫描根目录下（防止目录穿越）
 function isPathUnderRoot(targetPath, root) {
@@ -5747,8 +6174,18 @@ function isPathUnderRoot(targetPath, root) {
   return true;
 }
 
+// 路径是否命中「任一」已扫描槽位（根目录 + 明确列出的文件双重校验，合并多根语义）
+function isInAnyFileCleanScope(targetPath) {
+  if (!targetPath) return false;
+  const norm = path.resolve(String(targetPath)).toLowerCase();
+  for (const scope of fileCleanScopes.values()) {
+    if (isPathUnderRoot(targetPath, scope.root) && scope.files.has(norm)) return true;
+  }
+  return false;
+}
+
 // 扫描 QQ/微信 文件目录中的垃圾文件（缓存接收图片、视频等）
-handleSafe('fileclean:scan', async (event, { type, customPath }) => {
+handleSafe('fileclean:scan', async (event, { type, customPath, total, doneBase }) => {
   const config = loadPathsConfig();
   let scanPath = '';
 
@@ -5776,7 +6213,14 @@ handleSafe('fileclean:scan', async (event, { type, customPath }) => {
 
   writeLog('info', `文件清理扫描: ${type} -> ${scanPath}`);
 
-  // 使用 Node.js 直接扫描，避免 PowerShell 开销
+  // FC-4（2026-09-15）：原同步 fs.readdirSync/statSync 递归跑在主进程，大目录（Tencent Files / xwechat_files
+  // 常有数万项）期间整个事件循环停摆，所有窗口/IPC 一起卡死。改 fs.promises 逐项 await，
+  // 迭代用工作队列 BFS（递归语义等价：目录内容先处理、子目录随后，深度约束不变），
+  // 并按 DIR_COST/FILE_COST 成本折算推送 cleanup:scan-progress，与常规条目共用同一进度条。
+  const sender = event.sender;
+  // 显式协议参数（渲染层传入）：total = 本次扫描总项数（regular + fileclean），doneBase = 此前已完成项数
+  const fcTotal = Number.isFinite(total) && total > 0 ? Number(total) : 0;
+  const fcDoneBase = Number.isFinite(doneBase) && doneBase >= 0 ? Number(doneBase) : 0;
   try {
     const junkFiles = [];
     const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg'];
@@ -5784,59 +6228,95 @@ handleSafe('fileclean:scan', async (event, { type, customPath }) => {
     const cacheExtensions = ['.tmp', '.log', '.bak', '.cache'];
     const maxFiles = 2000;
 
-    function scanDir(dir, depth) {
-      if (depth > 4 || junkFiles.length >= maxFiles) return;
-      let entries;
-      try {
-        entries = fs.readdirSync(dir, { withFileTypes: true });
-      } catch (e) { return; }
+    // 进度成本折算（无先验总数）：目录每枚举一个 DIRECT_COST，文件 STAT_COST；dedicated 参数
+    // 语义 =「如此折算时预期总成本」。提前到达 dedicated 后进入渐近逼近（done = total - total/(ratio)），
+    // 保证 UI 读数只升不减且永远留有余地，扫完一次性 100%。
+    const DIR_COST = 1;
+    const FILE_COST = 12;
+    const dedicated = (type === 'qq' ? 2200 : 3400);
+    let costDone = 0;
+    let lastPush = 0;
 
-      for (const entry of entries) {
-        if (junkFiles.length >= maxFiles) break;
-        const fullPath = path.join(dir, entry.name);
-        try {
-          if (entry.isSymbolicLink()) continue;
-          if (entry.isDirectory()) {
-            // 检查是否是缓存目录
-            const lowerName = entry.name.toLowerCase();
-            if (lowerName.includes('cache') || lowerName.includes('temp') || lowerName.includes('tmp') ||
-                lowerName.includes('image') || lowerName.includes('video') || lowerName.includes('file') ||
-                lowerName.includes('recv') || lowerName.includes('recv0') || lowerName.includes('msg')) {
-              scanDir(fullPath, depth + 1);
-            } else if (depth < 2) {
-              scanDir(fullPath, depth + 1);
-            }
-          } else if (entry.isFile()) {
-            const ext = path.extname(entry.name).toLowerCase();
-            let category = null;
-            if (imageExtensions.includes(ext)) category = 'image';
-            else if (videoExtensions.includes(ext)) category = 'video';
-            else if (cacheExtensions.includes(ext)) category = 'cache';
-            else if (entry.name.endsWith('.dat') || entry.name.endsWith('.db') || entry.name.endsWith('.adb')) category = 'data';
-
-            if (category) {
-              let stat;
-              try { stat = fs.statSync(fullPath); } catch (e) { continue; }
-              junkFiles.push({
-                path: fullPath,
-                name: entry.name,
-                size: stat.size,
-                category,
-                ext,
-                mtime: stat.mtime.toISOString()
-              });
-            }
-          }
-        } catch (e) {}
+    function pushProgress(force) {
+      if (!fcTotal || !sender || sender.isDestroyed()) return;
+      const ratio = costDone / dedicated;
+      const inner = Math.round(ratio < 1 ? ratio * 96 : 96 + (1 - 1 / ratio) * 3);
+      const done = fcDoneBase + (fcTotal - fcDoneBase) * (inner / 100);
+      const now = Date.now();
+      if (force || now - lastPush > 120) {
+        lastPush = now;
+        sender.send('cleanup:scan-progress', {
+          done: Math.min(done, fcTotal - 0.01),
+          total: fcTotal,
+          item: { id: '__fileclean:' + type, name: type === 'qq' ? 'QQ 文件' : '微信文件' }
+        });
       }
     }
 
-    scanDir(scanPath, 0);
+    async function scanRoot() {
+      const queue = [{ dir: path.resolve(scanPath), depth: 0 }];
+      while (queue.length && junkFiles.length < maxFiles) {
+        const { dir, depth } = queue.shift();
+        if (depth > 4) continue;
+        let entries;
+        try {
+          entries = await fs.promises.readdir(dir, { withFileTypes: true });
+        } catch (e) { continue; }
+
+        for (const entry of entries) {
+          if (junkFiles.length >= maxFiles) break;
+          const fullPath = path.join(dir, entry.name);
+          try {
+            if (entry.isSymbolicLink()) continue;
+            if (entry.isDirectory()) {
+              const lowerName = entry.name.toLowerCase();
+              if (lowerName.includes('cache') || lowerName.includes('temp') || lowerName.includes('tmp') ||
+                  lowerName.includes('image') || lowerName.includes('video') || lowerName.includes('file') ||
+                  lowerName.includes('recv') || lowerName.includes('recv0') || lowerName.includes('msg')) {
+                queue.push({ dir: fullPath, depth: depth + 1 });
+              } else if (depth < 2) {
+                queue.push({ dir: fullPath, depth: depth + 1 });
+              }
+              costDone += DIR_COST;
+              pushProgress(false);
+            } else if (entry.isFile()) {
+              costDone += FILE_COST;
+              const ext = path.extname(entry.name).toLowerCase();
+              let category = null;
+              if (imageExtensions.includes(ext)) category = 'image';
+              else if (videoExtensions.includes(ext)) category = 'video';
+              else if (cacheExtensions.includes(ext)) category = 'cache';
+              else if (entry.name.endsWith('.dat') || entry.name.endsWith('.db') || entry.name.endsWith('.adb')) category = 'data';
+
+              if (category) {
+                let stat;
+                try { stat = await fs.promises.stat(fullPath); } catch (e) { continue; }
+                junkFiles.push({
+                  path: fullPath,
+                  name: entry.name,
+                  size: stat.size,
+                  category,
+                  ext,
+                  mtime: stat.mtime.toISOString()
+                });
+              }
+              pushProgress(false);
+            }
+          } catch (e) {}
+        }
+      }
+    }
+
+    await scanRoot();
+    pushProgress(true);
 
     const totalSize = junkFiles.reduce((s, f) => s + f.size, 0);
     writeLog('info', `文件清理扫描完成: ${type}, ${junkFiles.length} 个文件, ${totalSize} 字节`);
-    lastFileCleanRoot = path.resolve(scanPath);
-    lastFileCleanFiles = new Set(junkFiles.map(file => path.resolve(file.path).toLowerCase()));
+    // FC-1：按 type 分槽写入（同一 type 重扫只覆盖自身槽位，不冲掉其它类型的白名单）
+    fileCleanScopes.set(type, {
+      root: path.resolve(scanPath),
+      files: new Set(junkFiles.map(file => path.resolve(file.path).toLowerCase()))
+    });
     return { success: true, data: { files: junkFiles, totalSize, scanPath } };
   } catch (e) {
     writeLog('error', `文件清理扫描失败: ${e.message}`);
@@ -5850,7 +6330,7 @@ handleSafe('fileclean:read-image', async (event, { filePath }) => {
     if (!filePath || !fs.existsSync(filePath)) {
       return { success: false, message: '文件不存在' };
     }
-    if (!isPathUnderRoot(filePath, lastFileCleanRoot) || !lastFileCleanFiles.has(path.resolve(filePath).toLowerCase())) {
+    if (!isInAnyFileCleanScope(filePath)) {
       return { success: false, message: '路径不在扫描范围内，已拒绝访问' };
     }
     const ext = path.extname(filePath).toLowerCase();
@@ -5879,7 +6359,7 @@ handleSafe('fileclean:delete-file', async (event, { filePath }) => {
     if (!filePath || !fs.existsSync(filePath)) {
       return { success: false, message: '文件不存在' };
     }
-    if (!isPathUnderRoot(filePath, lastFileCleanRoot) || !lastFileCleanFiles.has(path.resolve(filePath).toLowerCase())) {
+    if (!isInAnyFileCleanScope(filePath)) {
       return { success: false, message: '路径不在扫描范围内，已拒绝删除' };
     }
     const stat = fs.lstatSync(filePath);
@@ -5901,12 +6381,13 @@ handleSafe('fileclean:delete-file', async (event, { filePath }) => {
 handleSafe('fileclean:execute', async (event, { files }) => {
   if (!files || !files.length) return { success: false, message: '没有选中文件' };
   writeLog('info', `文件清理: ${files.length} 个文件`);
+  flushLogSync(); // 审查 FC-5/S9（2026-09-15）：批量删除前强制刷盘，崩溃不丢诊断日志
   let freed = 0, success = 0, failed = 0, recycledCount = 0;
   const details = [];
 
   for (const file of files) {
     try {
-      if (!file || !file.path || !isPathUnderRoot(file.path, lastFileCleanRoot) || !lastFileCleanFiles.has(path.resolve(file.path).toLowerCase())) {
+      if (!file || !file.path || !isInAnyFileCleanScope(file.path)) {
         failed++;
         details.push({ path: file && file.path, status: 'error', freed: 0, message: '路径不在扫描范围内，已拒绝删除' });
         continue;
@@ -5938,7 +6419,10 @@ handleSafe('fileclean:execute', async (event, { files }) => {
     .map(d => ({ path: d.path, kind: 'file', size: d.freed || 0, recycled: !!d.recycled })));
 
   writeLog('info', `文件清理完成: 释放 ${freed} 字节, ${success} 成功（回收站 ${recycledCount}）, ${failed} 失败${manifestPath ? ` 清单 ${path.basename(manifestPath)}` : ''}`);
-  return { success: failed === 0, data: { totalFreed: freed, success, failed, recycled: recycledCount, details, manifestPath } };
+  // 审查 FC-2/S5（2026-09-15）：success 语义改为「通道执行成功」，失败明细随 data 如实回传。
+  // 原 `success: failed===0` 会让渲染层（只判 success、无 else）整批丢弃统计——
+  // 文件被占用是常态，任一失败就看不到已释放量/明细，属结果错报。
+  return { success: true, data: { totalFreed: freed, success, failed, recycled: recycledCount, details, manifestPath } };
 });
 
 // ==================== 系统维护修复组 IPC（P2-16） ====================
@@ -5954,6 +6438,13 @@ handleSafe('maintenance:tasks', () => {
 handleSafe('maintenance:run', async (event, { taskId } = {}) => {
   if (!taskId) return { success: false, message: '缺少任务 ID' };
   if (maintenanceRunning) return { success: false, message: `已有维护任务在执行中（${maintenanceRunning}），请等待完成` };
+  // MA-2（S4，2026-09-15）：admin 标记的维护任务在服务端强制卡权限，
+  // 避免静默 no-op 后 UI 仍显示"完成"误导用户（SFC/DISM/WU 等都写系统目录）。
+  const taskList = MAINTENANCE_SCRIPT.list();
+  const taskMeta = taskList.find(t => t.id === taskId);
+  if (taskMeta && taskMeta.admin && !(await isAdmin())) {
+    return { success: false, needAdmin: true, message: '该维护任务需要管理员权限，请先提权' };
+  }
   let script;
   try {
     script = MAINTENANCE_SCRIPT.run(taskId);
@@ -6356,9 +6847,12 @@ const REDIST_HOST_WHITELIST = new Set([
 ]);
 const REDIST_MAX_BYTES = 300 * 1024 * 1024; // 单包上限兜底（防白名单主机被挂大文件）
 
-let runtimesSnapshot = null; // 最近一次采集的 items（快照校验依赖）
+// RT-4（S3，2026-09-15）：快照按 `sender.id(webContents 线程序号)` 分槽，改用 Map。
+// 原模块级单全局在「A 窗口扫描后、B 窗口并发重扫」时会把在途 install 的校验快照覆盖掉，
+// 导致 A 的 install 误报"该修复动作不在当前检测快照内"。分槽后各自保留最近一次采集结果。
+const runtimesSnapshots = new Map(); // sender.id -> items
 
-async function runRuntimesCollect() {
+async function runRuntimesCollect(senderId) {
   const scriptPath = writeTempScript(RUNTIMES_SCRIPT.status());
   try {
     const { stdout, code, stderr } = await runPowerShellFile(scriptPath, { timeout: 25000, diagOp: 'runtimes.collect' });
@@ -6366,7 +6860,7 @@ async function runRuntimesCollect() {
     const line = stdout.trim().split('\n').filter(l => l.trim().startsWith('{')).pop();
     const data = JSON.parse(line);
     if (!data || !Array.isArray(data.items)) return { success: false, message: '运行库检测结果格式异常' };
-    runtimesSnapshot = data.items;
+    runtimesSnapshots.set(senderId, data.items);
     if (code !== 0) writeLog('warn', `运行库检测退出码 ${code}`);
     return { success: true, data };
   } catch (e) {
@@ -6376,8 +6870,8 @@ async function runRuntimesCollect() {
   }
 }
 
-handleSafe('runtimes:collect', async () => {
-  return runRuntimesCollect();
+handleSafe('runtimes:collect', async (event) => {
+  return runRuntimesCollect(event.sender.id);
 });
 
 // 下载运行库安装包：来源白名单（含重定向终点）→ 流式进度 → SHA-256/尺寸双校验 → 原子入缓存
@@ -6391,7 +6885,12 @@ async function downloadRedist(actionId, sender) {
 
   const cacheDir = REDIST_CACHE_DIR;
   fs.mkdirSync(cacheDir, { recursive: true });
-  const cacheName = meta.sha256.slice(0, 12) + '-' + meta.url.split('/').pop().split('?')[0];
+  // RT-3（2026-09-15）：URL 以 `/` 结尾时，`split('/').pop()` 得空串 → cacheName 退化成
+  // `<sha12>-`，缺可辨识文件名且与解析异常条目碰撞。取路径最后一个非空段做文件名；
+  // 整条路径都空（异常 URL）则回退 actionId，保证缓存名恒非空、可读、可区分。
+  const lastSeg = (meta.url.split('?')[0].split('/').filter(Boolean).pop() || '').trim();
+  const filePart = /[a-zA-Z0-9._-]{1,64}\.[a-zA-Z0-9._-]{1,10}$/.test(lastSeg) ? lastSeg : `${actionId}.bin`;
+  const cacheName = meta.sha256.slice(0, 12) + '-' + filePart;
   const cachePath = path.join(cacheDir, cacheName);
 
   // 缓存命中：复验 hash 后直接复用（不重复下载）
@@ -6463,9 +6962,10 @@ async function downloadRedist(actionId, sender) {
 handleSafe('runtimes:install', async (event, { actionId } = {}) => {
   if (typeof actionId !== 'string' || actionId.length > 40) return { success: false, message: '参数不合法' };
   if (!RUNTIMES_SCRIPT.ALLOWED_ACTIONS.has(actionId)) return { success: false, message: '未知的修复动作' };
-  // 快照校验：该动作必须属于最近一次检测出的待修复项
-  const item = Array.isArray(runtimesSnapshot)
-    ? runtimesSnapshot.find(it => it && it.repair && it.repair.id === actionId)
+  // 快照校验：该动作必须属于**本窗口（sender）**最近一次检测出的待修复项（RT-4 分槽）
+  const snapshot = runtimesSnapshots.get(event.sender.id);
+  const item = Array.isArray(snapshot)
+    ? snapshot.find(it => it && it.repair && it.repair.id === actionId)
     : null;
   if (!item || !item.repair) return { success: false, message: '该修复动作不在当前检测快照内，请先重新扫描' };
   // 全部安装动作需要管理员；不走静默提权，交由渲染层 elevate:request 握手
@@ -6495,8 +6995,15 @@ handleSafe('runtimes:install', async (event, { actionId } = {}) => {
     writeLog('info', `运行库修复开始: ${actionId}`);
     try { sender.send('runtimes:install-progress', { phase: 'install', percent: 100 }); } catch (_) {}
     const { stdout, stderr, code } = await runPowerShellFile(scriptPath, { timeout: 600000, diagOp: 'runtimes.install.' + actionId });
-    const line = stdout.trim().split('\n').filter(l => l.trim().startsWith('@@RESULT@@')).pop();
-    const ok = line === '@@RESULT@@ok';
+    const lines = stdout.trim().split('\n').map(l => l.replace(/\r$/, ''));
+    const resultLine = lines.filter(l => l.startsWith('@@RESULT@@')).pop();
+    const ok = resultLine === '@@RESULT@@ok';
+    // RT-2（2026-09-15）：失败原因写在 stdout 的可读行里（stderr 多为空）。
+    // 主进程此前只取 stderr → UI 恒显"请查看日志"。现在取失败分支前最后一行普通输出。
+    const reason = ok ? '' : (() => {
+      const lastPlain = lines.filter(l => l && !l.startsWith('@@RESULT@@') && !l.startsWith('@@DIAG@@')).pop();
+      return lastPlain || stderr || '修复未成功，请查看日志';
+    })();
     // 修复后自动重跑检测，回传最新 items（渲染层直接刷新，不整页重扫）
     const collect = await runRuntimesCollect();
     const elapsed = Date.now() - started;
@@ -6506,7 +7013,7 @@ handleSafe('runtimes:install', async (event, { actionId } = {}) => {
       success: ok,
       items: collect.success ? collect.data.items : null,
       summary: collect.success ? collect.data.summary : null,
-      message: ok ? '' : (stderr || '修复未成功，请查看日志')
+      message: reason
     };
   } catch (e) {
     writeLog('error', `运行库修复异常: ${actionId} -> ${e.message}`);
@@ -6549,10 +7056,19 @@ app.whenReady().then(() => {
     const orphan = path.join(CLEANUP_SCRIPT.dataRulesDir(), 'rules.json.downloading');
     if (fs.existsSync(orphan)) { fs.unlinkSync(orphan); writeLog('info', '已清理上次规则更新残留的 .downloading'); }
   } catch (e) {}
+  // 启动期 pwsh 探测：用户自装版本命中直接记日志；全落空则后台异步解压内置运行时
   try {
     writeLog('info', `PowerShell 7: ${resolvePowerShell7Path()}`);
+    setPwshStatus('ready', { message: 'PowerShell 7 已就绪' });
   } catch (e) {
-    writeLog('error', e.message);
+    if (e.code === 'PWSH7_PREPARING') {
+      writeLog('info', '未检测到用户安装的 PowerShell 7，将在后台准备内置运行时');
+      // 后台异步解压，不阻塞窗口创建（坑 7）
+      ensurePwshRuntimeAsync().catch(() => {});
+    } else {
+      writeLog('error', e.message);
+      setPwshStatus('error', { message: e.message });
+    }
   }
   // 💭4 加固：本地页面不申请任何系统级 web 权限；仅放行剪贴板复制（cleanup/quickcmds 的 writeText），其余一律拒绝。
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {

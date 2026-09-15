@@ -894,15 +894,31 @@ fn cmd_empty(roots: &[String]) {
     for r in roots {
         let Some(p) = canonical(r) else { continue };
         // 根自身只作容器：一级子目录交并行，过滤忽略名单
-        let tops: Vec<PathBuf> = match fs::read_dir(&p) {
-            Ok(rd) => rd
-                .flatten()
-                .filter(|ent| matches!(ent.file_type(), Ok(t) if t.is_dir()) && !is_reparse(ent))
-                .map(|ent| ent.path())
-                .filter(|pp| !empty_ignored(&ignore, pp))
-                .collect(),
-            Err(_) => Vec::new(),
-        };
+        let mut tops: Vec<PathBuf> = Vec::new();
+        let mut root_files: Vec<PathBuf> = Vec::new();
+        if let Ok(rd) = fs::read_dir(&p) {
+            for ent in rd.flatten() {
+                match ent.file_type() {
+                    Ok(t) if t.is_dir() => {
+                        if !is_reparse(&ent) && !empty_ignored(&ignore, &ent.path()) {
+                            tops.push(ent.path());
+                        }
+                    }
+                    Ok(t) if t.is_file() => {
+                        // FD-6（2026-09-15）：根第一层的 0 字节文件此前被忽略（tops 只收子目录），
+                        // 与 duplicates 链路「根层文件也参与」的口径不一致。补上根层空文件。
+                        let sz = ent.metadata().map(|m| m.len()).unwrap_or(1);
+                        if sz == 0 {
+                            root_files.push(ent.path());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if !root_files.is_empty() {
+            empty_files.lock().unwrap().extend(root_files);
+        }
         tops.par_iter().for_each(|d| {
             let mut f: Vec<PathBuf> = Vec::new();
             let mut dd: Vec<PathBuf> = Vec::new();
@@ -1160,6 +1176,109 @@ fn lexically_normalize(p: &str) -> String {
 /// 对应主进程 isProtectedDeletePath：拒绝磁盘根与系统关键目录。
 /// 火眼眼审查 2026-09-14（M-1）：原实现仅 to_lowercase，`C:\Windows\..\..` 类相对组件
 /// 与 `\\?\` 前缀路径可绕过前缀匹配——先词法规范化再比对。
+///
+/// FD-2（2026-09-15）：保护清单改为「三端同源」——主进程把权威清单
+/// protectedRootsJson()({subtree,exact,anyDrive}，归一化小写绝对路径) 经
+/// `delete --protect <json>` 注入，Rust 不再自行硬编码。此前每端各自造清单，
+/// 7 向量对拍 5 项不一致：C:\Windows / Program Files / ProgramData / C:\$Recycle.Bin
+/// 被 Rust 过度拦截（制造 FD-1 的假失败），而 %APPDATA%\Trim 反向漏防。
+/// 判定语义逐字对应 JS isPathProtected，杜绝两侧口径漂移。
+#[derive(Default)]
+struct ProtectRoots {
+    subtree: Vec<String>,   // 整棵不许碰：目录本身及所有子孙
+    exact: Vec<String>,     // 根/祖先不许端掉；根本身之下缓存照常可清
+    any_drive: Vec<String>, // 任意盘符下同名目录整棵受保护（如每个分区的 System Volume Information）
+}
+
+static PROTECT_ROOT: std::sync::OnceLock<ProtectRoots> = std::sync::OnceLock::new();
+
+fn env_nonempty(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+// 未注入或解析失败时的保守回退：与 JS buildDefaultRoots 同源（仅依赖环境变量推导）。
+// 生产路径恒由主进程注入，此回退只为 CLI 手测兜底。
+impl ProtectRoots {
+    fn from_protect_json(text: &str) -> ProtectRoots {
+        match cleanup_scan::parse_json(text) {
+            Ok(v) => {
+                let mut out = ProtectRoots::default();
+                for (key, dst) in [
+                    ("subtree", &mut out.subtree),
+                    ("exact", &mut out.exact),
+                    ("anyDrive", &mut out.any_drive),
+                ] {
+                    if let Some(arr) = v.get(key).and_then(cleanup_scan::Json::as_arr) {
+                        for it in arr {
+                            if let Some(s) = it.as_str() {
+                                dst.push(s.to_ascii_lowercase());
+                            }
+                        }
+                    }
+                }
+                out
+            }
+            Err(_) => ProtectRoots::default_from_env(),
+        }
+    }
+
+    fn default_from_env() -> ProtectRoots {
+        let drive = env_nonempty("SystemDrive")
+            .unwrap_or_else(|| "C:".to_string())
+            .trim_end_matches(['\\', '/'])
+            .to_lowercase();
+        let home = env_nonempty("USERPROFILE").unwrap_or_else(|| format!("{}\\Users", drive));
+        let windir = env_nonempty("WINDIR").unwrap_or_else(|| format!("{}\\Windows", drive));
+        let programdata = env_nonempty("PROGRAMDATA").unwrap_or_else(|| format!("{}\\ProgramData", drive));
+        let appdata = env_nonempty("APPDATA").unwrap_or_else(|| format!("{}\\AppData\\Roaming", home));
+        let localappdata = env_nonempty("LOCALAPPDATA").unwrap_or_else(|| format!("{}\\AppData\\Local", home));
+        let norm = |s: String| s.trim_end_matches(['\\', '/']).to_lowercase();
+        ProtectRoots {
+            subtree: vec![
+                norm(format!("{}\\Trim", appdata)),
+                norm(format!("{}\\System32\\config", windir)),
+            ],
+            exact: vec![
+                norm(format!("{}\\Windows", drive)),
+                norm(env_nonempty("ProgramFiles").unwrap_or_else(|| format!("{}\\Program Files", drive))),
+                norm(env_nonempty("ProgramFiles(x86)").unwrap_or_else(|| format!("{}\\Program Files (x86)", drive))),
+                norm(programdata.clone()),
+                norm(home.clone()),
+                norm(format!("{}\\Desktop", home)),
+                norm(format!("{}\\Documents", home)),
+                norm(format!("{}\\Downloads", home)),
+                norm(appdata.clone()),
+                norm(localappdata),
+            ],
+            any_drive: vec!["system volume information".to_string()],
+        }
+    }
+}
+
+fn protect_roots() -> &'static ProtectRoots {
+    PROTECT_ROOT.get_or_init(ProtectRoots::default)
+}
+
+// 与 JS normalizeForCompare 对齐的短名 fail-closed：组件含 `~\d`（8.3 短名）即拒。
+// .NET GetFullPath 会把短名展开成磁盘长名、词法归一化不会，只有进比较前就拒两侧才等价。
+fn contains_short_name(norm: &str) -> bool {
+    let mut pending_tilde = false;
+    for c in norm.chars() {
+        if c == '~' {
+            pending_tilde = true;
+        } else if pending_tilde {
+            if c.is_ascii_digit() {
+                return true;
+            }
+            pending_tilde = false;
+        }
+    }
+    false
+}
+
 fn is_protected_path(p: &str) -> bool {
     let norm = lexically_normalize(p);
     if norm.is_empty() {
@@ -1172,28 +1291,37 @@ fn is_protected_path(p: &str) -> bool {
     if bytes.len() == 3 && bytes[1] == b':' && bytes[2] == b'\\' {
         return true; // 盘符根，例如 C:\
     }
-    // 审查v4-L1：根路径盘符跟随 SystemDrive（与主进程 isProtectedDeletePath 对齐），
-    // 原硬编码 C: 在系统目录装于其他盘时不设防
-    let sysdrive = std::env::var("SystemDrive")
-        .unwrap_or_else(|_| "C:".to_string())
-        .to_lowercase();
-    let roots = [
-        format!("{}\\windows", sysdrive),
-        format!("{}\\program files", sysdrive),
-        format!("{}\\program files (x86)", sysdrive),
-        format!("{}\\programdata", sysdrive),
-        format!("{}\\$recycle.bin", sysdrive),
-        format!("{}\\system volume information", sysdrive),
-    ];
-    for r in &roots {
-        let r = r.as_str();
-        if norm == r {
+    // FD-2：短名 fail-closed（与 JS/PS 同位置）
+    if contains_short_name(&norm) {
+        return true;
+    }
+    let r = protect_roots();
+    // anyDrive：至少 "X:\" + 目录名，其后为同名根或子树
+    for nm in &r.any_drive {
+        if nm.is_empty() {
+            continue;
+        }
+        if norm.len() < nm.len() + 3 {
+            continue;
+        }
+        if norm.as_bytes().get(1) != Some(&b':') || norm.as_bytes().get(2) != Some(&b'\\') {
+            continue;
+        }
+        let tail = &norm[3..];
+        if tail == nm.as_str() || tail.starts_with(&format!("{}\\", nm.as_str())) {
             return true;
         }
-        if let Some(rest) = norm.strip_prefix(r) {
-            if rest.starts_with('\\') || rest.starts_with('/') {
-                return true;
-            }
+    }
+    // subtree：本身或其子孙
+    for t in &r.subtree {
+        if norm == **t || norm.starts_with(&format!("{}\\", t)) {
+            return true;
+        }
+    }
+    // exact：本身，或「某受保护根的祖先」（被端掉会连带删掉该受保护根）
+    for e in &r.exact {
+        if norm == **e || e.starts_with(&format!("{}\\", norm)) {
+            return true;
         }
     }
     false
@@ -1398,8 +1526,18 @@ fn main() {
         }
         "delete" => {
             // 审查v4-L4：路径取原始 OsString，命令名与格式校验用 lossy 字符串
-            let mut items: Vec<(String, OsString)> = Vec::new();
+            // FD-2：可选前置 `--protect <json>`（主进程 protectedRootsJson()）三端同源；
+            // 缺省回落保守默认（default_from_env）。
             let mut i = 1;
+            if args.get(i).map(|s| s.as_str()) == Some("--protect") {
+                if i + 1 < raw.len() {
+                    let _ = PROTECT_ROOT.set(ProtectRoots::from_protect_json(&args[i + 1]));
+                } else {
+                    let _ = PROTECT_ROOT.set(ProtectRoots::default_from_env());
+                }
+                i += 2;
+            }
+            let mut items: Vec<(String, OsString)> = Vec::new();
             while i + 1 < raw.len() {
                 let kind = args[i].to_lowercase();
                 let p = &args[i + 1];
@@ -1409,10 +1547,29 @@ fn main() {
                 i += 2;
             }
             if items.is_empty() {
-                println!("delete 需要成对的 <file|dir> <path> 参数");
+                println!("delete [--protect <json>] <file|dir> <path>...");
                 return;
             }
             cmd_delete(&items);
+        }
+        "protectcheck" => {
+            // FD-2 只读对拍探针：`protectcheck --protect <json> <vector...>`
+            // 输出每向量 0/1（1=受保护），供 test-features 复测 JS/Rust 两侧口径一致。不碰磁盘。
+            let mut i = 1;
+            let mut protect = String::new();
+            if args.get(1).map(|s| s.as_str()) == Some("--protect") && i + 1 < args.len() {
+                protect = args[2].clone();
+                i = 3;
+            }
+            if !protect.is_empty() {
+                let _ = PROTECT_ROOT.set(ProtectRoots::from_protect_json(&protect));
+            }
+            let flags: Vec<String> = args
+                .iter()
+                .skip(i)
+                .map(|v| if is_protected_path(v) { String::from("1") } else { String::from("0") })
+                .collect();
+            println!("{}", flags.join(","));
         }
         _ => {
             println!("未知命令: {}", args[0]);

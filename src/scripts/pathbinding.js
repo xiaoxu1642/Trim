@@ -189,6 +189,11 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
           icons[group.id] = null;
           await refreshGroupIcon(group.id);
         }
+      } else {
+        // 审查 SET-1（2026-09-15）：原实现无失败分支 → 主进程拒绝（白名单未收录 / 落盘失败）
+        // 时界面无任何反馈，用户误以为「已保存」。这里显式回滚提示，避免输入静默丢失。
+        setHint(key, '保存失败，请重试', 'warn');
+        window.app?.toast('error', `保存失败：${resp?.message || '路径配置无效'}`);
       }
     } catch (e) {
       window.app?.toast('error', '保存失败: ' + e.message);

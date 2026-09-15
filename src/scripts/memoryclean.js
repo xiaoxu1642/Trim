@@ -381,7 +381,17 @@
         const d = resp.data;
         const svcs = Array.isArray(d.services) ? d.services : [];
         const tasks = Array.isArray(d.tasks) ? d.tasks : [];
-        window.app?.toast('success', `已处理 ${svcs.length} 个服务` + (tasks.length ? `，删除 ${tasks.length} 个更新任务` : '') + (svcs.length ? `：${svcs.join('、')}` : ''));
+        const failS = Array.isArray(d.failedServices) ? d.failedServices : [];
+        const failT = Array.isArray(d.failedTasks) ? d.failedTasks : [];
+        const summary = `已处理 ${svcs.length} 个服务` + (tasks.length ? `，删除 ${tasks.length} 个更新任务` : '');
+        if (failS.length || failT.length) {
+          // M-1（2026-09-15）：部分失败如实告知，不吞
+          window.app?.toast('warning', summary + `，但 ${failS.length + failT.length} 项失败：` +
+            [...failS, ...failT].join('、'));
+          window.app?.log('warn', `顽固软件自启阻断部分失败，服务失败 ${failS.join('、') || '无'}；任务失败 ${failT.join('、') || '无'}`);
+        } else {
+          window.app?.toast('success', summary + (svcs.length ? `：${svcs.join('、')}` : ''));
+        }
         window.app?.log('info', `顽固软件自启阻断：服务 ${svcs.join('、') || '无'}；任务 ${tasks.join('、') || '无'}`);
         return;
       }

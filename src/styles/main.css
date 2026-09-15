@@ -4899,6 +4899,9 @@ body.mw-window #pmBody .pm-virtual .xtable-body {
 }
 .health-card .health-meta { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; }
 .health-status { color: var(--success); font-size: var(--fs-section); font-weight: 650; }
+/* F3（2026-09-15）：健康度按等级着色，如实反馈状态（不再恒绿） */
+.health-card.health-warn .health-status { color: var(--warning); }
+.health-card.health-bad .health-status { color: var(--danger); }
 .health-ring {
   width: 108px;
   height: 108px;
@@ -5023,6 +5026,23 @@ body.mw-window #pmBody .pm-virtual .xtable-body {
   cursor: pointer;
   user-select: none;
 }
+
+/* SU-2（S7）：防恢复自动删除总开关条（启动项页）——只做 UI 告知与总开关，不新增布局系统 */
+.startup-defend-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-small);
+}
+.startup-defend-text { flex: 1; min-width: 0; }
+.startup-defend-title { font-size: var(--fs-secondary); font-weight: 600; color: var(--fg-primary); }
+.startup-defend-desc { font-size: var(--fs-meta); color: var(--fg-tertiary); margin-top: 2px; line-height: 1.5; }
+.startup-defend-state { font-size: var(--fs-meta); color: var(--success); font-weight: 600; flex-shrink: 0; }
+.startup-defend-state.off { color: var(--fg-tertiary); }
 
 /* 启动项列表 */
 /* v3.2.0：启动项卡片参数全部并入 .row-card 共享类（白底/边框/圆角/padding 14 16/

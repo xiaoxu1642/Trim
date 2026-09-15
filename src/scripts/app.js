@@ -327,6 +327,7 @@
     activeToasts.push(entry);
     el.querySelector('.toast-close')?.addEventListener('click', entry.remove);
     removeTimer = setTimeout(entry.remove, duration);
+    return entry;
   }
 
   // 点击窗口内空白区域关闭最顶层 Toast（超时自动关闭逻辑保留，此为额外手动关闭方式）
@@ -664,6 +665,10 @@
     // 加载应用信息
     loadAppInfo();
 
+    // 内置 PowerShell 7 运行时状态反馈（v3.3.x）：后台解压期间给「正在准备运行环境」提示，
+    // 完成后一次性收尾；用户已自装/已就绪时进来即 ready，不弹成功提示避免每次启动噪音。
+    initPwshFeedback();
+
     // 初始化各模块
     cleanup.init();
     contextmenu.init();
@@ -701,6 +706,38 @@
 
     // 暴露给其它模块（须在页面模块启动逻辑之前，保证其可调用 app 能力）
     window.app = { toast, confirm, confirmDanger, confirmWarning, showPreviewModeBanner, log, switchPage, loadAppInfo, requestElevation, getState: () => appState };
+
+    // 监听内置 pwsh 运行时状态：准备中→就绪/失败的一次性反馈（已就绪不弹）。
+    // 解压期间主进程每 ~800ms 广播一次进度，晚订阅的渲染层仍能接到在途广播。
+    function initPwshFeedback() {
+      try {
+        const api = window.api?.pwsh;
+        if (!api || typeof api.onStatus !== 'function') return;
+        let stage = null; // null | 'extracting' | 'ready' | 'error'
+        let preparingEntry = null;
+        const dismissPreparing = () => { try { preparingEntry?.remove(); } catch (_) {} preparingEntry = null; };
+        const apply = (s) => {
+          if (!s || typeof s.status !== 'string') return;
+          if (s.status === 'extracting' && stage !== 'extracting') {
+            stage = 'extracting';
+            // duration=0 会立即移除，故用长时长模拟常驻 + 可手动关闭
+            preparingEntry = toast('info', s.message || '正在准备 PowerShell 7 运行环境（首次约 10-30 秒）…', 120000, { closable: true });
+          } else if (s.status === 'ready') {
+            const wasPreparing = stage === 'extracting';
+            dismissPreparing();
+            if (wasPreparing) toast('success', 'PowerShell 7 运行环境已就绪');
+            stage = 'ready';
+          } else if (s.status === 'error' && stage !== 'error') {
+            dismissPreparing();
+            stage = 'error';
+            toast('error', s.message || 'PowerShell 7 运行环境准备失败，请安装 PowerShell 7 后重试');
+          }
+        };
+        const unsubscribe = api.onStatus(apply);
+        api.getStatus().then((r) => { try { if (r && r.success && r.data) apply(r.data); } catch (_) {} }).catch(() => {});
+        window.addEventListener('beforeunload', () => { try { unsubscribe(); } catch (_) {} });
+      } catch (_) { /* 反馈属增强，失败不阻断页面 */ }
+    }
 
     // 初始加载：恢复上次活跃页（窗口状态记忆），无记录则默认系统概览
     const lastPage = (() => { try { return localStorage.getItem(ACTIVE_PAGE_KEY); } catch (e) { return null; } })();

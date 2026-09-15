@@ -44,10 +44,30 @@
   // 当前选中值（key → value；null = 未选择，应用时跳过该组）
   const selected = { win32: null, keyboard: null, mouse: null };
 
+  // 审查 PE-1（2026-09-15）：独立窗口未加载 app.js/modal.js（见 peripheral-window.html 脚本清单），
+  // 原实现 window.app?.toast 与 window.modal?.toast 两条分支都不可能命中，且 window.modal 本无 toast 方法
+  // → 8 处调用全部静默，失败路径（未提权写 HKLM）与输入校验守卫完全没有反馈。
+  // 照 models-window.js 范式自建窗口内 DOM 提示，复用 main.css 既有的 .toast-container / .toast 件。
   function toast(type, msg) {
-    if (window.app?.toast) { window.app.toast(type, msg); return; }
-    // 独立窗口无 app 桥时兜底提示
-    if (window.modal?.toast) window.modal.toast(type, msg);
+    if (!msg) return;
+    let host = document.getElementById('periToastHost');
+    if (!host) {
+      host = document.createElement('div');
+      host.id = 'periToastHost';
+      host.className = 'toast-container';
+      document.body.appendChild(host);
+    }
+    const el = document.createElement('div');
+    el.className = 'toast ' + (['success', 'error', 'warning', 'info'].includes(type) ? type : 'info');
+    const text = document.createElement('div');
+    text.className = 'toast-message';
+    text.textContent = String(msg);
+    el.appendChild(text);
+    host.appendChild(el);
+    setTimeout(() => {
+      el.classList.add('removing');
+      setTimeout(() => el.remove(), 300);
+    }, 4000);
   }
 
   // ==================== 渲染 ====================

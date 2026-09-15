@@ -210,39 +210,58 @@ foreach ($p in $processes) {
 // 动作：MuMu / 网易 UU 远程 / 微软电脑管家等常驻服务改为「手动」并停止；停止 WPS 云文档服务；
 // 删除 WPS 更新计划任务并关闭其自动升级。属持久化策略，不提供自动还原（与优化项时代一致）。
 const STUBBORN_BLOCK_SCRIPT = `
-$ErrorActionPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-$changed = @()
+# M-1（2026-09-15）：拒绝静默空吞——每个操作回读校验，成功/失败分开记账，
+# 未提权或单项失败不再无条件报绿。内存清理单次会话内最多弹 3 次错误。
+$changedServices = [System.Collections.Generic.List[string]]::new()
+$failServices = [System.Collections.Generic.List[string]]::new()
+$failed = 0
+function Add-SvcResult($name, $ok) {
+  if ($ok) { $script:changedServices.Add($name) } else { $script:failServices.Add($name); $script:failed++ }
+}
 $services = @('Edrservice','GameViewerService','MuMuRemoteService','PCManager Service Store')
 foreach ($svc in $services) {
   $s = Get-Service -Name $svc -ErrorAction SilentlyContinue
   if (-not $s) { continue }
-  if ($s.Status -eq 'Running') { Stop-Service -Name $svc -Force -ErrorAction SilentlyContinue }
-  Set-Service -Name $svc -StartupType Manual -ErrorAction SilentlyContinue
-  $changed += $svc
+  try {
+    if ($s.Status -eq 'Running') { Stop-Service -Name $svc -Force -ErrorAction Stop }
+    Set-Service -Name $svc -StartupType Manual -ErrorAction Stop
+    $after = Get-Service -Name $svc -ErrorAction SilentlyContinue
+    Add-SvcResult $svc ($null -ne $after -and $after.StartType -eq 'Manual')
+  } catch { Add-SvcResult $svc $false }
 }
 $wc = Get-Service -Name 'wpscloudsvr' -ErrorAction SilentlyContinue
 if ($wc) {
-  if ($wc.Status -eq 'Running') { Stop-Service -Name 'wpscloudsvr' -Force -ErrorAction SilentlyContinue }
-  $changed += 'wpscloudsvr'
+  try {
+    if ($wc.Status -eq 'Running') { Stop-Service -Name 'wpscloudsvr' -Force -ErrorAction Stop }
+    $wcAfter = Get-Service -Name 'wpscloudsvr' -ErrorAction SilentlyContinue
+    Add-SvcResult 'wpscloudsvr' ($null -ne $wcAfter -and $wcAfter.Status -eq 'Stopped')
+  } catch { Add-SvcResult 'wpscloudsvr' $false }
 }
-$tasks = @()
+$changedTasks = [System.Collections.Generic.List[string]]::new()
+$failTasks = [System.Collections.Generic.List[string]]::new()
 # 审查 M-6（2026-09-14）：Unregister-ScheduledTask 不可逆，删除前先 Export-ScheduledTask
 # 到 %APPDATA%\Trim\backup\tasks\<name>.xml，与 startup/contextmenu 的「删除前备份」纪律对齐。
 $taskBackupDir = Join-Path $env:APPDATA 'Trim\backup\tasks'
 foreach ($taskName in @('WpsUpdateTask_CHENG','WpsUpdateLogonTask_CHENG')) {
-  if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
-    try {
-      if (-not (Test-Path $taskBackupDir)) { New-Item -Path $taskBackupDir -ItemType Directory -Force | Out-Null }
-      Export-ScheduledTask -TaskName $taskName | Out-File -FilePath (Join-Path $taskBackupDir ($taskName + '.xml')) -Encoding UTF8
-    } catch {}
-    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
-    $tasks += $taskName
-  }
+  if (-not (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue)) { continue }
+  try {
+    if (-not (Test-Path $taskBackupDir)) { New-Item -Path $taskBackupDir -ItemType Directory -Force | Out-Null }
+    Export-ScheduledTask -TaskName $taskName | Out-File -FilePath (Join-Path $taskBackupDir ($taskName + '.xml')) -Encoding UTF8 -ErrorAction Stop
+    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction Stop
+    if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
+      $failTasks.Add($taskName); $script:failed++
+    } else { $changedTasks.Add($taskName) }
+  } catch { $failTasks.Add($taskName); $script:failed++ }
 }
 $wpsKey = 'HKCU:\\Software\\Kingsoft\\Office\\6.0\\Common\\updateinfo'
-if (Test-Path $wpsKey) { Set-ItemProperty -Path $wpsKey -Name 'UpdateMode' -Value 'close' -ErrorAction SilentlyContinue }
-[pscustomobject]@{ services = @($changed); tasks = @($tasks) } | ConvertTo-Json -Compress
+if (Test-Path $wpsKey) {
+  try { Set-ItemProperty -Path $wpsKey -Name 'UpdateMode' -Value 'close' -ErrorAction Stop } catch { $script:failed++ }
+}
+[pscustomobject]@{
+  services = @($changedServices); tasks = @($changedTasks)
+  failedServices = @($failServices); failedTasks = @($failTasks); failedCount = $script:failed
+} | ConvertTo-Json -Compress
 `;
 
 // ==================== 结束进程 ====================

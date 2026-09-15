@@ -1,6 +1,6 @@
 {
   "name": "trim",
-  "version": "3.3.4",
+  "version": "3.5.0",
   "description": "Trim",
   "main": "main.js",
   "author": "xiaoxu",
@@ -62,6 +62,10 @@
       {
         "from": "scripts/TrimFastSize.dll",
         "to": "fastsize/TrimFastSize.dll"
+      },
+      {
+        "from": "vendor/pwsh/PowerShell-7.6.6-win-x64.zip",
+        "to": "pwsh/PowerShell-7.6.6-win-x64.zip"
       }
     ],
     "publish": [

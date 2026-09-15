@@ -246,14 +246,35 @@ foreach ($item in @($items)) {
         } else {
           New-ItemProperty -LiteralPath $regPath -Name $vp -PropertyType $pt -Value ([string]$rec.valueData) -Force -ErrorAction Stop | Out-Null
         }
-        # 校验
-        $ok = (Test-Path -LiteralPath $regPath) -and ($null -ne (Get-Item -LiteralPath $regPath).GetValue($vp))
+        # SU-3（2026-09-15）：写后回读校验（S1）——原实现只查「值存在」即判成功，
+        # 若类型/内容因 ExpandString/MultiString/Binary 转换失真会误报已恢复。
+        $ok = $false
+        $ckey = Get-Item -LiteralPath $regPath -ErrorAction SilentlyContinue
+        if ($ckey) {
+          $cval = $ckey.GetValue($vp)
+          $ckindOk = ($null -ne $cval) -and ($ckey.GetValueKind($vp).ToString() -eq $kindStr)
+          $cdataOk = $false
+          if ($kindStr -eq 'Binary') {
+            try { $cdataOk = ([Convert]::ToBase64String([byte[]]$cval) -eq [string]$rec.valueDataB64) } catch { $cdataOk = $false }
+          } elseif ($kindStr -eq 'MultiString') {
+            try {
+              $expect = @([string[]]$rec.valueDataArray)
+              $actualArr = @([string[]]$cval)
+              $cdataOk = ($expect.Count -eq $actualArr.Count) -and ((Compare-Object $expect $actualArr -SyncWindow 0).Count -eq 0)
+            } catch { $cdataOk = $false }
+          } elseif ($kindStr -eq 'DWord' -or $kindStr -eq 'QWord') {
+            try { $cdataOk = ([string]$cval) -eq ([string][int64][string]$rec.valueData) } catch { $cdataOk = $false }
+          } else {
+            try { $cdataOk = ([string]$cval) -eq ([string]$rec.valueData) } catch { $cdataOk = $false }
+          }
+          $ok = $ckindOk -and $cdataOk
+        }
         if ($ok) {
           $records = @($records | Where-Object { $_.id -ne $id })
           Save-Records
           $success++; $results += @{ id = $id; name = $name; status = 'ok'; message = '已启用' }
         } else {
-          $failed++; $results += @{ id = $id; name = $name; status = 'error'; message = '回写未生效（可能需要管理员权限）' }
+          $failed++; $results += @{ id = $id; name = $name; status = 'error'; message = '回写未生效或类型/内容失真（可能需要管理员权限）' }
         }
       } else {
         # 禁用：备份值到记录后删除

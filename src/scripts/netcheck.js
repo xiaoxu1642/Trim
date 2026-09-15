@@ -16,9 +16,10 @@
   };
 
   // 联动「系统维护」修复组（我的电脑修复）：连通性/DNS 问题的深度修复入口
+  // NT-5（2026-09-15）：单一来源收敛在此（PS 侧同名单死代码已删），补回 hint 用于逐项提示
   const MAINTENANCE_LINKS = [
-    { id: 'dns', label: '刷新 DNS 缓存' },
-    { id: 'netstack', label: '重置网络栈 (Winsock/IP)' }
+    { id: 'dns', label: '刷新 DNS 缓存', hint: '网页打不开/解析异常时先试' },
+    { id: 'netstack', label: '重置网络栈 (Winsock/IP)', hint: '多项异常并存时的兜底重置，需重连网络' }
   ];
 
   const BADGE_TEXT = { pending: '等待', scanning: '扫描中', ok: '正常', warn: '警告', fail: '异常', unknown: '未验证' };
@@ -57,10 +58,21 @@
         detailHtml = '<div class="netcheck-detail">' + escapeHtml(st.detail) + '</div>';
       }
       let repairHtml = '';
-      if (st.repair && st.repair.id && (st.status === 'warn' || st.status === 'fail')) {
-        repairHtml = '<div class="netcheck-actions">' +
-          '<button class="btn btn-danger btn-small" data-netcheck-repair="' + escapeHtml(st.repair.id) + '">一键修复</button>' +
-          '</div>';
+      if (st.status === 'warn' || st.status === 'fail') {
+        // NT-2（2026-09-15）：proxy 可能同时需要多个修复（残留用户代理 + WinHTTP），
+        // 支持 repairs 数组渲染多个按钮；无数组时退化为单个 repair。
+        const repairs = (Array.isArray(st.repairs) && st.repairs.length)
+          ? st.repairs
+          : (st.repair && st.repair.id ? [st.repair] : []);
+        if (repairs.length) {
+          const single = repairs.length === 1;
+          repairHtml = '<div class="netcheck-actions">' +
+            repairs.map(r => {
+              const label = single ? '一键修复' : (REPAIR_BTN_LABEL[r.id] || '一键修复');
+              return '<button class="btn btn-danger btn-small" data-netcheck-repair="' + escapeHtml(r.id) + '">' + escapeHtml(label) + '</button>';
+            }).join('') +
+            '</div>';
+        }
       }
       // 联动系统维护：连通性/DNS 异常时提供深度修复入口（dns / netstack 任务）
       let linkHtml = '';
@@ -69,7 +81,7 @@
           linkHtml = '<div class="netcheck-actions netcheck-links">' +
             '<span class="netcheck-links-label">更多修复：</span>' +
             MAINTENANCE_LINKS.map(l =>
-              '<button class="btn btn-secondary btn-small" data-netcheck-maint="' + escapeHtml(l.id) + '" data-tip="在「系统维护 → 网络连接」里执行">' + escapeHtml(l.label) + '</button>'
+              '<button class="btn btn-secondary btn-small" data-netcheck-maint="' + escapeHtml(l.id) + '" data-tip="' + escapeHtml(l.label + '：' + (l.hint || '在「系统维护 → 网络连接」里执行')) + '">' + escapeHtml(l.label) + '</button>'
             ).join('') +
             '</div>';
         }
@@ -153,6 +165,12 @@
     'reset-dns': { title: 'DNS 重置确认', msg: '把 DNS 服务器重置为自动获取（清除手动指定的 DNS）。\n\n若你依赖自定义 DNS（如广告过滤、内网解析），请先取消。', hint: '重置后依赖自定义 DNS 的场景将回退到运营商 DNS。' },
     'disable-user-proxy': { title: '关闭残留代理', msg: '检测到代理指向本机但无进程监听（残留代理）。将关闭用户代理设置。\n\n若这是你自配的代理且仍在使用，请取消。', hint: '' },
     'reset-winhttp': { title: 'WinHTTP 代理重置', msg: '将重置系统级（WinHTTP）代理为直连。部分系统服务的联网配置会在重启后完全生效。', hint: '' }
+  };
+
+  // NT-2（2026-09-15）：proxy 多修复槽位时，用动作专属按钮文案区分（单槽位仍显示「一键修复」）
+  const REPAIR_BTN_LABEL = {
+    'disable-user-proxy': '关闭残留代理',
+    'reset-winhttp': '重置 WinHTTP',
   };
 
   async function runRepair(actionId) {

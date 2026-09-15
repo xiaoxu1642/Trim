@@ -129,6 +129,17 @@ contextBridge.exposeInMainWorld('api', {
     }
   },
 
+  // 内置 PowerShell 7 运行时（v3.3.x，方案 A 兜底）
+  pwsh: {
+    getStatus: () => ipcRenderer.invoke('pwsh:status'),
+    prepare: () => ipcRenderer.invoke('pwsh:prepare'),
+    onStatus: (callback) => {
+      const handler = (_, data) => callback(data);
+      ipcRenderer.on('pwsh:status', handler);
+      return () => ipcRenderer.removeListener('pwsh:status', handler);
+    }
+  },
+
   // 磁盘清理 · Rust 原生查找器（重复/大文件/空/AppData）
   finder: {
     scan: (scanType, opts = {}) => ipcRenderer.invoke('finder:scan', { scanType, ...opts }),
@@ -315,7 +326,7 @@ contextBridge.exposeInMainWorld('api', {
 
   // 文件清理（QQ/微信文件目录）
   fileclean: {
-    scan: (type, customPath) => ipcRenderer.invoke('fileclean:scan', { type, customPath }),
+    scan: (type, customPath, total, doneBase) => ipcRenderer.invoke('fileclean:scan', { type, customPath, total, doneBase }),
     readImage: (filePath) => ipcRenderer.invoke('fileclean:read-image', { filePath }),
     execute: (files) => ipcRenderer.invoke('fileclean:execute', { files }),
     deleteFile: (filePath) => ipcRenderer.invoke('fileclean:delete-file', { filePath })

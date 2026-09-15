@@ -218,7 +218,10 @@ function removeXmlPolicy() {
   return HEADER + DIAG.PS_PREAMBLE + `
 $key = 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\System'
 Remove-ItemProperty -Path $key -Name DefaultAssociationsConfiguration -Force -ErrorAction SilentlyContinue
-Write-Output (@{ ok = $true } | ConvertTo-Json -Compress)
+# F1（2026-09-15）：原为无条件 ok=true；改为回读策略键是否已删除
+$exists = $null -ne (Get-ItemProperty -Path $key -Name DefaultAssociationsConfiguration -ErrorAction SilentlyContinue)
+if (-not $exists) { Write-Output (@{ ok = $true } | ConvertTo-Json -Compress) }
+else { Write-Output (@{ ok = $false; message = '策略键仍存在，删除未生效' } | ConvertTo-Json -Compress) }
 `;
 }
 
@@ -262,6 +265,12 @@ foreach ($e in $entries) {
   $clsKey = 'HKEY_CURRENT_USER\\Software\\Classes\\' + $key
 
   try {
+    # DA-3（S6，2026-09-15）：删 UserChoice 前先记下原 ProgId（即 UserChoice\ProgId 值），
+    # 万一回滚/失败恢复时可直接写回，避免「写出厂默认值」把用户原本的第三方关联覆盖掉。
+    $origProgId = ''
+    if (Test-Path $ucPath) {
+      $origProgId = [string](Get-ItemProperty -Path $ucPath -Name 'ProgId' -ErrorAction SilentlyContinue).ProgId
+    }
     # 1) 删除 UserChoice（UCPD 禁用期间才可能成功）；普通删除被拦截时用 reg.exe 兜底
     if (Test-Path $ucPath) {
       Remove-Item -Path $ucPath -Recurse -Force -ErrorAction SilentlyContinue
@@ -292,7 +301,7 @@ foreach ($e in $entries) {
   $clsRead = Get-Item -Path ('HKCU:\\Software\\Classes\\' + $key) -ErrorAction SilentlyContinue
   $back = if ($clsRead) { [string]$clsRead.GetValue('') } else { '' }
   $ucGone = -not (Test-Path $ucPath)
-  $results += @{ key = $key; ok = (($back -eq $progId) -and $ucGone); classDefault = $back }
+  $results += @{ key = $key; ok = (($back -eq $progId) -and $ucGone); classDefault = $back; origProgId = $origProgId }
 }
 
 # 通知 shell 刷新关联缓存

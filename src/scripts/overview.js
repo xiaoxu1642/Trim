@@ -64,8 +64,23 @@
 
   function renderHealth(h, uptime) {
     const adviceEl = $('ovHealthAdvice');
-    // 按用户要求，首页健康度只显示一个克制的状态文案。
-    if (adviceEl) adviceEl.textContent = '状态良好';
+    if (!adviceEl) return;
+    // F3（2026-09-15）：此前恒写"状态良好"、丢弃 computeHealth 评分（误导 + 死代码）。
+    // 现在如实展示：无数据 → 待检测；有数据 → 按等级着色并显示真实建议。
+    const card = $('ovHealthCard');
+    if (card) card.classList.remove('health-good', 'health-warn', 'health-bad');
+    if (!h) {
+      adviceEl.textContent = '待检测';
+      if (card) card.classList.add('health-good');
+      return;
+    }
+    adviceEl.textContent = h.advice || '状态良好';
+    if (card) {
+      const map = { good: 'health-good', warn: 'health-warn', bad: 'health-bad' };
+      card.classList.add(map[h.level] || 'health-good');
+    }
+    const metaHint = $('ovHealthMetaHint');
+    if (metaHint) metaHint.textContent = uptime ? ('已运行 ' + uptime) : '';
   }
 
   // ===== 实时指标渲染 =====

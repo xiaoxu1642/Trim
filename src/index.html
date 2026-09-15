@@ -1062,6 +1062,19 @@
           </span>
         </div>
 
+        <!-- SU-2（S7）：防恢复机制总开关 + UI 告知 -->
+        <div class="startup-defend-bar">
+          <label class="toggle-switch" for="startupDefendToggle" data-tip="关闭后，被拦截的启动项再次被程序创建时只做提示、不再自动删除；开启状态下每次自动删除前仍会逐条红色确认">
+            <input type="checkbox" id="startupDefendToggle" />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+          <div class="startup-defend-text">
+            <div class="startup-defend-title">防恢复自动删除</div>
+            <div class="startup-defend-desc">禁用的启动项若被外部程序反复恢复，达到次数后会自动删除并拦截其再次出现（删除前逐条红色确认）；关闭后仅提示、不再自动删除。</div>
+          </div>
+          <span class="startup-defend-state" id="startupDefendState">已开启</span>
+        </div>
+
         <!-- 启动项列表 -->
         <div class="card-panel">
           <div class="card-panel-head">

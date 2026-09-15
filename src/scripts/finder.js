@@ -128,7 +128,6 @@
     const el = document.getElementById(CFG.dups.table);
     const cfg = CFG.dups;
     const s = st.dups;
-    s.selected.clear();
     const dupItems = s.results.filter(r => r.type === 'duplicate');
     if (!dupItems.length) {
       el.innerHTML = '<div class="finder-empty">未发现重复、相似或同名文件，或尚未扫描</div>';
@@ -148,7 +147,6 @@
     for (const g of groups) {
       const cands = g.rows.filter(r => r.role !== 'kept');
       const kept = g.rows.find(r => r.role === 'kept');
-      cands.forEach(r => s.selected.add(r.path));
       const candSum = cands.reduce((a, r) => a + (r.size || 0), 0);
       let head = `${DUP_MATCH_LABEL[g.match] || '重复组'} · ${g.rows.length} 份`;
       if (g.match === 'content') head += ` · 每份 ${formatSize(g.size)}`;
@@ -160,8 +158,9 @@
       html += '<table class="finder-table"><thead><tr><th style="width:34px"></th><th>名称 / 路径</th><th class="finder-col-size" style="width:110px">大小</th><th class="finder-col-size" style="width:90px">角色</th></tr></thead><tbody>';
       for (const r of g.rows) {
         const keepRole = r.role === 'kept';
-        html += `<tr class="${s.selected.has(r.path) ? 'finder-row-selected' : ''}">
-          <td>${keepRole ? '' : checkboxHtml('dup_' + esc(r.path), true)}</td>
+        const checked = s.selected.has(r.path);
+        html += `<tr class="${checked ? 'finder-row-selected' : ''}">
+          <td>${keepRole ? '' : checkboxHtml('dup_' + esc(r.path), checked)}</td>
           <td><div class="finder-cell"><span class="finder-name-text">${esc(nameOf(r.path))}</span><span class="finder-name-text" style="opacity:.55">·</span><span class="finder-path-text" data-tip="${esc(r.path)}">${esc(middleEllipsis(r.path, 70))}</span></div></td>
           <td class="finder-col-size">${formatSize(r.size)}</td>
           <td class="finder-col-size"><span class="finder-role ${keepRole ? 'finder-role-kept' : 'finder-role-candidate'}">${keepRole ? '保留' : '可删'}</span></td>
@@ -188,16 +187,15 @@
     const el = document.getElementById(CFG.big.table);
     const cfg = CFG.big;
     const s = st.big;
-    s.selected.clear();
     if (!s.results.length) {
       el.innerHTML = '<div class="finder-empty">尚未扫描。请选择目录后点击「开始扫描」</div>';
       return;
     }
-    s.results.forEach(r => s.selected.add(r.path));
     let html = '<table class="finder-table"><thead><tr><th style="width:34px"></th><th>名称 / 路径</th><th class="finder-col-size" style="width:130px">大小</th></tr></thead><tbody>';
     for (const r of s.results) {
-      html += `<tr class="${s.selected.has(r.path) ? 'finder-row-selected' : ''}">
-        <td>${checkboxHtml('big_' + esc(r.path), true)}</td>
+      const checked = s.selected.has(r.path);
+      html += `<tr class="${checked ? 'finder-row-selected' : ''}">
+        <td>${checkboxHtml('big_' + esc(r.path), checked)}</td>
         <td><div class="finder-cell"><span class="finder-name-text">${esc(nameOf(r.path))}</span><span class="finder-name-text" style="opacity:.55">·</span><span class="finder-path-text" data-tip="${esc(r.path)}">${esc(middleEllipsis(r.path, 76))}</span></div></td>
         <td class="finder-col-size">${formatSize(r.size)}</td>
       </tr>`;
@@ -212,12 +210,10 @@
     const el = document.getElementById(CFG.empty.table);
     const cfg = CFG.empty;
     const s = st.empty;
-    s.selected.clear();
     const files = s.results.filter(r => r.type === 'emptyfile');
     const dirs = s.results.filter(r => r.type === 'emptyfolder');
     document.getElementById(cfg.fileCount).textContent = files.length;
     document.getElementById(cfg.dirCount).textContent = dirs.length;
-    files.forEach(r => s.selected.add(r.path));
     if (!s.results.length) {
       el.innerHTML = '<div class="finder-empty">未发现空文件与空目录，或尚未扫描</div>';
       return;
@@ -227,7 +223,8 @@
       html += '<div class="finder-group-header"><span>空文件（0 字节）· ' + files.length + ' 个</span></div>';
       html += '<table class="finder-table"><thead><tr><th style="width:34px"></th><th>名称 / 路径</th></tr></thead><tbody>';
       for (const r of files) {
-        html += `<tr class="${s.selected.has(r.path) ? 'finder-row-selected' : ''}"><td>${checkboxHtml('ef_' + esc(r.path), true)}</td><td><div class="finder-cell"><span class="finder-name-text">${esc(nameOf(r.path))}</span><span class="finder-name-text" style="opacity:.55">·</span><span class="finder-path-text" data-tip="${esc(r.path)}">${esc(middleEllipsis(r.path, 80))}</span></div></td></tr>`;
+        const checked = s.selected.has(r.path);
+        html += `<tr class="${checked ? 'finder-row-selected' : ''}"><td>${checkboxHtml('ef_' + esc(r.path), checked)}</td><td><div class="finder-cell"><span class="finder-name-text">${esc(nameOf(r.path))}</span><span class="finder-name-text" style="opacity:.55">·</span><span class="finder-path-text" data-tip="${esc(r.path)}">${esc(middleEllipsis(r.path, 80))}</span></div></td></tr>`;
       }
       html += '</tbody></table>';
     }
@@ -236,13 +233,11 @@
       html += '<table class="finder-table"><thead><tr><th style="width:34px"></th><th>路径</th><th style="width:110px">连带空目录</th></tr></thead><tbody>';
       for (const r of dirs) {
         const nested = Number(r.nested) || 0;
-        // 删父即连带删 n 个子空目录：nested>0 默认勾选父目录
-        const checked = nested > 0;
-        if (checked) s.selected.add(r.path);
+        const checked = s.selected.has(r.path);
         const nestedCell = nested > 0
           ? `<span class="finder-name-text" data-tip="删除该目录会一并移除其下 ${nested} 个空子目录">${nested} 个</span>`
           : '<span class="finder-name-text" style="opacity:.55">—</span>';
-        html += `<tr class="${s.selected.has(r.path) ? 'finder-row-selected' : ''}"><td>${checkboxHtml('ed_' + esc(r.path), checked)}</td><td><div class="finder-cell"><span class="finder-name-text">${esc(nameOf(r.path))}</span><span class="finder-name-text" style="opacity:.55">·</span><span class="finder-path-text" data-tip="${esc(r.path)}">${esc(middleEllipsis(r.path, 74))}</span></div></td><td class="finder-col-size">${nestedCell}</td></tr>`;
+        html += `<tr class="${checked ? 'finder-row-selected' : ''}"><td>${checkboxHtml('ed_' + esc(r.path), checked)}</td><td><div class="finder-cell"><span class="finder-name-text">${esc(nameOf(r.path))}</span><span class="finder-name-text" style="opacity:.55">·</span><span class="finder-path-text" data-tip="${esc(r.path)}">${esc(middleEllipsis(r.path, 74))}</span></div></td><td class="finder-col-size">${nestedCell}</td></tr>`;
       }
       html += '</tbody></table>';
     }
@@ -255,7 +250,6 @@
     const el = document.getElementById(CFG.appdata.table);
     const cfg = CFG.appdata;
     const s = st.appdata;
-    s.selected.clear();
     if (!s.results.length) {
       el.innerHTML = '<div class="finder-empty">尚未统计。点击「开始统计」查看 AppData 大目录</div>';
       return;
@@ -272,8 +266,9 @@
       html += `<div class="finder-group-header"><span>${root || 'AppData'}</span><span class="finder-group-sum">${rows.length} 个目录</span></div>`;
       html += '<table class="finder-table"><thead><tr><th style="width:34px"></th><th>应用目录</th><th class="finder-col-size" style="width:130px">占用</th></tr></thead><tbody>';
       for (const r of rows) {
-        html += `<tr>
-          <td>${checkboxHtml('ad_' + esc(r.path), false)}</td>
+        const checked = s.selected.has(r.path);
+        html += `<tr class="${checked ? 'finder-row-selected' : ''}">
+          <td>${checkboxHtml('ad_' + esc(r.path), checked)}</td>
           <td><div class="finder-cell"><span class="finder-name-text">${esc(nameOf(r.path))}</span><span class="finder-name-text" style="opacity:.55">·</span><span class="finder-path-text" data-tip="${esc(r.path)}">${esc(middleEllipsis(r.path, 60))}</span></div></td>
           <td class="finder-col-size">${formatSize(r.size)}</td>
         </tr>`;
@@ -285,6 +280,30 @@
   }
 
   const RENDER_FN = { dups: renderDups, big: renderBig, empty: renderEmpty, appdata: renderAppdata };
+
+  // FD-3/FD-5（2026-09-15）：默认勾选与渲染解耦——原 render* 每次 selected.clear() 后重播种，
+  // 覆盖「全选」「行内勾选」的用户选择（FD-5：空页全选后 nested=0 目录被重播种取消勾选），
+  // 且 duplicates 对 similar/name 组（内容可能不同）也默认全勾（FD-3：一键删互相不同的文件）。
+  // 改为扫描完成时按默认规则播种一次，render 只按 selected 现状渲染，不再重置。
+  function seedSelection(key) {
+    const s = st[key];
+    s.selected.clear();
+    if (key === 'dups') {
+      // 仅「内容相同」组默认勾选可删项；similar/name 组内容可能不同，默认不勾，交用户确认
+      s.results.forEach(r => {
+        if (r.type === 'duplicate' && r.role !== 'kept' && r.match === 'content') s.selected.add(r.path);
+      });
+    } else if (key === 'big') {
+      s.results.forEach(r => s.selected.add(r.path));
+    } else if (key === 'empty') {
+      // 空文件全勾；空目录仅默认勾选「连带空子目录」的父目录（nested>0），普通空目录交用户勾选
+      s.results.forEach(r => {
+        if (r.type === 'emptyfile') s.selected.add(r.path);
+        else if (r.type === 'emptyfolder' && (Number(r.nested) || 0) > 0) s.selected.add(r.path);
+      });
+    }
+    // appdata：默认不勾
+  }
 
   // 收集每个页签当前选中的删除项 {path, kind}
   function selectedItems(key) {
@@ -325,6 +344,7 @@
       const resp = await window.api.finder.scan(cfg.scanType, opts);
       if (!resp.success) throw new Error(resp.message || '扫描失败');
       s.results = resp.data || [];
+      seedSelection(key);
       setProgress(cfg, 100, '扫描完成');
       render(key);
       window.app?.toast?.('success', `扫描完成，找到 ${s.results.length} 项`);
@@ -394,19 +414,25 @@
     setProgress(cfg, 0, '开始删除...');
     try {
       const resp = await window.api.finder.delete(items);
-      if (!resp.success) throw new Error(resp.message || '删除失败');
+      // 审查 FD-1（2026-09-15）：success 现表示「通道执行成功」，失败明细随 data 如实回传。
+      // 仅当通道级失败（无 data）才抛错，避免把「部分失败」升级为整批错报（已删项必须照常移除）。
+      if (!resp || (!resp.success && !resp.data)) throw new Error((resp && resp.message) || '删除失败');
+      const data = resp.data || {};
       setProgress(cfg, 100, '删除完成');
       // 从结果中移除已删除项
-      const removed = new Set((resp.data?.details || []).filter(d => d.status === 'ok').map(d => d.path));
+      const removed = new Set((data.details || []).filter(d => d.status === 'ok').map(d => d.path));
       if (removed.size) s.results = s.results.filter(r => !removed.has(r.path));
       removed.forEach(p => s.selected.delete(p));
       render(key);
-      const recycledCount = Number(resp.data?.recycled) || 0;
-      const freedText = formatSize(resp.data?.totalFreed || 0);
-      window.app?.toast?.('success', recycledCount > 0
-        ? `删除完成！${recycledCount} 项已移入回收站（共 ${freedText}，清空回收站后释放）`
-        : `删除完成！共 ${freedText}`);
-      if (resp.data?.failed > 0) window.app?.toast?.('warning', `${resp.data.failed} 项删除失败（可能被占用）`);
+      const recycledCount = Number(data.recycled) || 0;
+      const freedText = formatSize(data.totalFreed || 0);
+      const okCount = Number(data.success) || 0;
+      if (okCount > 0) {
+        window.app?.toast?.('success', recycledCount > 0
+          ? `删除完成！${recycledCount} 项已移入回收站（共 ${freedText}，清空回收站后释放）`
+          : `删除完成！共 ${freedText}`);
+      }
+      if (Number(data.failed) > 0) window.app?.toast?.('warning', `${data.failed} 项删除失败（可能被占用）`);
     } catch (e) {
       hideProgress(cfg);
       window.app?.toast?.('error', '删除失败: ' + e.message);

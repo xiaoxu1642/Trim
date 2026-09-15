@@ -38,6 +38,10 @@
   const DEFEND_KEY = 'winclean-startup-defend';     // { 指纹: { name, strikes } }
   const BLACKLIST_KEY = 'winclean-startup-blacklist'; // [指纹...]
   const DEFEND_STRIKES_LIMIT = 3;
+  // SU-2（2026-09-15，S7）：防恢复自动删除总开关。原实现扫描到顽固恢复项即
+  // 「静默删除 + 拉黑」，用户既无法关闭也无法预知；且用户经 Windows 原生 UI 主动
+  // 重新启用会被误计为「外部恢复」。现改为：总开关可关 + 每次自动删除前逐条红色确认。
+  const DEFEND_ENABLED_KEY = 'winclean-startup-defend-enabled'; // 总开关（默认开）
 
   function loadStore(key, fallback) {
     try {
@@ -52,42 +56,78 @@
     return [item.source || '', item.name || '', item.command || ''].join('|');
   }
 
+  // SU-2（S7）：防恢复总开关读写 + 开关条 UI 同步
+  function isDefendEnabled() { return loadStore(DEFEND_ENABLED_KEY, true) !== false; }
+  function setDefendEnabled(v) { saveStore(DEFEND_ENABLED_KEY, !!v); }
+  function updateDefendToggleUI() {
+    const t = el('startupDefendToggle');
+    if (t) t.checked = isDefendEnabled();
+    const st = el('startupDefendState');
+    if (st) { st.textContent = isDefendEnabled() ? '已开启' : '已关闭'; st.classList.toggle('off', !isDefendEnabled()); }
+  }
+
+  // SU-2（S7）：不可逆删除前逐条红色二次确认（modal 对 message 统一转义，可安全内插项名）。
+  // 确认/取消、或确认助手缺失均返回 false（视为不删除），保证绝不静默删。
+  async function confirmDefendDelete(itemName, reason) {
+    if (typeof window.app?.confirmDanger !== 'function') return false;
+    try {
+      return await window.app.confirmDanger(
+        '删除被拦截的启动项',
+        `「${itemName}」${reason}\n\n删除后该项将不再随本次扫描保留；若程序再次自行创建，下次扫描将再次提示。是否删除？`,
+        '删除',
+        '取消',
+        '此操作将删除该启动项（不可恢复，删除前请确认无需再随系统启动）'
+      );
+    } catch (e) { return false; }
+  }
+
   // 扫描完成后调用：黑名单拦截 + 顽固恢复计数升级
   async function enforceStartupDefend() {
     if (!items.length || !window.api?.startup?.remove) return;
+    // SU-2：总开关关闭 → 本次扫描只计数提示、不做任何自动删除
+    if (!isDefendEnabled()) return;
     const blacklist = loadStore(BLACKLIST_KEY, []);
     const defend = loadStore(DEFEND_KEY, {});
     let changed = false;
     const autoDeleted = [];
     const escalated = [];
 
-    // 1) 黑名单项再次出现（程序重新创建）→ 立即自动删除（有备份）
+    // 1) 黑名单项再次出现（程序重新创建）→ 逐条红色确认后自动删除
     const blItems = items.filter(i => blacklist.includes(fpOf(i)));
-    if (blItems.length) {
+    for (const it of blItems) {
+      const name = it.name || '未命名';
+      // SU-2：删除前逐条确认，取消则本次保留
+      const ok = await confirmDefendDelete(name, '已在「防恢复」黑名单中，本次扫描又发现它被重新创建');
+      if (!ok) { window.app?.log?.('info', `用户已取消删除黑名单启动项「${name}」`); continue; }
       try {
-        await window.api.startup.remove(blItems);
-        autoDeleted.push(...blItems.map(i => i.name || '未命名'));
-        const fps = new Set(blItems.map(fpOf));
-        items = items.filter(i => !fps.has(fpOf(i)));
+        await window.api.startup.remove([it]);
+        autoDeleted.push(name);
+        items = items.filter(i => fpOf(i) !== fpOf(it));
         changed = true;
-      } catch (e) { /* 删除失败保留，下次扫描再次拦截 */ }
+      } catch (e) { window.app?.log?.('warn', `删除黑名单启动项「${name}」失败: ${e.message}`); /* 保留，下次扫描再次拦截 */ }
     }
 
-    // 2) 被用户禁用的项又被外部恢复 → 累计计数，达到 3 次自动删除并拉黑
+    // 2) 被用户禁用的项又被外部恢复 → 累计计数，达到次数后逐条红色确认删除并拉黑
     for (const fp of Object.keys(defend)) {
       const it = items.find(i => fpOf(i) === fp);
       if (!it) continue; // 本扫描未出现
       if (it.enabled) {
         defend[fp] = { name: defend[fp]?.name || it.name || '未命名', strikes: (defend[fp]?.strikes || 0) + 1 };
         if (defend[fp].strikes >= DEFEND_STRIKES_LIMIT) {
-          try {
-            await window.api.startup.remove([it]);
-            if (!blacklist.includes(fp)) blacklist.push(fp);
-            escalated.push(defend[fp].name);
-            items = items.filter(i => fpOf(i) !== fp);
-            changed = true;
-            delete defend[fp];
-          } catch (e) { /* 删除失败保留计数，下次扫描再次尝试 */ }
+          // SU-2：达到阈值后先逐条红色确认，再删除并拉黑；取消则保留计数，下次扫描再提示
+          const ok = await confirmDefendDelete(defend[fp].name, `禁用后已连续 ${defend[fp].strikes} 次被外部自动恢复`);
+          if (ok) {
+            try {
+              await window.api.startup.remove([it]);
+              if (!blacklist.includes(fp)) blacklist.push(fp);
+              escalated.push(defend[fp].name);
+              items = items.filter(i => fpOf(i) !== fp);
+              changed = true;
+              delete defend[fp];
+            } catch (e) { window.app?.log?.('warn', `删除顽固恢复启动项「${defend[fp].name}」失败: ${e.message}`); /* 删除失败保留计数，下次扫描再次尝试 */ }
+          } else {
+            window.app?.log?.('info', `用户已取消删除顽固恢复启动项「${defend[fp].name}」`);
+          }
         } else {
           window.app?.log?.('warn', `启动项「${defend[fp].name}」禁用后第 ${defend[fp].strikes} 次被自动恢复（${DEFEND_STRIKES_LIMIT} 次将自动删除并拦截）`);
         }
@@ -101,8 +141,8 @@
       window.app?.toast('warning', `防恢复拦截：已自动删除 ${autoDeleted.length} 个被阻止的启动项`);
     }
     if (escalated.length) {
-      window.app?.log?.('warn', `防恢复机制：以下启动项连续 ${DEFEND_STRIKES_LIMIT} 次禁用后仍被恢复，已自动删除并加入黑名单：${escalated.join('、')}`);
-      window.app?.toast('warning', `已自动删除并拦截 ${escalated.length} 个顽固恢复的启动项`);
+      window.app?.log?.('warn', `防恢复机制：以下启动项连续 ${DEFEND_STRIKES_LIMIT} 次禁用后仍被恢复，已删除并加入黑名单：${escalated.join('、')}`);
+      window.app?.toast('warning', `已删除并拦截 ${escalated.length} 个顽固恢复的启动项`);
     }
     if (changed) render();
   }
@@ -413,6 +453,17 @@
   }
 
   function init() {
+    // SU-2（S7）：防恢复总开关——关闭后只计数提示、不自动删除
+    const defendToggle = el('startupDefendToggle');
+    if (defendToggle) {
+      defendToggle.checked = isDefendEnabled();
+      defendToggle.addEventListener('change', () => {
+        setDefendEnabled(defendToggle.checked);
+        updateDefendToggleUI();
+        window.app?.toast(defendToggle.checked ? 'success' : 'info', defendToggle.checked ? '已开启防恢复自动删除' : '已关闭防恢复自动删除，被拦截启动项将不再自动删除');
+      });
+    }
+    updateDefendToggleUI();
     // 「重新扫描」= 强制真实扫描并覆盖缓存（v3.2.1 缓存政策）
     el('btnScanStartup')?.addEventListener('click', () => scan(true));
     el('btnAddStartup')?.addEventListener('click', () => addItem());

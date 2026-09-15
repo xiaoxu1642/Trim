@@ -8,6 +8,14 @@
   'use strict';
 
   var IS_ELECTRON = !!window.api?.app;
+  // LG-4（2026-09-15）：DWM 材质支持位缓存——广播路径原先把 micaEnabled 写死 true，
+  // 不支持原生 DWM 材质的机器（getInfo().micaEnabled=false）一旦主窗切档，子窗会被
+  // 广播挂上 electron-mica 透明类而无原生垫底。支持位是机器能力，本会话内不变，
+  // 初始握手取一次即可；getInfo 失败时按不支持回落（不透明 CSS 表面始终可用）。
+  var dwmSupported = false;
+  // 竞态兜底：广播若先于初始 Promise 返回（子窗启动瞬间恰逢主窗切档），
+  // 初始回调以最新广播值为准，避免用陈旧存储值覆盖
+  var lastBroadcast = null;
 
   function applyTheme() {
     // v2.8.0：清理死代码——应用恒挂 theme-light（「固定浅色」产品决策），
@@ -37,15 +45,18 @@
     ]).then(function (results) {
       var info = results[0];
       var mat = results[1];
-      var micaEnabled = !!(info && info.micaEnabled);
-      // 材质总开关关闭时按「无材质」回落（窗口界面升级3）
-      var effectiveMaterial = (mat && mat.materialEnabled === false) ? 'none' : (mat && mat.material);
-      applyMaterial(effectiveMaterial, micaEnabled);
+      dwmSupported = !!(info && info.micaEnabled);
+      // 材质总开关关闭时按「无材质」回落（窗口界面升级3）；
+      // 广播已到（LG-4 竞态兜底）则以其为准
+      var stored = (mat && mat.materialEnabled === false) ? 'none' : (mat && mat.material);
+      applyMaterial(lastBroadcast != null ? lastBroadcast : stored, dwmSupported);
     });
 
     // 主进程广播：材质变化实时跟随（主窗设置页切换材质时子窗即时生效）
     window.api.appearance?.onMaterialChanged?.(function (material) {
-      applyMaterial(material, true);
+      // LG-4：受支持位约束——不支持 DWM 材质的机器不挂透明类，回落不透明 CSS 表面
+      lastBroadcast = material;
+      applyMaterial(material, dwmSupported);
     });
 
     // v2.8.0：窗口焦点状态——失焦时 body 挂 win-inactive（视觉纱降低存在感）

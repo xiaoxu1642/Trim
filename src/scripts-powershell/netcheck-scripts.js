@@ -104,20 +104,32 @@ if ($hasApipa) {
 }
 
 # ---------- 3. DHCP 服务 ----------
-$dhcpItem = @{ id = 'dhcp'; status = 'unknown'; evidence = @(); detail = '' }
+# NT-3（2026-09-15）：静态 IP 用户 DHCP 服务未运行属合法配置，不再误报红色。
+# 仅当有活动网卡实际启用 DHCP 但服务未跑时才判 fail；否则给 warn/ok 并说明。
+$dhcpItem = @{ id = 'dhcp'; status = 'ok'; evidence = @(); detail = '' }
 $dhcpSvc = Get-Service -Name Dhcp -ErrorAction SilentlyContinue
-if ($dhcpSvc) {
-  $dhcpItem.evidence += ('Dhcp 服务：' + $dhcpSvc.Status + '，启动类型 ' + $dhcpSvc.StartType)
-  if ($dhcpSvc.Status -eq 'Running') {
-    $dhcpItem.status = 'ok'
-  } else {
-    $dhcpItem.status = 'fail'
-    $dhcpItem.detail = 'DHCP 服务未运行（静态 IP 为合法配置，仅提示）'
-    $dhcpItem.repair = @{ id = 'start-dhcp' }
-  }
-} else {
-  $dhcpItem.detail = '未找到 Dhcp 服务'
+$dhcpInUse = $false
+foreach ($c in $ipcfgs) {
+  if ($c.Dhcp -eq $true) { $dhcpInUse = $true; break }
 }
+if (-not $dhcpSvc) {
+  $dhcpItem.status = 'warn'
+  $dhcpItem.detail = '未找到 Dhcp 服务'
+} elseif ($dhcpSvc.Status -eq 'Running') {
+  $dhcpItem.status = 'ok'
+  $dhcpItem.detail = 'Dhcp 服务运行正常'
+} elseif ($dhcpInUse) {
+  # 有网卡走 DHCP 但服务停了：真正的问题
+  $dhcpItem.status = 'fail'
+  $dhcpItem.detail = '有网卡使用 DHCP（自动获取 IP），但 DHCP 服务未运行'
+  $dhcpItem.repair = @{ id = 'start-dhcp' }
+} else {
+  # 静态 IP（无网卡依赖 DHCP）：DHCP 服务停属合法，仅提示，可一键开启备查
+  $dhcpItem.status = 'warn'
+  $dhcpItem.detail = '当前网卡均使用静态 IP（不依赖 DHCP），DHCP 服务未运行属正常'
+  $dhcpItem.repair = @{ id = 'start-dhcp' }
+}
+$dhcpItem.evidence += ('Dhcp 服务：' + $dhcpSvc.Status + '，启动类型 ' + $dhcpSvc.StartType + '；DHCP 网卡启用：' + $dhcpInUse)
 
 # ---------- 4. DNS 服务与配置 ----------
 $dnsItem = @{ id = 'dns'; status = 'unknown'; evidence = @(); detail = '' }
@@ -158,17 +170,31 @@ $pGpo = $false
 $polDefs = Get-ItemProperty -Path 'HKCU:\\Software\\Policies\\Microsoft\\Windows\\CurrentVersion\\Internet Settings' -ErrorAction SilentlyContinue
 if ($polDefs -and $polDefs.ProxyEnable -eq 1) { $pGpo = $true }
 
-# WinHTTP 代理
+# WinHTTP 代理（NT-4：IPv4 与域名型都要识别，避免域名代理被漏报跳过）
 $winhttp = & netsh.exe winhttp show proxy 2>$null | Out-String
 $winhttpHasProxy = ($winhttp -match 'proxy|代理服务器') -and -not ($winhttp -match '直接访问|DIRECT')
 $winhttpServer = ''
-$m = [regex]::Match($winhttp, '(\d{1,3}(?:\.\d{1,3}){3}:\d{2,5})')
+$m = [regex]::Match($winhttp, '((?:\d{1,3}\.){3}\d{1,3}|[a-zA-Z0-9._-]+):\d{2,5}')
 if ($m.Success) { $winhttpServer = $m.Groups[1].Value }
 
-# 掩码显示：中间两段打码，避免完整代理地址出现在 UI 与日志（日志同口径）
+# 掩码显示（NT-4）：避免完整代理地址出现在 UI 与日志（日志同口径）。
+# 三种形态一律遮盖：IPv4 掩中间两段、域名只留首标签、userinfo(user:pass@)整体打码。
 function Mask-Proxy([string]$s) {
   if (-not $s) { return '' }
-  return ($s -replace '(\d{1,3}\.\d{1,3})\.\d{1,3}\.\d{1,3}', '$1.*.*')
+  $body = $s
+  $sc = [regex]::Match($body, '^[a-zA-Z][a-zA-Z0-9+.-]*://')
+  if ($sc.Success) { $body = $body.Substring($sc.Length) }
+  $mask = $body
+  $at = $body.LastIndexOf('@')
+  if ($at -ge 0) { $mask = $body.Substring($at + 1) }
+  if ($mask -match '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}') {
+    $mask = ($mask -replace '^(\d{1,3}\.\d{1,3})\.\d{1,3}\.\d{1,3}', '$1.*.*')
+  } else {
+    $dot = $mask.IndexOf('.')
+    if ($dot -gt 0) { $mask = $mask.Substring(0, $dot) + '.*' }
+  }
+  if ($at -ge 0) { $mask = '***:***@' + $mask }
+  return $mask
 }
 
 if ($pGpo) {
@@ -188,6 +214,8 @@ if ($pGpo) {
     $proxyItem.status = 'warn'
     $proxyItem.detail = '代理指向本机但无进程监听该端口（残留代理，典型「能连但打不开网页」根因）'
     $proxyItem.repair = @{ id = 'disable-user-proxy' }
+    # NT-2（2026-09-15）：修复槽位分流——不再让 reset-winhttp 覆盖 disable-user-proxy
+    $proxyItem.repairs = @(@{ id = 'disable-user-proxy' })
   } else {
     $proxyItem.status = 'ok'
     $proxyItem.detail = '检测到用户自配代理（属合法配置，不做改动）'
@@ -199,7 +227,15 @@ if ($winhttpHasProxy -and $winhttpServer) {
   $proxyItem.evidence += ('系统代理（WinHTTP）：' + (Mask-Proxy $winhttpServer))
   if ($proxyItem.status -eq 'ok') { $proxyItem.status = 'warn' }
   $proxyItem.detail = 'WinHTTP 层配置了代理，可能影响系统服务联网'
-  $proxyItem.repair = @{ id = 'reset-winhttp' }
+  $winhttpRepair = @{ id = 'reset-winhttp' }
+  # 若已有 disable-user-proxy，追加为第二个修复槽；否则直接作为唯一修复
+  if ($proxyItem.repairs) {
+    $proxyItem.repairs += $winhttpRepair
+    $proxyItem.repair = $proxyItem.repairs[0] # 兼容旧渲染层，取第一个
+  } else {
+    $proxyItem.repair = $winhttpRepair
+    $proxyItem.repairs = @($winhttpRepair)
+  }
 }
 if ($proxyItem.status -eq 'unknown') {
   $proxyItem.status = 'ok'
@@ -324,7 +360,11 @@ else { Write-Output (@{ ok = $false; message = 'Dnscache 服务未处于运行�
     body = `
 Write-Output '正在把 DNS 服务器重置为自动获取…'
 Set-DnsClientServerAddress -InterfaceIndex ${ifIdx} -ResetServerAddresses -ErrorAction Stop
-Write-Output (@{ ok = $true; message = 'DNS 已重置为自动获取' } | ConvertTo-Json -Compress)
+# F1（2026-09-15）：原为「-ErrorAction Stop + 紧跟无条件 ok=true」，Stop 被 PS_PREAMBLE
+# 的 trap{continue} 吞掉后仍报成功。改为写后回读：DNS 服务器列表为空才算重置成功。
+$srv = @(Get-DnsClientServerAddress -InterfaceIndex ${ifIdx} -AddressFamily IPv4 -ErrorAction SilentlyContinue | ForEach-Object { $_.ServerAddresses } | Where-Object { $_ })
+if ($srv.Count -eq 0) { Write-Output (@{ ok = $true; message = 'DNS 已重置为自动获取' } | ConvertTo-Json -Compress) }
+else { Write-Output (@{ ok = $false; message = ('DNS 仍为手动配置: ' + ($srv -join ', ')) } | ConvertTo-Json -Compress) }
 `;
   } else if (actionId === 'disable-user-proxy') {
     body = `
@@ -340,7 +380,9 @@ else { Write-Output (@{ ok = $false; message = 'ProxyEnable 未能写为 0' } | 
 Write-Output '正在重置 WinHTTP 代理…'
 $out = & netsh.exe winhttp reset proxy 2>&1 | Out-String
 Write-Output ($out.Trim())
-Write-Output (@{ ok = $true; message = 'WinHTTP 代理已重置（部分服务需重启后生效）' } | ConvertTo-Json -Compress)
+# F1（2026-09-15）：原为无条件 ok=true（netsh 结果从未判定）。改为按 netsh 退出码判定。
+if ($LASTEXITCODE -eq 0) { Write-Output (@{ ok = $true; message = 'WinHTTP 代理已重置（部分服务需重启后生效）' } | ConvertTo-Json -Compress) }
+else { Write-Output (@{ ok = $false; message = ('WinHTTP 重置失败 (exit=' + $LASTEXITCODE + ')') } | ConvertTo-Json -Compress) }
 `;
   } else {
     throw new Error('未知的修复动作: ' + String(actionId));
@@ -348,10 +390,5 @@ Write-Output (@{ ok = $true; message = 'WinHTTP 代理已重置（部分服务�
   return HEADER + DIAG.PS_PREAMBLE + body;
 }
 
-// 深度联动入口（联动系统维护修复组）：给检测结论页提供「进一步修复」跳转建议
-const MAINTENANCE_LINKS = [
-  { id: 'dns', label: '刷新 DNS 缓存', hint: '网页打不开/解析异常时先试' },
-  { id: 'netstack', label: '重置网络栈 (Winsock/IP)', hint: '多项异常并存时的兜底重置，需重连网络' }
-];
-
-module.exports = { THRESHOLDS, status, repair, MAINTENANCE_LINKS };
+// NT-5（2026-09-15）：MAINTENANCE_LINKS 单一来源收敛到渲染层 netcheck.js，此处死代码已删。
+module.exports = { THRESHOLDS, status, repair };

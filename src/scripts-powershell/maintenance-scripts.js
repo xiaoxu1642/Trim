@@ -45,7 +45,18 @@ function stepsToPs(steps) {
       L.push(`Stop-Service -Name '${s.service}' -Force -ErrorAction SilentlyContinue`);
       if (s.disable) L.push(`Set-Service -Name '${s.service}' -StartupType Disabled -ErrorAction SilentlyContinue`);
     } else if (s.pwsh) {
+      // F1（2026-09-15）：与 optimizer buildScript 同模式——原 pwsh 步骤裸拼，
+      // 失败被 PS_PREAMBLE 的 trap{continue} 吞掉后仍走到 @@RESULT@@ok。
+      // 改为逐步骤 try/catch + Stop + 失败记诊断（注：不影响 stepsToPs 内其他步骤）。
+      L.push('$___eap = $ErrorActionPreference');
+      L.push('try {');
+      L.push("  $ErrorActionPreference = 'Stop'");
       L.push(s.pwsh);
+      L.push('} catch {');
+      L.push(`  Write-TFDiag -Stage 'maint.opt.pwsh' -Mutation 'partial' -Detail $_.Exception.Message`);
+      L.push('} finally {');
+      L.push('  $ErrorActionPreference = $___eap');
+      L.push('}');
     }
   });
   L.push("Write-Output '@@RESULT@@ok'");
@@ -93,16 +104,20 @@ Write-Output '已停止更新相关服务'
 Start-Sleep -Seconds 2
 $sd = Join-Path $env:WINDIR 'SoftwareDistribution'
 $cr = Join-Path $env:WINDIR 'System32\\catroot2'
+$reset = 0; $skip = 0
 foreach ($d in @($sd,$cr)) {
   if (Test-Path -LiteralPath $d) {
     $bak = $d + '.old_' + (Get-Date -Format 'yyyyMMddHHmmss')
-    try { Rename-Item -LiteralPath $d -NewName (Split-Path $bak -Leaf) -ErrorAction Stop; Write-Output ('已重置缓存目录: ' + $d) }
-    catch { Write-TFDiag -Stage 'maint.wu' -Mutation 'partial' -Detail ('重命名失败(可能被占用): ' + $d + ' -> ' + $_.Exception.Message); Write-Output ('跳过(占用): ' + $d) }
+    try { Rename-Item -LiteralPath $d -NewName (Split-Path $bak -Leaf) -ErrorAction Stop; $reset++; Write-Output ('已重置缓存目录: ' + $d) }
+    catch { $skip++; Write-TFDiag -Stage 'maint.wu' -Mutation 'partial' -Detail ('重命名失败(可能被占用): ' + $d + ' -> ' + $_.Exception.Message); Write-Output ('跳过(占用): ' + $d) }
   }
 }
 foreach ($s in $svcs) { Start-Service -Name $s -ErrorAction SilentlyContinue }
-Write-Output '已重启更新服务'
-Write-Output '@@RESULT@@ok'
+# F1（2026-09-15）：原为无条件 @@RESULT@@ok。改为回读：wuauserv 必须运行，且没有被占用的
+# 缓存目录（skip=0 表示全部目标目录都成功改名）；否则如实报 warn。
+$svcOk = (Get-Service -Name wuauserv -ErrorAction SilentlyContinue).Status -eq 'Running'
+if ($svcOk -and $skip -eq 0) { Write-Output '已重启更新服务'; Write-Output '@@RESULT@@ok' }
+else { Write-TFDiag -Stage 'maint.wu' -Mutation 'partial' -Detail ('回读: wuauserv=' + $svcOk + ' reset=' + $reset + ' skip=' + $skip); Write-Output '@@RESULT@@warn' }
 `
   },
   // M3（2026-09-14 重复点审查）：原 print「清理打印队列」已下线。
@@ -160,13 +175,18 @@ if ($LASTEXITCODE -eq 0) { Write-Output '@@RESULT@@ok' } else { Write-TFDiag -St
 Stop-Service -Name WSearch -Force -ErrorAction SilentlyContinue
 $pf = $env:ProgramData
 $idx = Join-Path $pf 'Microsoft\\Search\\Data\\Applications\\Windows'
+$cleared = $true
 if (Test-Path -LiteralPath $idx) {
   Remove-Item -Path (Join-Path $idx '*') -Recurse -Force -ErrorAction SilentlyContinue
-  Write-Output '已清空旧索引数据'
+  # F1（2026-09-15）：回读索引目录是否真的清空（原先无条件报成功）
+  $left = @(Get-ChildItem -LiteralPath $idx -Force -ErrorAction SilentlyContinue).Count
+  if ($left -gt 0) { $cleared = $false; Write-TFDiag -Stage 'maint.search' -Mutation 'partial' -Detail ('索引目录仍有残留: ' + $left) }
+  else { Write-Output '已清空旧索引数据' }
 }
 Start-Service -Name WSearch -ErrorAction SilentlyContinue
-Write-Output '搜索服务已重启，索引将在后台重建'
-Write-Output '@@RESULT@@ok'
+$svcOk = (Get-Service -Name WSearch -ErrorAction SilentlyContinue).Status -eq 'Running'
+if ($svcOk -and $cleared) { Write-Output '搜索服务已重启，索引将在后台重建'; Write-Output '@@RESULT@@ok' }
+else { Write-TFDiag -Stage 'maint.search' -Mutation 'partial' -Detail ('回读: WSearch=' + $svcOk + ' cleared=' + $cleared); Write-Output '@@RESULT@@warn' }
 `
   },
   dns: {
@@ -188,11 +208,14 @@ if ($LASTEXITCODE -eq 0) { Write-Output '@@RESULT@@ok' } else { Write-TFDiag -St
     ps: () => `
 Write-Output '正在重置 Winsock…'
 & netsh.exe winsock reset 2>&1 | ForEach-Object { Write-Output $_ }
+$ok1 = $LASTEXITCODE
 Write-Output '正在重置 TCP/IP…'
 & netsh.exe int ip reset 2>&1 | ForEach-Object { Write-Output $_ }
+$ok2 = $LASTEXITCODE
 & ipconfig.exe /flushdns 2>&1 | Out-Null
-Write-Output '网络栈已重置（部分改动需重启电脑后完全生效）'
-Write-Output '@@RESULT@@ok'
+# F1（2026-09-15）：原为无条件 @@RESULT@@ok；改为按两条 netsh 的退出码判定。
+if ($ok1 -eq 0 -and $ok2 -eq 0) { Write-Output '网络栈已重置（部分改动需重启电脑后完全生效）'; Write-Output '@@RESULT@@ok' }
+else { Write-TFDiag -Stage 'maint.netstack' -Mutation 'partial' -Detail ('winsock=' + $ok1 + ' ip=' + $ok2); Write-Output '@@RESULT@@warn' }
 `
   }
 };
