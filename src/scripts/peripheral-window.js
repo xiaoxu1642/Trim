@@ -79,7 +79,7 @@
       const isRec = opt.value === def.recommended;
       const isSel = selected[key] === opt.value;
       return `
-        <div class="peri-card${isSel ? ' selected' : ''}" data-group="${key}" data-value="${opt.value}" title="${def.regName} = ${opt.value}">
+        <div class="peri-card${isSel ? ' selected' : ''}" data-group="${key}" data-value="${opt.value}" data-tip="${def.regName} = ${opt.value}">
           ${isRec ? '<span class="peri-rec">推荐</span>' : ''}
           <span class="peri-radio" aria-hidden="true"></span>
           <div class="peri-value">${opt.value}</div>
@@ -146,6 +146,22 @@
       btn.disabled = true;
       try {
         const resp = await window.api.peripheralWindow.apply(payload);
+        // 复核 N3（提权半闭环，2026-09-16）：服务端 PE-4 门禁回传 needAdmin，
+        // 独立窗口无 app.js/modal.js，用原生 confirm 拿用户明示同意后走 elevate:request
+        if (resp && resp.needAdmin) {
+          const go = window.confirm('应用这些调优需要管理员权限（写入 HKLM 注册表）。\n\n点击“确定”将弹出 UAC 提权确认，应用会以管理员身份重启。');
+          if (go && window.api?.elevate?.request) {
+            try {
+              const er = await window.api.elevate.request();
+              toast(er && er.success ? 'info' : 'warning', er && er.success ? '提权成功，应用将以管理员身份重启，重启后请重新打开本窗口' : (er.message || '提权请求已取消'));
+            } catch (er) {
+              toast('error', '提权请求失败：' + er.message);
+            }
+          } else {
+            toast('warning', '未提权，本次修改已取消（需要管理员权限）');
+          }
+          return;
+        }
         if (resp && resp.success) {
           toast('success', '已应用到注册表' + (payload.keyboard !== -1 || payload.mouse !== -1 ? '，键鼠队列大小重启电脑后生效' : ''));
           await loadCurrent();
@@ -154,6 +170,37 @@
         }
       } catch (e) {
         toast('error', '应用失败：' + e.message);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    // 复核 N1/PE-5（2026-09-16）：新增「还原修改前的值」——读最新一份备份 .reg 导入，
+    // 与「恢复 Windows 默认」写出厂默认值是两个语义；用户在 Trim 之前的原始定制由此找回
+    document.getElementById('btnPeriRestore')?.addEventListener('click', async () => {
+      if (!window.api?.peripheralWindow?.restoreBackup) { toast('info', '请在 Trim 应用内使用该功能'); return; }
+      const btn = document.getElementById('btnPeriRestore');
+      btn.disabled = true;
+      try {
+        const resp = await window.api.peripheralWindow.restoreBackup();
+        if (resp && resp.needAdmin) {
+          const go = window.confirm('还原修改前的值需要管理员权限（导入备份 .reg）。\n\n点击“确定”将弹出 UAC 提权确认，应用会以管理员身份重启。');
+          if (go && window.api?.elevate?.request) {
+            const er = await window.api.elevate.request().catch(() => null);
+            toast(er && er.success ? 'info' : 'warning', er && er.success ? '提权成功，应用将以管理员身份重启，重启后请重试' : '提权请求已取消');
+          } else {
+            toast('warning', '未提权，还原已取消（需要管理员权限）');
+          }
+          return;
+        }
+        if (resp && resp.success) {
+          toast('success', '已导入最近一份备份，还原修改前的注册表值');
+          await loadCurrent();
+        } else {
+          toast('warning', resp?.message || '还原失败');
+        }
+      } catch (e) {
+        toast('error', '还原失败：' + e.message);
       } finally {
         btn.disabled = false;
       }
@@ -169,8 +216,21 @@
           keyboard: GROUPS.keyboard.defaultValue,
           mouse: GROUPS.mouse.defaultValue
         });
+        // 复核 N3：提权半闭环收口（同「应用到注册表」）
+        if (resp && resp.needAdmin) {
+          const go = window.confirm('恢复默认值需要管理员权限（写入 HKLM 注册表）。\n\n点击“确定”将弹出 UAC 提权确认，应用会以管理员身份重启。');
+          if (go && window.api?.elevate?.request) {
+            const er = await window.api.elevate.request().catch(() => null);
+            toast(er && er.success ? 'info' : 'warning', er && er.success ? '提权成功，应用将以管理员身份重启，重启后请重试' : '提权请求已取消');
+          } else {
+            toast('warning', '未提权，恢复已取消（需要管理员权限）');
+          }
+          return;
+        }
         if (resp && resp.success) {
-          toast('success', '已恢复 Windows 默认值，键鼠队列大小重启电脑后生效');
+          // 复核 N1：如文案说明这是 Windows 出厂默认值，不是「你修改前的值」——
+          // 想回到修改前的状态请用「还原修改前的值」按钮
+          toast('success', '已恢复 Windows 默认值（注意：这不是你修改前的值，键鼠队列大小重启电脑后生效）');
           await loadCurrent();
         } else {
           toast('error', resp?.message || '恢复失败，可能需要以管理员身份运行 Trim');

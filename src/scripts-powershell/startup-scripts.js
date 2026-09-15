@@ -397,6 +397,7 @@ $items = '__ITEMS_JSON__' | ConvertFrom-Json
 $results = @()
 $success = 0
 $failed = 0
+$fsDelete = @()
 
 $records = @()
 if (Test-Path -LiteralPath $disabledFile) {
@@ -440,19 +441,21 @@ foreach ($item in @($items)) {
     if ($source -eq 'folder') {
       $filePath = [string]$item.filePath
       # 若为已禁用记录，则从备份目录删除；否则备份到 deleted 再删
+      # 复核 N1（删除红线，2026-09-16）：文件夹/快捷方式类不再在 PS 内裸 Remove-Item，
+      # 备份后回传主进程走 trashOrUnlink（回收站优先）+ 全局删除清单；deferred 结果由主进程回填。
       $rec = @($records | Where-Object { $_.id -eq $id }) | Select-Object -First 1
       if ($rec -and $rec.filePath -and (Test-Path -LiteralPath $rec.filePath) -and -not (Test-Path -LiteralPath $filePath)) {
-        Remove-Item -LiteralPath $rec.filePath -Force -ErrorAction Stop
+        $fsDelete += @{ id = $id; name = $name; path = [string]$rec.filePath; kind = 'backup-file' }
         $records = @($records | Where-Object { $_.id -ne $id })
         if (@($records).Count -eq 0) { Remove-Item -LiteralPath $disabledFile -Force -ErrorAction SilentlyContinue }
         else { @($records) | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $disabledFile -Encoding UTF8 }
-        $success++; $results += @{ id = $id; name = $name; status = 'ok'; message = '已删除备份文件' }
+        $results += @{ id = $id; name = $name; status = 'deferred'; message = '备份文件待主进程回收站删除' }
       } elseif (Test-Path -LiteralPath $filePath) {
         $safe = ($name -replace '[^\\w\\-\\u4e00-\\u9fa5]', '_')
         $dest = Join-Path $deletedDir ($stamp + '_folder_' + $safe + [IO.Path]::GetExtension($filePath))
         Copy-Item -LiteralPath $filePath -Destination $dest -Force -ErrorAction Stop
-        Remove-Item -LiteralPath $filePath -Force -ErrorAction Stop
-        $success++; $results += @{ id = $id; name = $name; status = 'ok'; message = '已删除（已备份文件）' }
+        $fsDelete += @{ id = $id; name = $name; path = $filePath; kind = 'startup-file' }
+        $results += @{ id = $id; name = $name; status = 'deferred'; message = '已备份，待主进程回收站删除' }
       } else {
         $failed++; $results += @{ id = $id; name = $name; status = 'error'; message = '文件不存在' }
       }
@@ -488,7 +491,7 @@ foreach ($item in @($items)) {
   }
 }
 
-[pscustomobject]@{ success = $success; failed = $failed; results = @($results) } | ConvertTo-Json -Depth 6 -Compress
+[pscustomobject]@{ success = $success; failed = $failed; results = @($results); fsDelete = @($fsDelete) } | ConvertTo-Json -Depth 6 -Compress
 `;
 
 // ---------- 添加启动项脚本（写入当前用户 Run 键） ----------

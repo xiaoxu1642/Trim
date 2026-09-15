@@ -112,13 +112,11 @@ $reset = 0; $skip = 0
   # MA-3（2026-09-15 v7）：清扫上一轮遗留的 *.old_* 缓存备份（各保留最近 1 个供回退）。
   # 原实现每次重置都新增一个数百 MB 目录且永不清理，累积可达 GB 级。放在本次改名前执行，
   # 本轮新备份不受影响。
+  # 复核 N2（删除红线，2026-09-16）：不再在 PS 内裸 Remove-Item，改为逐行输出 @@WU_OLD_BAK@@<路径>，
+  # 由主进程 trashOrUnlink（回收站优先）执行；Where-Object 过滤空值，规避 @($null).Count=1 判空陷阱。
   foreach ($base in @($sd,$cr)) {
-    $baks = @(Get-ChildItem -LiteralPath (Split-Path -Parent $base) -Filter ((Split-Path -Leaf $base) + '.old_*') -Directory -ErrorAction SilentlyContinue)
-    if ($baks.Count -gt 1) {
-      $baks | Sort-Object LastWriteTime -Descending | Select-Object -Skip 1 | ForEach-Object {
-        try { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue; Write-Output ('已清理旧缓存备份: ' + $_.Name) } catch { Write-TFDiag -Stage 'maint.wu' -Mutation 'partial' -Detail ('旧备份清理失败: ' + $_.Exception.Message) }
-      }
-    }
+    $stale = @((Get-ChildItem -LiteralPath (Split-Path -Parent $base) -Filter ((Split-Path -Leaf $base) + '.old_*') -Directory -ErrorAction SilentlyContinue) | Where-Object { $_ } | Sort-Object LastWriteTime -Descending | Select-Object -Skip 1)
+    foreach ($b in $stale) { Write-Output ('@@WU_OLD_BAK@@' + $b.FullName) }
   }
 foreach ($d in @($sd,$cr)) {
   if (Test-Path -LiteralPath $d) {

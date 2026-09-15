@@ -10,9 +10,18 @@
   // 审查 2-2：FALLBACK 改为构建期生成——原始规则 JSON 由 cleanup-fallback.generated.js 提供
   // （scripts/gen-fallback.js 产出，勿手改），经与 IPC 相同的 buildCategoriesFromRules 构建，
   // 从结构上消除「FALLBACK 副本与规则 JSON 双源漂移」。改规则后重新生成即可，无需手工同步。
-  const CATEGORIES_FALLBACK = buildCategoriesFromRules(
-    (typeof window !== 'undefined' ? window : globalThis).CLEANUP_RULES_FALLBACK || { groups: [] }
-  );
+  // 复核 J-5（2026-09-16）：内置 fallback JSON 结构异常时不再阻断整脚本加载（原直接调用
+  // 会抛错并连带扫描/执行 UI 全部失效），降级为空分类继续运行。
+  const CATEGORIES_FALLBACK = (() => {
+    try {
+      return buildCategoriesFromRules(
+        (typeof window !== 'undefined' ? window : globalThis).CLEANUP_RULES_FALLBACK || { groups: [] }
+      );
+    } catch (e) {
+      console.warn('内置清理规则兜底构建失败，已降级为空分类:', e);
+      return [];
+    }
+  })();
 
   // 从 cleanup-rules.json 的分组项提取渲染层所需字段（id/name/risk/fileCleanType/domain/nature）
   // v3.2.1 类目重构：domain/group 为唯一分类主轴元数据，nature 为性质标签（文档 §3.1）
@@ -1317,12 +1326,15 @@
   // 版本号，与「winapp2」语义不符（实测错显为 20260914 而非 260730）。
   let versionChecked = false;
 
-  function setVersionInfo(curRules, localWinapp2, remoteWinapp2) {
+  function setVersionInfo(curRules, localWinapp2, remoteWinapp2, hasUpdate) {
     const el = document.getElementById('rulesVersionInfo');
     if (!el) return;
     // v3.5.3（2026-09-15）：云端 winapp2 版本与本地一致时，追加「无需更新」字样
+    // 复核 N1（磁盘清理，2026-09-16）：「无需更新」必须同时满足 ①主规则库无更新（hasUpdate === false）
+    // ②本地与云端 winapp2 版本相等；此前只看 winapp2 相等，主规则库有更新时会与
+    // 「规则库有新版本」toast 自相矛盾。hasUpdate 非 false（含未传）一律不显徽标，保守不误导。
     const base = `（当前版本为：${curRules ?? '--'}，winapp2 版本为：${localWinapp2 ?? '--'}，云端 winapp2 版本为：${remoteWinapp2 ?? '--'}）`;
-    const upToDate = remoteWinapp2 != null && localWinapp2 != null && String(remoteWinapp2) === String(localWinapp2);
+    const upToDate = hasUpdate === false && remoteWinapp2 != null && localWinapp2 != null && String(remoteWinapp2) === String(localWinapp2);
     el.textContent = upToDate ? `${base} · 无需更新` : base;
   }
 
@@ -1332,7 +1344,7 @@
     if (!window.api?.cleanup?.checkRulesVersion) return;
     window.api.cleanup.checkRulesVersion().then((resp) => {
       if (resp && resp.success) {
-        setVersionInfo(resp.currentVersion, resp.currentWinapp2Version, resp.remoteWinapp2Version);
+        setVersionInfo(resp.currentVersion, resp.currentWinapp2Version, resp.remoteWinapp2Version, resp.hasUpdate);
         if (resp.hasUpdate) {
           window.app?.toast('info', `规则库有新版本：v${resp.remoteVersion}（当前 v${resp.currentVersion}），可点击「更新规则库」升级`, 6000);
         }
@@ -1387,7 +1399,7 @@
         window.app?.toast('success', `规则库更新完成（当前版本为：${resp.rulesVersion}）`);
         hiddenIds.clear();
         await loadRulesFromMain();
-        setVersionInfo(resp.rulesVersion, resp.rulesVersion, resp.rulesVersion); // 本地已是最新，三值同步
+        setVersionInfo(resp.rulesVersion, resp.winapp2Version ?? null, resp.winapp2Version ?? null, false); // 本地已是最新，本地/云端 winapp2 同源同值
       } else {
         dismissRulesProgressToast();
         window.app?.toast('error', (resp && resp.message) || '规则库更新失败');

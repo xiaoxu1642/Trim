@@ -352,6 +352,16 @@
     renderList();
     try {
       const resp = await window.api.maintenance.run(task.id);
+      // 复核 N1（提权半闭环，2026-09-16）：admin 任务未提权时服务端回传 needAdmin，
+      // 此前只输出一条错误文本、无提权入口；现在弹出提权确认（对齐 runtimes 范式）
+      if (resp && resp.needAdmin) {
+        status.set(task.id, 'error');
+        const elevated = await window.app?.requestElevation?.('该维护任务需要管理员权限才能执行系统级操作。');
+        appendOutput(elevated
+          ? '已获得管理员权限，应用将以管理员身份重启，重启后请重新执行本任务'
+          : '未提权，任务已取消（需要管理员权限）');
+        return 'error';
+      }
       const result = resp?.data?.result || (resp?.success ? 'ok' : 'error');
       status.set(task.id, resp?.success ? (result === 'ok' ? 'ok' : result === 'warn' ? 'warn' : 'error') : 'error');
       if (!resp?.success) appendOutput('错误：' + (resp?.message || '执行失败'));

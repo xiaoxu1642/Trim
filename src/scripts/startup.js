@@ -335,6 +335,13 @@
     if (!ok) return;
     try {
       const resp = await window.api.startup.toggle(selItems, enable);
+      // 复核 N2（提权半闭环，2026-09-16）：HKLM/所有用户项未提权时服务端回传 needAdmin，
+      // 此前只报部分失败、无提权入口；现在弹提权确认（对齐 runtimes 范式）
+      if (resp && resp.needAdmin) {
+        const elevated = await window.app?.requestElevation?.(`${act}这些启动项需要管理员权限（写入 HKLM 或所有用户范围）。`);
+        if (elevated) window.app?.toast('info', '已获得管理员权限，请重新执行本操作');
+        return;
+      }
       const failed = resp && resp.failed ? resp.failed : 0;
       if (resp && resp.success) {
         window.app?.toast('success', `${act}完成，成功 ${resp.success || 0} 项`);
@@ -383,6 +390,12 @@
     if (!ok) return;
     try {
       const resp = await window.api.startup.remove(selItems);
+      // 复核 N2：提权半闭环收口（同 doToggle）
+      if (resp && resp.needAdmin) {
+        const elevated = await window.app?.requestElevation?.('删除这些启动项需要管理员权限（写入 HKLM 或所有用户范围）。');
+        if (elevated) window.app?.toast('info', '已获得管理员权限，请重新执行删除');
+        return;
+      }
       if (resp && resp.success) {
         window.app?.toast('success', `删除完成，成功 ${resp.success || 0} 项`);
       } else {

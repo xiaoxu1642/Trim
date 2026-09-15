@@ -874,7 +874,7 @@ const OPTIONS = [
     // 对比审查 P0（2026-09-14）：此前 PROS_CONS 有本项文案、main.js optimizer:create-restore
     // 也按本 id 取脚本，但 OPTIONS 无定义 → 还原点创建链路整体失效（回退保障为空）。
     id: 'tf_restore_point', group: '系统精简', title: '创建系统还原点', risk: 'low',
-    desc: '为所有已启用系统保护的磁盘创建一个还原点，作为后续高风险优化的回退保障（异常时到「系统设置 → 恢复」或本页「系统还原点管理」回退）。PS7 无 Checkpoint-Computer，走 root\\default SystemRestore WMI 静态方法创建；需管理员权限，且至少一个卷已开启系统保护。',
+    desc: '为所有已启用系统保护的磁盘创建一个还原点，作为后续高风险优化的回退保障（异常时到「系统设置 → 恢复」或本页「系统还原点管理」回退）。注意：创建过程会临时将还原点创建频率限制改为 0（解除 24h 限制，原始值已进值级备份，可经「还原」回写）。PS7 无 Checkpoint-Computer，走 root\\default SystemRestore WMI 静态方法创建；需管理员权限，且至少一个卷已开启系统保护。',
     steps: [
       {
         label: '解除还原点创建频率限制',
@@ -1981,8 +1981,11 @@ const OPTIONS = [
 
 // ==================== 内存 SVCHost 拆分阈值 ====================
 function memorySteps(gb) {
-  const kb = MEMORY_KB[gb] != null ? MEMORY_KB[gb] : MEMORY_KB[8];
-  const gbName = (gb === 'default') ? '重置为默认值' : (gb + 'GB');
+  const known = MEMORY_KB[gb] != null;
+  const kb = known ? MEMORY_KB[gb] : MEMORY_KB[8];
+  // 复核 OPT-4（2026-09-16）：异常 gb 不再直接拼进文案（原样显示垃圾 label），
+  // 按查表/回退后的真实阈值命名；default 语义保留。
+  const gbName = (gb === 'default') ? '重置为默认值' : (known ? (gb + 'GB') : ('8GB（请求值异常，已回退到 8GB 阈值）'));
   return [{
     label: `SVCHost 拆分阈值 ${gbName}`,
     cmd: `reg add "HKLM\\SYSTEM\\ControlSet001\\Control" /v SvcHostSplitThresholdInKB /t REG_DWORD /d ${kb} /f`
@@ -2022,7 +2025,12 @@ function buildScript(steps) {
     const labelPs = psQuoteForScript(label);
     L.push(`# step ${i + 1}: ${label}`);
     if (s.reg) {
-      L.push('$___rf = Join-Path $env:TEMP ("wcopt_" + [guid]::NewGuid().ToString("N") + ".reg")');
+      // 复核 N2（优化中心，2026-09-16）：reg 临时文件原写 $env:TEMP，未走 A1 加固目录；
+      // 与 MA-1 同款改法——优先取 runPwshChild 注入的 TRIM_TMP（%APPDATA%\Trim\tmp，0o600），
+      // 兜底自建应用私有目录，不再落全局 %TEMP%。
+      L.push('$___tmpDir = if ($env:TRIM_TMP) { $env:TRIM_TMP } else { Join-Path $env:APPDATA "Trim\\tmp" }');
+      L.push('if (-not (Test-Path -LiteralPath $___tmpDir)) { New-Item -ItemType Directory -Path $___tmpDir -Force | Out-Null }');
+      L.push('$___rf = Join-Path $___tmpDir ("wcopt_" + [guid]::NewGuid().ToString("N") + ".reg")');
       L.push("$___rc = @'");
       L.push(s.reg);
       L.push("'@");

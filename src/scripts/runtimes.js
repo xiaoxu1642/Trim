@@ -152,7 +152,8 @@
     const root = document.getElementById('runtimesList');
     if (root && window.ds) root.innerHTML = window.ds.skeletonRows(6);
     else if (root) root.innerHTML = '<div class="empty-state"><p>正在扫描运行库…</p></div>';
-    renderSummary(null);
+    // 复核 RT-5（2026-09-16）：原为 renderSummary(null) 后紧接覆盖 textContent='扫描中…' 的冗余双写，
+    // 删除 renderSummary(null) 调用，只保留「扫描中…」一次设置（错误路径仍有 renderSummary(null) 兜底）。
     document.getElementById('rtSummary') && (document.getElementById('rtSummary').textContent = '扫描中…');
     try {
       const resp = await window.api.runtimes.collect();
@@ -211,6 +212,9 @@
         return;
       }
       if (resp && resp.success) {
+        // 复核 N1（运行库，2026-09-16）：repairedSet 此前只声明读取从未 add，「已修复」徽标永不显示；
+        // 修复成功后按目标条目 id 记账，重扫后 status==='ok' 时行内展示徽标（会话级，跨扫描保留）。
+        if (targetItem) repairedSet.add(targetItem.id);
         window.app?.toast('success', `「${actionName}」修复完成`);
       } else {
         window.app?.toast('error', (resp && resp.message) || `「${actionName}」修复未成功`);

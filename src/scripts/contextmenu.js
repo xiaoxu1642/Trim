@@ -451,6 +451,15 @@
         source: p.item.source,
         enabled: p.enabled
       })));
+      // 复核 N2（提权半闭环，2026-09-16）：HKLM/HKCR 范围项未提权时服务端回传 needAdmin，
+      // 此前只报「切换失败（可能需要管理员权限）」、无提权入口；现在弹提权确认
+      if (resp && resp.needAdmin) {
+        const elevated = await window.app?.requestElevation?.('切换这些右键菜单项需要管理员权限（写入 HKLM/HKCR 注册表）。');
+        if (elevated) window.app?.toast('info', '已获得管理员权限，请重新执行切换');
+        renderList();
+        updateUI();
+        return;
+      }
       const results = (resp.data && resp.data.results) || [];
       const byPath = {};
       for (const r of results) byPath[r.regPath] = r;
@@ -534,6 +543,12 @@
           id: item.id,
           name: item.name, regPath: item.regPath, risk: item.risk, source: item.source, clsid: item.clsid, category: item.category
         }]);
+        // 复核 N2：提权半闭环收口（同 applyToggles）
+        if (resp && resp.needAdmin) {
+          const elevated = await window.app?.requestElevation?.('删除该菜单项需要管理员权限（写入 HKLM/HKCR 注册表）。');
+          if (elevated) window.app?.toast('info', '已获得管理员权限，请重新执行删除');
+          return;
+        }
         if (!resp.success) throw new Error(resp.message);
         window.app?.toast('success', '已备份并删除所选菜单项');
       } else {

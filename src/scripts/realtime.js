@@ -11,6 +11,12 @@
 
   const $ = id => document.getElementById(id);
 
+  // 复核 N3（测速，2026-09-16）：resize 监听改为具名函数 + 模块级只绑一次。
+  // 原匿名监听在 init 注册后永不解绑，页面多次切入/切出会堆叠监听器（每个闭包持有
+  // canvas/state，内存泄漏 + 重复绘制）。具名化后 init 重复执行也不再新增。
+  function onWindowResize() { if (state.running) draw(); }
+  let resizeBound = false;
+
   const state = {
     adapter: '',          // 选中网卡名（空 = 所有活动网卡聚合）
     paused: false,        // 是否暂停采集
@@ -792,7 +798,10 @@
     const canvas = $('realtimeChart');
     canvas?.addEventListener('mousemove', onChartMove);
     canvas?.addEventListener('mouseleave', hideTooltip);
-    window.addEventListener('resize', () => { if (state.running) draw(); });
+    if (!resizeBound) {
+      resizeBound = true;
+      window.addEventListener('resize', onWindowResize);
+    }
 
     // 初次绘制空状态
     draw();

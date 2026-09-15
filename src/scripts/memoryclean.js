@@ -308,6 +308,13 @@
     window.app?.toast('info', '正在清理内存…');
     try {
       const resp = await window.api.memory.clean(list);
+      // 复核 N1（提权半闭环，2026-09-16）：服务端已拦非管理员请求并回传 needAdmin，
+      // 渲染层必须给出提权入口，否则用户卡死在「需要权限」无路可走（对齐 runtimes 范式）
+      if (resp && resp.needAdmin) {
+        const elevated = await window.app?.requestElevation?.('内存清理需要管理员权限才能释放系统级缓存。');
+        if (elevated) window.app?.toast('info', '已获得管理员权限，请重新点击「开始清理」');
+        return;
+      }
       if (resp && resp.success && resp.data) {
         const d = resp.data;
         const okCount = (d.results || []).filter(x => x.ok).length;
@@ -341,6 +348,12 @@
     window.app?.toast('info', '正在专杀顽固软件后台进程…');
     try {
       const resp = await window.api.memory.stubbornKill();
+      // 复核 N1：提权半闭环收口（同 memory:clean）
+      if (resp && resp.needAdmin) {
+        const elevated = await window.app?.requestElevation?.('顽固软件专杀需要管理员权限才能结束受保护的后台进程。');
+        if (elevated) window.app?.toast('info', '已获得管理员权限，请重新点击「一键专杀」');
+        return;
+      }
       if (resp && resp.success && resp.data) {
         const d = resp.data;
         const killed = Number(d.killed) || 0;
@@ -377,6 +390,12 @@
     window.app?.toast('info', '正在阻止顽固软件开机自启…');
     try {
       const resp = await window.api.memory.stubbornBlock();
+      // 复核 N1：提权半闭环收口（同 memory:clean）
+      if (resp && resp.needAdmin) {
+        const elevated = await window.app?.requestElevation?.('阻止开机自启需要管理员权限才能修改服务启动类型。');
+        if (elevated) window.app?.toast('info', '已获得管理员权限，请重新执行本操作');
+        return;
+      }
       if (resp && resp.success && resp.data) {
         const d = resp.data;
         const svcs = Array.isArray(d.services) ? d.services : [];

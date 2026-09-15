@@ -280,7 +280,9 @@ foreach ($e in $entries) {
       }
     }
     if (Test-Path $ucPath) {
-      $results += @{ key = $key; ok = $false; message = 'UserChoice 删除失败（UCPD 保护可能仍生效，请确认已重启）' }
+      # 复核 DA-3/N1（2026-09-16）：失败分支也回带 origProgId，主进程据此持久化原选择，
+      # 否则用户在 Trim 之前的默认应用选择实际不可追溯/不可恢复。
+      $results += @{ key = $key; ok = $false; message = 'UserChoice 删除失败（UCPD 保护可能仍生效，请确认已重启）'; origProgId = $origProgId }
       continue
     }
 
@@ -294,7 +296,8 @@ foreach ($e in $entries) {
     [Microsoft.Win32.Registry]::SetValue($clsKey + '\\OpenWithProgids', $progId, ([byte[]]@()), [Microsoft.Win32.RegistryValueKind]::None) | Out-Null
     Set-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\ApplicationAssociationToasts' -Name ($progId + '_' + $key) -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
   } catch {
-    $results += @{ key = $key; ok = $false; message = ('写入失败: ' + $_.Exception.Message) }
+    # 复核 DA-3/N1（2026-09-16）：同上，失败分支回带 origProgId
+    $results += @{ key = $key; ok = $false; message = ('写入失败: ' + $_.Exception.Message); origProgId = $origProgId }
     continue
   }
 

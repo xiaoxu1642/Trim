@@ -67,15 +67,18 @@
     const globalDisabled = !!data.globalDisabled;
 
     const protEl = q('#restoreProtection');
-    if (globalDisabled) {
-      protEl.textContent = '已禁用';
-      protEl.className = 'summary-value text-danger';
-    } else if (prot.length) {
-      protEl.textContent = '已开启';
-      protEl.className = 'summary-value text-success';
-    } else {
-      protEl.textContent = '已关闭';
-      protEl.className = 'summary-value text-danger';
+    // 复核 💭2（2026-09-16）：与其它元素同口径判空，骨架未挂载时不抛错
+    if (protEl) {
+      if (globalDisabled) {
+        protEl.textContent = '已禁用';
+        protEl.className = 'summary-value text-danger';
+      } else if (prot.length) {
+        protEl.textContent = '已开启';
+        protEl.className = 'summary-value text-success';
+      } else {
+        protEl.textContent = '已关闭';
+        protEl.className = 'summary-value text-danger';
+      }
     }
     const cnt = q('#restoreCount');
     if (cnt) cnt.textContent = rps.length;
@@ -126,7 +129,8 @@
       window.app?.toast('error', '创建功能仅在 Electron 环境中可用');
       return;
     }
-    const ok = await window.app.confirmDanger(
+    // 复核 💭3（2026-09-16）：confirmDanger 链路判空，预览模式（无 app.js 提供方）不抛错
+    const ok = await window.app?.confirmDanger?.(
       '创建系统还原点',
       '系统还原点用于系统异常时一键回退。\n\n即将为所有已启用保护的磁盘创建还原点。',
       '创建',
@@ -141,6 +145,13 @@
     btn.innerHTML = '创建中…';
     try {
       const resp = await window.api.optimizer.createRestore();
+      // 复核 💭7（提权半闭环，2026-09-16）：服务端已补 needAdmin 门禁回传，
+      // 此处弹提权确认（原先只 toast 笼统错误，无提权入口）
+      if (resp && resp.needAdmin) {
+        const elevated = await window.app?.requestElevation?.('创建系统还原点需要管理员权限。');
+        if (elevated) window.app?.toast('info', '已获得管理员权限，请重新点击「创建还原点」');
+        return;
+      }
       if (resp && resp.success) {
         window.app?.toast('success', '系统还原点创建成功');
         await load();

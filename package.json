@@ -1,6 +1,6 @@
 {
   "name": "trim",
-  "version": "3.5.3",
+  "version": "3.6.0",
   "description": "Trim",
   "main": "main.js",
   "author": "xiaoxu",
@@ -66,6 +66,10 @@
       {
         "from": "vendor/pwsh/PowerShell-7.6.6-win-x64.zip",
         "to": "pwsh/PowerShell-7.6.6-win-x64.zip"
+      },
+      {
+        "from": "vendor/pwsh/PowerShell-7.6.6-win-x64.zip.sha256",
+        "to": "pwsh/PowerShell-7.6.6-win-x64.zip.sha256"
       }
     ],
     "publish": [

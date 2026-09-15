@@ -435,6 +435,29 @@ function localDateStr(d = new Date()) {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
 
+// 复核 LOG-N1（2026-09-16）：日志按日累积且无保留上限，v3.5.3 新增的 PS7 运行时与
+// 运行库 verbose 日志放大磁盘增长。启动时清理 30 天前的 app-*.log（应用自产诊断数据，
+// 同临时脚本口径直接删除，不进回收站）；当天日志与文件名不符合日期模式的文件不受影响。
+const LOG_RETENTION_DAYS = 30;
+let logPrunedAtStartup = false;
+function pruneOldLogs() {
+  if (logPrunedAtStartup) return;
+  logPrunedAtStartup = true;
+  try {
+    if (!fs.existsSync(LOG_DIR)) return;
+    const cutoff = Date.now() - LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    const files = fs.readdirSync(LOG_DIR).filter(f => /^app-\d{4}-\d{2}-\d{2}\.log$/.test(f));
+    let removed = 0;
+    for (const f of files) {
+      const full = path.join(LOG_DIR, f);
+      try {
+        if (fs.statSync(full).mtimeMs < cutoff) { fs.unlinkSync(full); removed++; }
+      } catch (_) {}
+    }
+    if (removed) writeLog('info', `日志清理: 已删除 ${removed} 个超过 ${LOG_RETENTION_DAYS} 天的旧日志文件`);
+  } catch (_) {}
+}
+
 function writeLog(level, message) {
   ensureLogDir();
   // LOG-2（2026-09-15）：level/message 兜底转字符串，避免非字符串入参抛 TypeError
@@ -534,7 +557,7 @@ function resolvePowerShell7Path() {
     throw error;
   }
 
-  const error = new Error('未找到 PowerShell 7（pwsh.exe），请先安装 PowerShell 7 后重试。');
+  const error = new Error('未找到 PowerShell 7（pwsh.exe）。可安装 PowerShell 7 后重试，或在设置页点击「立即准备」使用内置运行时。');
   error.code = 'PWSH7_NOT_FOUND';
   pwshProbeFailedAt = Date.now(); // 审查v4-M7：失败结论入负缓存
   pwshProbeError = error;
@@ -578,10 +601,34 @@ function runPwshChild(args, options) {
     try {
       executable = resolvePowerShell7Path();
     } catch (err) {
+      // 复核 N5（2026-09-16）：候选全空但存在内置 zip 时，探测抛 PWSH7_PREPARING。
+      // 此前各 IPC 直接收到「正在准备…」后失败，用户只能重试；现在主进程在此处
+      // await 一次后台准备（解压 10-30s），就绪后重试解析，PS 通道自动恢复。
+      // 刻意不加 system PowerShell 5.1 兜底：PS 引擎脚本使用 PS7 专属语法，
+      // 5.1 静默降级会产生假结果，比明确失败更危险（设计文档方案 A 同口径）。
+      if (err && err.code === 'PWSH7_PREPARING') {
+        ensurePwshRuntimeAsync().then(() => {
+          try {
+            executable = resolvePowerShell7Path();
+          } catch (retryErr) {
+            writeLog('error', retryErr.message);
+            reject(retryErr);
+            return;
+          }
+          startChild(executable);
+        }).catch((prepErr) => {
+          writeLog('error', `内置 PowerShell 7 运行时准备失败: ${prepErr.message}`);
+          reject(prepErr);
+        });
+        return;
+      }
       writeLog('error', err.message);
       reject(err);
       return;
     }
+    startChild(executable);
+
+    function startChild(executable) {
     const { timeout, diagOp, onStdout, ...spawnOptions } = options;
     const child = spawn(executable, args, {
       windowsHide: true,
@@ -632,6 +679,7 @@ function runPwshChild(args, options) {
         finish({ stdout, stderr: `${stderr}\nPowerShell 7 执行超时`, code: -1, timedOut: true });
       }, timeout);
     }
+    } // startChild
   });
 }
 
@@ -1347,8 +1395,8 @@ handleSafe('cleanup:execute', async (event, { items, force, toRecycle, autoRebui
       data.recycledBytes = recycledBytes;
       data.recycledCount = recycledCount;
       data.success = (data.details || []).filter(d => d.status === 'ok').length;
-      // v3.3.4 文案纠偏：partial 单列（部分移入回收站成功），不计入 failed
-      data.failed = (data.details || []).filter(d => d.status === 'error').length;
+      // 复核 J-3（磁盘清理，2026-09-16）：原在此处与下方 try 块内对 data.failed 同式重复赋值
+      // （值恒等、口径漂移隐患）。统一收敛到 try 块内唯一一处（覆盖全部路径）。
       data.partial = (data.details || []).filter(d => d.status === 'partial').length;
       data.skipped = (data.details || []).filter(d => d.status === 'skip').length;
     }
@@ -1683,7 +1731,11 @@ handleSafe('cleanup:update-rules', async (event) => {
   // 落盘成功即抬升防回滚水位线（只升不降）；写失败不阻断本次更新，读取侧仍有验签兜底
   CLEANUP_SCRIPT.setRulesWatermark(result.version);
   writeLog('info', `清理规则库已更新: rulesVersion=${result.version}`);
-  return { success: true, rulesVersion: result.version, source: result.source };
+  // 复核 N1（磁盘清理，2026-09-16）：一并返回 winapp2Version（与 check-rules-version 同口径解析），
+  // 渲染层不再把 rulesVersion 冒充 winapp2 版本号（v3.3.4 已纠正过同款错显）。
+  let winapp2Version = null;
+  try { winapp2Version = JSON.parse(result.text).winapp2Version ?? null; } catch (_) {}
+  return { success: true, rulesVersion: result.version, winapp2Version, source: result.source };
 });
 
 // v3.2.1：规则库版本检测（轻量只读）——拉远端并验签后仅读取版本号，不写盘。
@@ -2370,23 +2422,48 @@ handleSafe('contextmenu:remove', async (event, { items, clsids } = {}) => {
   if (hasHklm && !(await isAdmin())) {
     return { success: false, needAdmin: true, message: '涉及系统级右键菜单的操作需要管理员权限，请先提权' };
   }
-  const script = CONTEXTMENU_SCRIPT.remove(safeRemoveItems);
-  const scriptPath = writeTempScript(script);
-  try {
-    writeLog('warn', `删除右键菜单: ${safeRemoveItems.length} 项`);
-    const { stdout, code } = await runPowerShellFile(scriptPath, { timeout: 60000, diagOp: 'contextmenu.remove' });
-    if (code === 0) {
-      try {
-        const data = JSON.parse(stdout.trim());
-        return { success: data.failed === 0, data };
-      } catch (e) {
-        return { success: false, message: '解析删除结果失败' };
+  // 复核 N1（删除红线，2026-09-16）：文件系统项（「发送到」.lnk 等）不进 PS 裸删，
+  // 改由主进程 trashOrUnlink（回收站优先）+ 全局删除清单；注册表类维持 .reg 备份 + PS 删除。
+  const fsRemoveItems = safeRemoveItems.filter(it => it && it.source === 'filesystem');
+  const regRemoveItems = safeRemoveItems.filter(it => it && it.source !== 'filesystem');
+  let data = null;
+  if (regRemoveItems.length) {
+    const script = CONTEXTMENU_SCRIPT.remove(regRemoveItems);
+    const scriptPath = writeTempScript(script);
+    try {
+      writeLog('warn', `删除右键菜单: ${regRemoveItems.length} 项`);
+      const { stdout, code } = await runPowerShellFile(scriptPath, { timeout: 60000, diagOp: 'contextmenu.remove' });
+      if (code === 0) {
+        try { data = JSON.parse(stdout.trim()); } catch (e) { data = null; }
+      }
+    } finally {
+      try { fs.unlinkSync(scriptPath); } catch (e) {}
+    }
+    if (!data) return { success: false, message: '删除失败' };
+  } else {
+    data = { success: 0, failed: 0, results: [] };
+  }
+  data.results = Array.isArray(data.results) ? data.results : [];
+  if (fsRemoveItems.length) {
+    // 删除红线：回收站优先 + flushLogSync + 删除清单（对齐 fileclean 范式）
+    flushLogSync();
+    const manifestEntries = [];
+    for (const it of fsRemoveItems) {
+      const p = String(it.regPath || '');
+      if (!p) { data.failed++; data.results.push({ name: it.name, status: 'error', message: '缺少文件路径' }); continue; }
+      const r = await trashOrUnlink(p);
+      if (r.ok) {
+        data.success = (Number(data.success) || 0) + 1;
+        manifestEntries.push({ path: p, name: it.name || '', recycled: !!r.recycled, deletedAt: new Date().toISOString() });
+        data.results.push({ name: it.name, status: 'ok', message: r.recycled ? '已移入回收站' : '已删除（回收站不可用，已永久删除）' });
+      } else {
+        data.failed++;
+        data.results.push({ name: it.name, status: 'error', message: r.message || '删除失败' });
       }
     }
-    return { success: false, message: '删除失败' };
-  } finally {
-    try { fs.unlinkSync(scriptPath); } catch (e) {}
+    try { saveDeleteManifest(`ctxmenu-${Date.now()}`, manifestEntries); } catch (e) { writeLog('warn', `右键菜单删除清单落盘失败: ${e.message}`); }
   }
+  return { success: data.failed === 0, data };
 });
 
 // 启停切换右键菜单项（勾选=启用，取消=禁用；禁用为可逆操作，不做备份）
@@ -2455,8 +2532,17 @@ handleSafe('contextmenu:restore', async (event) => {
 
 // 提取右键菜单项程序图标（CLSID → InprocServer32 DLL → PNG base64）
 handleSafe('contextmenu:icons', async (event, { items } = {}) => {
+  // 复核 CM-2（右键，2026-09-16）：原仅校验 clsid 形如 {xxx}，不校验是否属最近扫描；
+  // 虽为只读图标提取，仍收窄为快照内的 clsid，防任意 CLSID 被探测提取。
+  const snap = contextmenuSnapshots.get(event.sender.id);
+  const knownClsids = new Set();
+  if (snap) for (const it of snap.values()) {
+    const c = String((it && it.clsid) || '').trim();
+    if (c) knownClsids.add(c.toUpperCase());
+  }
   const iconItems = (Array.isArray(items) ? items : [])
     .filter(it => it && it.clsid && String(it.clsid).trim().startsWith('{'))
+    .filter(it => knownClsids.has(String(it.clsid).trim().toUpperCase()))
     .map(it => ({ clsid: String(it.clsid).trim() }));
   if (!iconItems.length) return { success: true, data: {} };
     const script = CONTEXTMENU_SCRIPT.icons(iconItems);
@@ -2480,6 +2566,22 @@ handleSafe('contextmenu:icons', async (event, { items } = {}) => {
 handleSafe('contextmenu:open-in-regedit', async (event, { regPath } = {}) => {
   let p = String(regPath || '').trim().replace(/\\+$/, '');
   if (!p) return { success: false, message: '无效的注册表路径' };
+  // 复核 CM-1（右键，2026-09-16）：原不校验快照，直接取渲染层 regPath 写入 regedit LastKey；
+  // 只读导航+转义虽无注入，纵深上仍限定为最近扫描结果内的键（归一化后比对）。
+  const canonKey = (s) => String(s || '').replace(/^Registry::/i, '').replace(/\\+$/, '').toLowerCase()
+    .replace(/^hkey_classes_root(?=\\|$)/, 'hkcr')
+    .replace(/^hkey_current_user(?=\\|$)/, 'hkcu')
+    .replace(/^hkey_local_machine(?=\\|$)/, 'hklm')
+    .replace(/^hkey_users(?=\\|$)/, 'hku');
+  const snap = contextmenuSnapshots.get(event.sender.id);
+  const wanted = canonKey(p);
+  let known = false;
+  if (snap) {
+    for (const it of snap.values()) {
+      if (it && it.regPath && canonKey(it.regPath) === wanted) { known = true; break; }
+    }
+  }
+  if (!known) return { success: false, message: '路径不在最近一次扫描结果内，已拒绝打开' };
   // 根键别名 → 完整名称（regedit LastKey 需要完整根键名）
   const alias = {
     HKCR: 'HKEY_CLASSES_ROOT', HKCU: 'HKEY_CURRENT_USER', HKLM: 'HKEY_LOCAL_MACHINE',
@@ -2614,8 +2716,12 @@ handleSafe('optimizer:run', async (event, { optionId, params = {} } = {}) => {
   try {
     writeLog('info', `优化电脑执行: ${opt.title} ${params.restore ? '(还原)' : ''}`);
     let output = '';
+    // 复核 OPT-5（2026-09-16）：tf_svc_bulk 需逐个改写 70+ 服务（可追加商店 5 服务），
+    // 总超时 120s 接近上限可能被 kill 留 pending；按步骤数放宽：
+    // 服务批量类给 300s，其余维持 120s（markApplied unknown 兕底仍在，无静默丢失）。
+    const timeoutMs = optionId === 'tf_svc_bulk' ? 300000 : 120000;
     const { stdout, code } = await runPowerShellFile(scriptPath, {
-      timeout: 120000,
+      timeout: timeoutMs,
       diagOp: 'optimizer.apply',
       onStdout(chunk) {
         output += chunk;
@@ -3035,7 +3141,10 @@ const OPT_REGEXE_MAP = {
 };
 
 // 执行前备份：读取目标键值当前状态并存档（optionId → values）
-handleSafe('optimizer:backup-reg', async (event, { optionId, steps } = {}) => {
+// 执行前备份：读取目标键值当前状态并存档（optionId → values）。
+// 复核 N3（2026-09-16）：从 IPC 处理器中抽出，供 optimizer:create-restore 复用——
+// 否则还原点链路旁路 optimizer:run，step1 的频率限制覆写永远不进值级备份。
+async function backupOptionRegValuesById(optionId) {
   try {
     if (!optionId || !OPTIMIZER.OPTIONS.some(option => option.id === optionId)) return { success: false, message: '未知的优化选项' };
     // dynamic 项（svc_mem_gb）的注册表目标由档位脚本运行时生成，这里直接声明
@@ -3106,6 +3215,10 @@ handleSafe('optimizer:backup-reg', async (event, { optionId, steps } = {}) => {
     writeLog('error', `优化项注册表备份异常: ${e.message}`);
     return { success: false, message: e.message };
   }
+}
+
+handleSafe('optimizer:backup-reg', async (event, { optionId } = {}) => {
+  return backupOptionRegValuesById(optionId);
 });
 
 // v2.6.0（P0-3）：按备份条目回写注册表原值（restore-reg 与退役迁移共用的还原实现）。
@@ -3283,13 +3396,60 @@ async function waitRestorePointIncrease(before, maxMs = 15000) {
 }
 
 // 创建系统还原点（复用 tf_restore_point 的脚本）
+// 复核 N5（2026-09-16）：进程内并发重入守卫——程序化并发两次会创建两份还原点且各自回读
+let restorePointCreateInFlight = false;
 handleSafe('optimizer:create-restore', async (event) => {
+  // 复核 💭7（提权半闭环，2026-09-16）：未提权时明确回传 needAdmin，
+  // 渲染层 sysrestore.js 据此弹提权确认（原先只报笼统错误文案）
+  if (!(await isAdmin())) {
+    return { success: false, needAdmin: true, message: '创建系统还原点需要管理员权限，请先提权' };
+  }
+  if (restorePointCreateInFlight) {
+    return { success: false, message: '正在创建还原点，请勿重复提交' };
+  }
+  restorePointCreateInFlight = true;
+  try {
   const opt = OPTIMIZER.OPTIONS.find(o => o.id === 'tf_restore_point');
   const steps = opt && opt.steps ? opt.steps : [];
   if (!steps.length) return { success: false, message: '缺少还原点脚本' };
+  // 复核 N1（2026-09-16）：创建前预检系统保护状态。保护被全局关闭时 CreateRestorePoint
+  // 必败，原先笼统报「需管理员权限」，误导用户反复重试；现在如实告知原因。
+  try {
+    const preScript = [
+      '$ErrorActionPreference = "SilentlyContinue"',
+      '$srKey = Get-ItemProperty "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore"',
+      '$gd = ($srKey -and $null -ne $srKey.DisableSR -and [int]$srKey.DisableSR -eq 1)',
+      '$vol = @(Get-CimInstance Win32_ShadowStorage -ErrorAction SilentlyContinue)',
+      "Write-Output ('@@SRPRE@@' + ({ globalDisabled = $gd; protectedVolumes = $vol.Count } | ConvertTo-Json -Compress))"
+    ].join('\n');
+    const prePath = writeTempScript(preScript);
+    try {
+      const { stdout } = await runPowerShellFile(prePath, { timeout: 20000 });
+      const line = (stdout || '').split(/\r?\n/).map(s => s.trim()).find(l => l.startsWith('@@SRPRE@@'));
+      if (line) {
+        const pre = JSON.parse(line.slice('@@SRPRE@@'.length));
+        if (pre.globalDisabled) {
+          return { success: false, message: '系统保护已被全局关闭（DisableSR=1），请先在「系统 → 关于 → 系统保护」中开启后再创建还原点' };
+        }
+        if (!pre.protectedVolumes) {
+          return { success: false, message: '没有任何卷开启系统保护，请先在「系统 → 关于 → 系统保护」中为系统盘开启保护' };
+        }
+      }
+    } finally { try { fs.unlinkSync(prePath); } catch (e) {} }
+  } catch (e) {
+    writeLog('warn', `还原点创建前预检失败（不阻断）: ${e.message}`);
+  }
   // SR-3（S6，2026-09-15）：补 OPT_STATE 记账 + 注册表备份。原 create-restore 旁路
   // optimizer:run，step1（解除 24h 创建频率限制，写 HKLM）不进状态页、不备份原值，
   // 用户想回退时无据可查。这里与 optimizer:run 同口径：执行前记账 + 备份 step1 的 reg。
+  // 复核 N3（2026-09-16）：补上此前缺失的值级备份——SR-3 注释声称备份但只 recordPending，
+  // 频率覆写的原始值进 optimizer-backups.json 后可经「还原」回写。
+  try {
+    const bk = await backupOptionRegValuesById('tf_restore_point');
+    if (!bk || !bk.success) writeLog('warn', `还原点频率覆写值级备份失败: ${bk && bk.message}`);
+  } catch (e) {
+    writeLog('warn', `还原点频率覆写值级备份异常: ${e.message}`);
+  }
   if (OPT_STATE.ready()) {
     try {
       OPT_STATE.recordPending('tf_restore_point', { title: opt.title, kinds: classifyStepKinds(steps) });
@@ -3329,6 +3489,9 @@ handleSafe('optimizer:create-restore', async (event) => {
     return { success: false, message: e.message };
   } finally {
     try { fs.unlinkSync(scriptPath); } catch (e) {}
+  }
+  } finally {
+    restorePointCreateInFlight = false;
   }
 });
 
@@ -3480,6 +3643,51 @@ handleSafe('startup:delete', async (event, { items = [] } = {}) => {
     let data = null;
     try { data = JSON.parse((stdout || '').trim()); } catch (e) { data = null; }
     if (!data) return { success: false, message: '无法解析执行结果' };
+    // 复核 N1（删除红线，2026-09-16）：PS 备份后回传的文件类删除统一走主进程
+    // trashOrUnlink（回收站优先）+ 全局删除清单；启动项本体必须与快照 filePath 一致，
+    // 备份文件必须位于应用备份目录内，否则拒绝执行（防脚本输出被利用）。
+    const fsDelete = Array.isArray(data.fsDelete) ? data.fsDelete.filter(Boolean) : [];
+    if (fsDelete.length) {
+      flushLogSync();
+      const roamingBackup = process.env.APPDATA ? path.join(process.env.APPDATA, 'Trim', 'startup-backup', 'deleted') : null;
+      const candidates = [roamingBackup, path.join(APP_DATA_DIR, 'startup-backup', 'deleted')].filter(Boolean);
+      const manifestEntries = [];
+      for (const fd of fsDelete) {
+        const p = String((fd && fd.path) || '');
+        const item = safeItems.find(it => it && it.id === fd.id);
+        let allowed = false;
+        if (p && item) {
+          if (fd.kind === 'startup-file' && item.filePath) {
+            allowed = path.resolve(p) === path.resolve(String(item.filePath));
+          } else if (fd.kind === 'backup-file') {
+            allowed = candidates.some(dir => {
+              const rel = path.relative(dir, p);
+              return !!rel && !rel.startsWith('..') && !path.isAbsolute(rel);
+            });
+          }
+        }
+        let ok = false, recycled = false, msg = '';
+        if (!allowed) {
+          msg = '删除路径与快照不符，已拒绝';
+        } else {
+          const r = await trashOrUnlink(p);
+          ok = !!r.ok;
+          recycled = !!r.recycled;
+          if (ok) manifestEntries.push({ path: p, name: (fd && fd.name) || (item && item.name) || '', recycled, deletedAt: new Date().toISOString() });
+          else msg = r.message || '删除失败';
+        }
+        const entry = (data.results || []).find(rr => rr && rr.id === fd.id);
+        if (ok) {
+          data.success = (Number(data.success) || 0) + 1;
+          if (entry) { entry.status = 'ok'; entry.message = recycled ? '已移入回收站（已备份）' : '已删除（已备份；回收站不可用，已永久删除）'; }
+        } else {
+          data.failed = (Number(data.failed) || 0) + 1;
+          if (entry) { entry.status = 'error'; entry.message = msg; }
+        }
+      }
+      try { saveDeleteManifest(`startup-${Date.now()}`, manifestEntries); } catch (e) { writeLog('warn', `启动项删除清单落盘失败: ${e.message}`); }
+      delete data.fsDelete;
+    }
     return { success: data.failed === 0, ...data };
   } catch (e) {
     writeLog('error', `启动项删除异常: ${e.message}`);
@@ -4877,6 +5085,21 @@ handleSafe('diskbench:run', async (event, options = {}) => {
   const benchTimeoutMs = Number(safeOptions.duration) * 1000 * 4 + 60000;
   const resultLines = [];
   let outputBuffer = '';
+  // 复核 N1（测速，2026-09-16）：超时/中止/失败时 PS 内清理不会执行，用户所选目录下的
+  // Trim-DiskBench 测试目录（顺序文件 256MB 窗口 + 随机文件 128MB，峰值约 384MB）会残留。
+  // 这里在异常路径递归清理；目录名固定且由本功能创建，属应用自产基准临时数据
+  // （同临时脚本直接 unlink 的既有口径），不进回收站、不落删除清单。
+  const cleanupBenchResidue = () => {
+    const residueDir = path.join(resolved, 'Trim-DiskBench');
+    try {
+      if (fs.existsSync(residueDir)) {
+        fs.rmSync(residueDir, { recursive: true, force: true, maxRetries: 3 });
+        writeLog('warn', `磁盘测速异常结束，已清理残留测试目录: ${residueDir}`);
+      }
+    } catch (e) {
+      writeLog('error', `磁盘测速残留清理失败: ${residueDir} -> ${e.message}`);
+    }
+  };
   try {
     const { stdout, stderr, code } = await runPowerShellFile(scriptPath, {
       timeout: benchTimeoutMs,
@@ -4897,15 +5120,17 @@ handleSafe('diskbench:run', async (event, options = {}) => {
       }
     });
     if (outputBuffer.trim()) resultLines.push(outputBuffer.trim());
-    if (code !== 0) return { success: false, message: stderr || '磁盘测速失败' };
+    if (code !== 0) { cleanupBenchResidue(); return { success: false, message: stderr || '磁盘测速失败' }; }
     const text = (resultLines.join('\n') || stdout).trim();
     let data;
     try { data = JSON.parse(text); } catch (err) {
       const last = text.split(/\r?\n/).filter(l => l.trim()).pop();
       data = JSON.parse(last);
     }
+    if (data.measured !== true) cleanupBenchResidue(); // 测量未完成也残留清理（同异常路径口径）
     return { success: data.measured === true, data };
   } catch (e) {
+    cleanupBenchResidue(); // 超时（runPowerShellFile 拒绝）与 JSON 解析失败都落到这里
     return { success: false, message: e.message };
   } finally { try { fs.unlinkSync(scriptPath); } catch (e) {} }
 });
@@ -4938,13 +5163,34 @@ function saveBenchHistory(records) {
   }
 }
 
-handleSafe('bench-history:add', (event, { record }) => {
+handleSafe('bench-history:add', (event, { record } = {}) => {
   try {
+    // 复核 N2（测速，2026-09-16）：对齐 realtime:report-save 的 schema 校验——
+    // 渲染层传来的数值字段必须为有限数（NaN/字符串/缺失拒绝），路径仅接受短字符串；
+    // 非法记录整条拒绝，不再原样落盘污染 bench-history.json。
+    if (!record || typeof record !== 'object' || Array.isArray(record)) {
+      return { success: false, message: '记录格式不合法' };
+    }
+    const numericFields = ['blockSize', 'queueDepth', 'threads', 'duration', 'sequentialRead', 'sequentialWrite', 'randomRead', 'randomWrite', 'iops', 'latency'];
+    const clean = {};
+    for (const f of numericFields) {
+      const v = record[f];
+      if (v === undefined || v === null) continue; // 可选字段缺省不落盘
+      if (typeof v !== 'number' || !Number.isFinite(v)) return { success: false, message: `字段 ${f} 必须为有限数值` };
+      clean[f] = v;
+    }
+    if (record.path !== undefined) {
+      if (typeof record.path !== 'string' || record.path.length > 1024) return { success: false, message: '路径字段不合法' };
+      clean.path = record.path;
+    }
+    if (clean.sequentialRead === undefined && clean.sequentialWrite === undefined) {
+      return { success: false, message: '缺少测速结果数值' };
+    }
     const records = loadBenchHistory();
     records.unshift({
       id: Date.now() + '_' + Math.random().toString(36).slice(2, 8),
       timestamp: new Date().toISOString(),
-      ...record
+      ...clean
     });
     saveBenchHistory(records);
     return { success: true };
@@ -5483,9 +5729,17 @@ handleSafe('memory:kill', async (event, { pid } = {}) => {
   const n = Number(pid);
   if (!Number.isInteger(n) || n <= 0) return { success: false, message: '无效的进程 ID' };
   // 自我防护：Trim 自身进程一律拒绝（无论渲染层怎么传）
-  if (n === process.pid) return { success: false, message: '不能结束 Trim 自身进程' };
+  // 复核 N2（进程管理，2026-09-16）：原仅拦主进程 PID —— Electron 的 renderer/GPU helper
+  // 等子进程 PID 不同、名称不在黑名单，仍可被点杀致应用崩溃；扩展拦父进程，
+  // 并在快照拿到可执行路径时与本应用 process.execPath 比对，同 exe 的进程一律拒绝。
+  if (n === process.pid || n === process.ppid) return { success: false, message: '不能结束 Trim 自身进程' };
   const known = (processSnapshots.get(event.sender.id) || new Map()).get(n);
   if (!known) return { success: false, message: '进程不是最近一次扫描结果，已拒绝结束' };
+  const selfExe = String(process.execPath || '').toLowerCase();
+  const knownExe = String(known.Path || '').toLowerCase();
+  if (selfExe && knownExe && knownExe === selfExe) {
+    return { success: false, message: '不能结束 Trim 自身进程（含渲染/GPU 等子进程）' };
+  }
   // 关键进程黑名单：系统核心进程禁止结束（前端只读态之外的最终防线）
   if (isCriticalProcessName(known.ProcessName)) {
     return { success: false, message: `系统关键进程 ${known.ProcessName} 已受保护，不能结束` };
@@ -6253,9 +6507,60 @@ handleSafe('peripheral:apply', async (event, options = {}) => {
     const { code, stderr } = await runPowerShellFile(scriptPath, { timeout: 30000 });
     const ok = code === 0;
     if (!ok) writeLog('warn', `外设优化应用失败 exit=${code}: ${stderr || ''}`);
+    // 复核 N2（2026-09-16）：备份 .reg 按次累积无上限，保留最近 10 份，
+    // 更旧的外设备份走 trashOrUnlink 回收站（不裸删，对齐删除红线）
+    if (ok) await prunePeripheralBackups(10);
     return { success: ok, message: ok ? '完成' : '写入注册表失败，可能需要管理员权限' };
   } catch (e) {
     writeLog('error', `外设优化应用异常: ${e.message}`);
+    return { success: false, message: e.message };
+  } finally { try { fs.unlinkSync(scriptPath); } catch (e) {} }
+});
+
+// 复核 N2（2026-09-16）：外设备份 .reg 保留最近 keep 份，更旧的进回收站。
+// PS 侧写死 %APPDATA%\Trim\peripheral-backup，便携模式 APP_DATA_DIR 另有其位，
+// 两个候选目录都扫，确保实际产出备份的位置都被修剪。
+async function prunePeripheralBackups(keep = 10) {
+  const localAppDataRoaming = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+  const dirs = [...new Set([
+    path.join(localAppDataRoaming, 'Trim', 'peripheral-backup'),
+    path.join(APP_DATA_DIR, 'peripheral-backup'),
+  ])];
+  for (const backupDir of dirs) {
+    let files = [];
+    try {
+      files = fs.readdirSync(backupDir)
+        .filter(f => /^backup_\d{8}_\d{6}\.reg$/.test(f))
+        .sort()
+        .reverse();
+    } catch (_) { continue; }
+    for (const f of files.slice(keep)) {
+      await trashOrUnlink(path.join(backupDir, f));
+    }
+  }
+}
+
+// 复核 N1/PE-5（2026-09-16）：还原用户修改前的真实值——导入最新一份备份 .reg。
+// 「恢复 Windows 默认」（apply defaultValue）与「还原修改前的值」是两个语义，分开设。
+handleSafe('peripheral:restore-backup', async () => {
+  if (!(await isAdmin())) {
+    return { success: false, needAdmin: true, message: '外设优化需要管理员权限，请先提权' };
+  }
+  const scriptPath = writeTempScript(PERIPHERAL_SCRIPT.restoreBackup());
+  try {
+    const { stdout, code } = await runPowerShellFile(scriptPath, { timeout: 30000 });
+    if (code !== 0) return { success: false, message: '还原备份失败（reg import 返回非零）' };
+    const resLine = (stdout || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean)
+      .find(l => l.startsWith('@@PERIPHERAL_RESTORE@@'));
+    if (!resLine) return { success: false, message: '还原备份失败：无有效结果' };
+    const payload = JSON.parse(resLine.slice('@@PERIPHERAL_RESTORE@@'.length));
+    if (!payload.ok) {
+      const msgs = { 'no-backup': '还没有可用的备份（先应用一次优化后会自动备份）', 'import-failed': '导入备份失败，备份文件可能已损坏' };
+      return { success: false, message: msgs[payload.reason] || '还原备份失败' };
+    }
+    return { success: true, data: { file: payload.file } };
+  } catch (e) {
+    writeLog('error', `外设优化还原备份异常: ${e.message}`);
     return { success: false, message: e.message };
   } finally { try { fs.unlinkSync(scriptPath); } catch (e) {} }
 });
@@ -6462,7 +6767,13 @@ handleSafe('fileclean:read-image', async (event, { filePath }) => {
       '.png': 'image/png', '.gif': 'image/gif',
       '.bmp': 'image/bmp', '.webp': 'image/webp', '.svg': 'image/svg+xml'
     };
-    const mime = mimeMap[ext] || 'image/jpeg';
+    // 复核 N1（文件清理，2026-09-16）：原实现未知扩展名一律兑底 image/jpeg，
+    // 白名单内任意文件（.dat/.db 等）都能被读成 dataURL 回渲染层。改为仅接受图片扩展名，
+    // 非图片直接拒绝（接口收窄，预览窗只传 image 类不受影响）。
+    const mime = mimeMap[ext];
+    if (!mime) {
+      return { success: false, message: '仅支持预览图片文件（jpg/png/gif/bmp/webp/svg）' };
+    }
     // 限制文件大小（10MB）
     const stat = fs.statSync(filePath);
     if (stat.size > 10 * 1024 * 1024) {
@@ -6578,6 +6889,7 @@ handleSafe('maintenance:run', async (event, { taskId } = {}) => {
   const scriptPath = writeTempScript(script);
   const sender = event.sender;
   const lines = [];
+  const wuOldBaks = [];
   let result = 'ok';
   try {
     writeLog('info', `维护任务开始: ${taskId}`);
@@ -6594,6 +6906,7 @@ handleSafe('maintenance:run', async (event, { taskId } = {}) => {
           if (!line) continue;
           if (line.startsWith('@@RESULT@@')) { result = line.slice(10).trim() || 'ok'; continue; }
           if (line.startsWith('@@DIAG@@')) continue; // 由执行层统一提取写日志
+          if (line.startsWith('@@WU_OLD_BAK@@')) { wuOldBaks.push(line.slice(14).trim()); continue; }
           lines.push(line);
           if (sender && !sender.isDestroyed()) {
             try { sender.send('maintenance:output', { taskId, line }); } catch (e) {}
@@ -6602,6 +6915,30 @@ handleSafe('maintenance:run', async (event, { taskId } = {}) => {
       }
     });
     if (code !== 0 && result === 'ok') result = 'warn';
+    if (wuOldBaks.length) {
+      // 复核 N2（删除红线，2026-09-16）：wu 旧缓存备份改走 trashOrUnlink（回收站优先）。
+      // 目标仅限 %WINDIR% 直下 Trim 自己改名产生的 SoftwareDistribution.old_* / catroot2.old_*，
+      // 名称严格匹配才删；清理失败只记日志、不影响任务结果。
+      const winDir = (process.env.WINDIR || 'C:\\Windows').replace(/[\\/]+$/, '').toLowerCase();
+      let cleaned = 0;
+      for (const raw of wuOldBaks) {
+        const t = String(raw || '').trim();
+        const base = path.win32.basename(t);
+        const parent = path.win32.dirname(t).toLowerCase();
+        if (!t || parent !== winDir || !/^(SoftwareDistribution|catroot2)\.old_\d{14}$/.test(base)) {
+          writeLog('warn', `忽略非常规 wu 旧备份路径: ${t}`);
+          continue;
+        }
+        const r = await trashOrUnlink(t);
+        if (r.ok) cleaned++;
+        writeLog(r.ok ? 'info' : 'warn', `wu 旧缓存备份清理(${r.recycled ? '回收站' : '永久删除'}): ${base} -> ${r.ok ? '成功' : (r.message || '失败')}`);
+      }
+      const summaryLine = `旧缓存备份清理完成: ${cleaned}/${wuOldBaks.length} 个（回收站优先，失败见日志）`;
+      lines.push(summaryLine);
+      if (sender && !sender.isDestroyed()) {
+        try { sender.send('maintenance:output', { taskId, line: summaryLine }); } catch (e) {}
+      }
+    }
     writeLog(result === 'ok' ? 'info' : 'warn', `维护任务完成: ${taskId} result=${result} exit=${code}${stderr ? ' stderr=' + stderr.slice(0, 200) : ''}`);
     return { success: result === 'ok', data: { taskId, result, output: lines.join('\n') } };
   } catch (e) {
@@ -6812,6 +7149,19 @@ handleSafe('defaultapps:write-class', async (event, { entries } = {}) => {
       st.writtenAt = Date.now();
       saveDefaultAppsState(st);
     }
+    // 复核 DA-3/N1（默认应用，2026-09-16）：删除 UserChoice 前采集的原 ProgId 落盘持久化
+    // （origChoices：key → 原值）。此前只在 PS 结果里带回、主进程丢弃，用户在 Trim 之前的
+    // 原选择实际不可追溯。写入成败都记账，供失败提示与人工回退参考（UserChoice 受系统
+    // 哈希保护无法程序化写回，恢复以「原值展示 + 手动重选」为诚实口径）。
+    const origChoices = (st.origChoices && typeof st.origChoices === 'object' && !Array.isArray(st.origChoices)) ? st.origChoices : {};
+    let origChanged = false;
+    for (const r of (Array.isArray(data) ? data : [])) {
+      if (r && r.key && typeof r.origProgId === 'string' && r.origProgId && origChoices[r.key] !== r.origProgId) {
+        origChoices[r.key] = r.origProgId;
+        origChanged = true;
+      }
+    }
+    if (origChanged) { st.origChoices = origChoices; saveDefaultAppsState(st); }
     writeLog(okAll ? 'info' : 'warn', `类级关联写入${okAll ? '完成' : '部分失败'}: ${items.map(i => i.key).join(',')}`);
     return { success: okAll, data };
   } catch (e) {
@@ -6924,13 +7274,21 @@ handleSafe('netcheck:collect', async () => {
 
 handleSafe('netcheck:repair', async (event, { actionId } = {}) => {
   if (typeof actionId !== 'string' || actionId.length > 40) return { success: false, message: '参数不合法' };
+  // 复核 N1（网络检测，2026-09-16）：NT-2 修复引入 repairs 数组（残留用户代理 + WinHTTP 代理
+  // 可同时呈现两个修复按钮），主进程匹配必须覆盖数组槽位，否则「重置 WinHTTP」永远不可达。
   const item = Array.isArray(netcheckSnapshot)
-    ? netcheckSnapshot.find(it => it && it.repair && it.repair.id === actionId)
+    ? netcheckSnapshot.find(it => it && (
+        (it.repair && it.repair.id === actionId) ||
+        (Array.isArray(it.repairs) && it.repairs.some(r => r && r.id === actionId))))
     : null;
-  if (!item || !item.repair) return { success: false, message: '该修复动作不在当前检测快照内，请先重新检测' };
+  if (!item) return { success: false, message: '该修复动作不在当前检测快照内，请先重新检测' };
+  const repair = (item.repair && item.repair.id === actionId)
+    ? item.repair
+    : (Array.isArray(item.repairs) ? item.repairs.find(r => r && r.id === actionId) : null);
+  if (!repair) return { success: false, message: '该修复动作不在当前检测快照内，请先重新检测' };
   let script;
   try {
-    script = NETCHECK_SCRIPT.repair(actionId, item.repair);
+    script = NETCHECK_SCRIPT.repair(actionId, repair);
   } catch (e) {
     return { success: false, message: e.message };
   }
@@ -7144,7 +7502,8 @@ handleSafe('runtimes:install', async (event, { actionId } = {}) => {
       return lastPlain || stderr || '修复未成功，请查看日志';
     })();
     // 修复后自动重跑检测，回传最新 items（渲染层直接刷新，不整页重扫）
-    const collect = await runRuntimesCollect();
+    // 复核 N2（2026-09-16）：补传 sender.id，避免快照写入 key=undefined 污染 Map（对齐 RT-4 分槽意图）
+    const collect = await runRuntimesCollect(event.sender ? event.sender.id : undefined);
     const elapsed = Date.now() - started;
     if (ok) writeLog('info', `运行库修复完成: ${actionId}（${elapsed}ms）`);
     else writeLog('warn', `运行库修复未成功: ${actionId} -> ${String(stderr || '').slice(0, 120)}`);
@@ -7169,6 +7528,7 @@ handleSafe('runtimes:install', async (event, { actionId } = {}) => {
 app.whenReady().then(() => {
   migrateLegacyData();
   ensureLogDir();
+  pruneOldLogs();
   cleanupTempScripts();
   // v2.6.0（P0-1）：优化状态记账模块初始化（数据目录确定后）
   OPT_STATE.initDataDir(APP_DATA_DIR, writeLog);

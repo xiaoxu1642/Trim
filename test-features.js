@@ -1577,9 +1577,16 @@ check('v3.3.4 文案纠偏：partial 不计入 failed + 占用弹窗骨架', () 
   if (cjs.includes('，云端版本为：') || html.includes('，云端版本为：')) {
     throw new Error('仍残留旧文案「云端版本为」，会与 winapp2 语义混淆');
   }
-  // 第三段必须取远端 winapp2Version（取 remoteVersion 会错显本机规则库版本号）
-  if (!/setVersionInfo\(resp\.currentVersion, resp\.currentWinapp2Version, resp\.remoteWinapp2Version\)/.test(cjs)) {
+  // 第三段必须取远端 winapp2Version（取 remoteVersion 会错显本机规则库版本号）；
+  // 复核 N1（2026-09-16）：允许并要求第 4 参 hasUpdate——「无需更新」判定必须结合主规则库更新状态
+  if (!/setVersionInfo\(resp\.currentVersion, resp\.currentWinapp2Version, resp\.remoteWinapp2Version[,)]/.test(cjs)) {
     throw new Error('云端段未使用 remoteWinapp2Version（winapp2 语义不符）');
+  }
+  if (!/setVersionInfo\(resp\.currentVersion, resp\.currentWinapp2Version, resp\.remoteWinapp2Version, resp\.hasUpdate\)/.test(cjs)) {
+    throw new Error('版本检测未传 hasUpdate，「无需更新」判定无法结合主规则库更新状态');
+  }
+  if (!/hasUpdate === false && remoteWinapp2 != null && localWinapp2 != null/.test(cjs)) {
+    throw new Error('「无需更新」判定未结合 hasUpdate===false（仅比 winapp2 相等会与更新提示矛盾）');
   }
 });
 

@@ -42,7 +42,7 @@
     'wmiprvse', 'dllhost', 'securityhealthservice', 'securityhealthsystray',
     'msmpeng', 'nissrv', 'systemsettings', 'applicationframehost', 'conhost',
     'logonui', 'userinit', 'msiexec', 'trustedinstaller', 'tiworker',
-    'backgroundtaskhost', 'textinputhost', 'useroobebroker', 'lsass'
+    'backgroundtaskhost', 'textinputhost', 'useroobebroker'
   ]);
 
   // 是否「不可结束」（系统关键进程，或读不到 Path 无法判定归属的进程）

@@ -1538,7 +1538,7 @@ if ($pendingRestart.Count -gt 0) { Start-Restartables -Stopped $pendingRestart; 
   failed = $failed
   skipped = $skipped
   details = $details
-} | ConvertTo-Json -Compress -Depth 3
+} | ConvertTo-Json -Compress -Depth 6
 `;
 
 // ==================== 条目明细脚本（P3 明细预览，只读枚举） ====================

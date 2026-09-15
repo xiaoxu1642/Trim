@@ -823,6 +823,14 @@
         }
         return true;
       }
+      // 复核 N3（提权半闭环，2026-09-16）：服务端 OPT-1 门禁返回 needAdmin 时，
+      // 此前只报「优化失败」死路；现在弹提权确认，管理员重启后重试即可
+      if (resp && resp.needAdmin) {
+        finishProgressToast(false, '需要管理员权限');
+        const elevated = await window.app?.requestElevation?.('优化电脑部分选项需要管理员权限才能修改系统注册表与服务。');
+        if (elevated) window.app?.toast('info', '已获得管理员权限，请重新执行本优化项');
+        return false;
+      }
       finishProgressToast(false, resp && resp.message);
       window.app?.log('warn', `优化电脑失败: ${optName}: ${resp && resp.message || ''}`);
       return false;

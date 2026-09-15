@@ -582,6 +582,12 @@ ${DIAG.PS_PREAMBLE}
 \$results = @()
 foreach (\$item in @(\$items)) {
   if (\$item.risk -eq 'protected') { \$results += @{ name = \$item.name; status = 'skip'; message = '系统保护项' }; continue }
+  # 复核 N1（删除红线，2026-09-16）：文件系统项（「发送到」快捷方式）不再在 PS 内裸删，
+  # 主进程已改为 trashOrUnlink（回收站优先）+ 全局删除清单；本脚本若仍收到此类项，跳过并如实回报。
+  if ([string]\$item.source -eq 'filesystem') {
+    \$results += @{ name = \$item.name; status = 'skip'; message = '文件系统项由主进程回收站删除' }
+    continue
+  }
   try {
     \$target = [string]\$item.regPath
     if ([string]::IsNullOrWhiteSpace(\$target) -or \$target -match '(?i)^(Registry::)?HKEY_(CLASSES_ROOT|LOCAL_MACHINE|CURRENT_USER|USERS|CURRENT_CONFIG)\\\\?\$') {

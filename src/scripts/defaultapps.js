@@ -474,7 +474,12 @@
     const failList = results.filter(r => !r.ok);
     if (okList.length) toast('success', '类级关联已写入：' + okList.join('、'));
     for (const f of failList) {
-      toast('error', f.key + ' 写入失败：' + (f.message || '系统未接受'), 5000);
+      // 复核 DA-3/N1（2026-09-16）：失败时告知用户写入前的原选择（主进程已持久化 origChoices），
+      // UserChoice 受系统哈希保护无法程序化写回，恢复以「原值展示 + 手动重选」为诚实口径。
+      const origHint = (typeof f.origProgId === 'string' && f.origProgId)
+        ? `（你修改前的原选择为「${f.origProgId}」，如需找回可在 Windows 设置 → 默认应用 中手动选回）`
+        : '';
+      toast('error', f.key + ' 写入失败：' + (f.message || '系统未接受') + origHint, 6000);
     }
     if (!writeResp?.success) {
       // 如实提示：类级关联对强保护类型可能无效，策略接管是主路径

@@ -415,7 +415,8 @@ contextBridge.exposeInMainWorld('api', {
     openWindow: () => ipcRenderer.invoke('peripheral:open-window'),
     closeWindow: () => ipcRenderer.invoke('peripheral:close-window'),
     query: () => ipcRenderer.invoke('peripheral:query'),
-    apply: (options) => ipcRenderer.invoke('peripheral:apply', options)
+    apply: (options) => ipcRenderer.invoke('peripheral:apply', options),
+    restoreBackup: () => ipcRenderer.invoke('peripheral:restore-backup')
   },
 
   // 快捷指令（侧边栏 → 63 条系统快捷入口；主进程按白名单执行，渲染层只传 id）

@@ -27,8 +27,9 @@ $targets = @(
   @{ Path = 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\kbdclass\\Parameters'; Name = 'KeyboardDataQueueSize'; Value = [int]$options.keyboard },
   @{ Path = 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\mouclass\\Parameters'; Name = 'MouseDataQueueSize'; Value = [int]$options.mouse }
 )
-# PE-5（S6，2026-09-15）：写入前备份原值到 %APPDATA%\Trim\peripheral-backup\，
-# 「恢复默认」时读备份而非写死出厂默认值，保留用户原始定制。
+# PE-5（S6，2026-09-15）：写入前备份原值到 %APPDATA%\Trim\peripheral-backup\。
+# 复核 N1（2026-09-16）：随本文件新增 RESTORE_BACKUP_SCRIPT，「还原修改前的值」
+# 导入最新一份备份；「恢复 Windows 默认」才写出厂默认值，两个语义分开。
 $backupDir = Join-Path $env:APPDATA 'Trim\\peripheral-backup'
 if (-not (Test-Path -LiteralPath $backupDir)) { New-Item -ItemType Directory -Path $backupDir -Force | Out-Null }
 $backupFile = Join-Path $backupDir ('backup_' + (Get-Date -Format 'yyyyMMdd_HHmmss') + '.reg')
@@ -52,10 +53,35 @@ foreach ($t in $targets) {
 Write-Output 'PERIPHERAL-APPLY-OK'
 `;
 
+// 复核 N1（2026-09-16）：导入最新一份备份 .reg，还原用户修改前的真实注册表值。
+// 仅认本应用备份目录内、文件名严格匹配 backup_*.reg 的最新一份，不接受任意路径。
+const RESTORE_BACKUP_SCRIPT = `
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$ErrorActionPreference = 'Stop'
+$backupDir = Join-Path $env:APPDATA 'Trim\\peripheral-backup'
+if (-not (Test-Path -LiteralPath $backupDir)) {
+  Write-Output ('@@PERIPHERAL_RESTORE@@' + ({ ok = $false; reason = 'no-backup' } | ConvertTo-Json -Compress))
+  exit 0
+}
+$latest = Get-ChildItem -LiteralPath $backupDir -Filter 'backup_*.reg' -File -ErrorAction SilentlyContinue |
+  Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if (-not $latest) {
+  Write-Output ('@@PERIPHERAL_RESTORE@@' + ({ ok = $false; reason = 'no-backup' } | ConvertTo-Json -Compress))
+  exit 0
+}
+& reg.exe import "$($latest.FullName)" 2>$null | Out-Null
+if ($LASTEXITCODE -ne 0) {
+  Write-Output ('@@PERIPHERAL_RESTORE@@' + ({ ok = $false; reason = 'import-failed' } | ConvertTo-Json -Compress))
+  exit 0
+}
+Write-Output ('@@PERIPHERAL_RESTORE@@' + ({ ok = $true; file = $latest.Name } | ConvertTo-Json -Compress))
+`;
+
 module.exports = {
   query() { return QUERY_SCRIPT; },
   apply(options) {
     const json = JSON.stringify(options || {});
     return APPLY_SCRIPT.replace('__OPTIONS_JSON__', json.replace(/'/g, "''"));
-  }
+  },
+  restoreBackup() { return RESTORE_BACKUP_SCRIPT; }
 };
