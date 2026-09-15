@@ -67,7 +67,33 @@ const SYNTAX_FILES = [
   'src/scripts/contextmenu.js',
   'src/scripts/mouse-trail.js',
   'src/scripts/tilt.js',
-  'src/scripts/spotlight.js'
+  'src/scripts/spotlight.js',
+  // T1（2026-09-15）：补齐 23 个零覆盖文件 + 独立进程窗——原先这些文件不语法检查，
+  // 7 个 🔴 全部落在零覆盖模块（S13 家族）。入清单后有任何语法破损 npm test 即拦截。
+  'src/scripts/deviceinfo.js',
+  'src/scripts/diskbench.js',
+  'src/scripts/finder.js',
+  'src/scripts/fontmanager.js',
+  'src/scripts/icon-fallback.js',
+  'src/scripts/modelpicker.js',
+  'src/scripts/peripheral-window.js',
+  'src/scripts/process-manager-window.js',
+  'src/scripts/processes.js',
+  'src/scripts/quickcmds-data.js',
+  'src/scripts/quickcmds.js',
+  'src/scripts/realtime.js',
+  'src/scripts/runtimes.js',
+  'src/scripts/startup.js',
+  'src/scripts/sysrestore.js',
+  'src/scripts-powershell/contextmenu-scripts.js',
+  'src/scripts-powershell/device-info-scripts.js',
+  'src/scripts-powershell/diskbench-scripts.js',
+  'src/scripts-powershell/memory-scripts.js',
+  'src/scripts-powershell/netspeed-scripts.js',
+  'src/scripts-powershell/peripheral-scripts.js',
+  'src/scripts-powershell/realtime-scripts.js',
+  'src/scripts-powershell/runtimes-scripts.js',
+  'src/scripts-powershell/startup-scripts.js'
 ];
 
 console.log('[1/5] JS 语法检查');
@@ -1973,6 +1999,97 @@ check('共享注册表键均由唯一模块写入（src/data/reg-ownership.json�
   const r = checkOwnership();
   if (r.violations.length) throw new Error('越界写入：\n    ' + r.violations.join('\n    '));
   if (r.missing.length) throw new Error('归属表已过期（请同步更新 reg-ownership.json）：\n    ' + r.missing.join('\n    '));
+});
+
+// ==================== 10. v3.5.0 精细化审查批（T1 回归断言） ====================
+// 每个 🔴 修复附回归断言（职能家族 S13：零覆盖是这些缺陷的潜伏原因）；外加 T1-4
+// 「独立窗口脚本禁引用 window.app」防 PE-1 复发。断言采用源码文本锚，只读不启动应用。
+console.log('[10] v3.5.0 精细化审查批');
+
+check('CM-15/CM-16：右键 toggle/remove 请求体带 id + 启停按 id 回挂目标态', () => {
+  const cm = fs.readFileSync(abs('src/scripts/contextmenu.js'), 'utf8');
+  if (!cm.includes('id: p.item.id')) throw new Error('toggle 请求体未补 id（CM-15）');
+  if (!cm.includes('id: item.id')) throw new Error('remove 请求体未补 id（CM-15）');
+  const main = fs.readFileSync(abs('main.js'), 'utf8');
+  if (!main.includes('wantedEnabled.set(it.id')) throw new Error('toggle 未按 id 回挂调用方 enabled（CM-16）');
+  if (!main.includes("wantedEnabled.has(it.id) ? wantedEnabled.get(it.id) : !!it.enabled")) throw new Error('toggle 目标态回挂不完整');
+});
+
+check('FC-1/FC-3：文件清理白名单按 type 分槽 + 仅 .dat 归可删 data', () => {
+  const main = fs.readFileSync(abs('main.js'), 'utf8');
+  if (!main.includes('const fileCleanScopes = new Map()')) throw new Error('文件清理白名单未按 type 分槽（FC-1，QQ+微信互相覆盖）');
+  if (!main.includes("endsWith('.dat')) category = 'data'")) throw new Error('FC-3 未收窄 .dat');
+  if (main.includes("endsWith('.db') || entry.name.endsWith('.adb')")) throw new Error('FC-3 仍把 .db/.adb 归可删 data（聊天库零确认删除风险）');
+});
+
+check('FD-1：finder:delete 部分失败不整批丢弃（success=通道语义 + 回传 data）', () => {
+  const main = fs.readFileSync(abs('main.js'), 'utf8');
+  if (!main.includes('success: true, data: { totalFreed, success, failed')) throw new Error('finder:delete 未改通道成功语义（FD-1）');
+  if (!main.includes('flushLogSync();')) throw new Error('finder:delete 未前刷日志');
+});
+
+check('FD-4：finder:delete 删除前预检（statSync + 目标已消失剔除）', () => {
+  const main = fs.readFileSync(abs('main.js'), 'utf8');
+  if (!main.includes("const st = fs.statSync(it.path)")) throw new Error('finder:delete 删除前无预检（FD-4）');
+  if (!main.includes('目标已不存在')) throw new Error('FD-4 未对已消失目标做剔除提示');
+});
+
+check('SR-1：create-restore 必须解析 @@FAILED 且创建后回读还原点数量', () => {
+  const main = fs.readFileSync(abs('main.js'), 'utf8');
+  if (!main.includes('@@FAILED')) throw new Error('create-restore 未解析失败协议（SR-1 门禁架空）');
+  if (!main.includes('创建后回读')) throw new Error('create-restore 未做创建后回读（假成功）');
+  const opt = fs.readFileSync(abs('src/scripts-powershell/optimizer-scripts.js'), 'utf8');
+  if (!opt.includes('$failedSteps++')) throw new Error('buildScript pwsh 分支缺失败计数（SR-1）');
+});
+
+check('PM-1/PM-2：memory:kill 主进程关键进程黑名单 + 自我防护 + 空路径不合并分组', () => {
+  const main = fs.readFileSync(abs('main.js'), 'utf8');
+  if (!main.includes('const CRITICAL_PROCESS_NAMES = new Set(')) throw new Error('memory:kill 无关键进程黑名单（PM-1 蓝屏边界）');
+  if (!main.includes('不能结束 Trim 自身进程')) throw new Error('memory:kill 无自我防护（PM-1）');
+  const pc = fs.readFileSync(abs('src/scripts/processes.js'), 'utf8');
+  if (!pc.includes('__nopath__:')) throw new Error('空路径进程被合并分组（PM-2 一键蓝屏）');
+  if (!pc.includes('PM_CRITICAL_NAMES')) throw new Error('processes.js 未给系统进程只读态');
+});
+
+check('PE-1/T1-4：独立窗口脚本各自自带 toast，不调用 window.app/window.modal 的 toast（防静默无反馈）', () => {
+  const windows = ['peripheral-window.js', 'models-window.js', 'process-manager-window.js', 'preview-window.js'];
+  for (const f of windows) {
+    const src = fs.readFileSync(abs('src/scripts/' + f), 'utf8');
+    if (!/^\s*function toast\s*\(/m.test(src)) throw new Error(f + ' 未自建 toast（PE-1 静默无反馈）');
+    // 只拦「调用形」`?.toast(`；注释里点名该隐患的文本不含括号调用，不误伤。
+    if (/window\.app\s*\?\s*\.toast\s*\(|window\.modal\s*\?\s*\.toast\s*\(/.test(src)) throw new Error(f + ' 调用 window.app/window.modal 的 toast（PE-1 复发）');
+    if (/window\.app\s*\.toast\s*\(/.test(src)) throw new Error(f + ' 以 window.app.toast(...) 调能力（须自建 toast）');
+  }
+});
+
+check('S4：特权操作服务端 isAdmin + needAdmin 门禁统一（OPT/PE/MA/SU/CM/M）', () => {
+  const main = fs.readFileSync(abs('main.js'), 'utf8');
+  const gates = [
+    '优化操作需要管理员权限',   // OPT-1 optimizer:run
+    '外设优化需要管理员权限',   // PE-4 peripheral:apply
+    '该维护任务需要管理员权限', // MA-2 maintenance run
+    '涉及「所有用户」的启动项需要管理员权限', // SU-1 startup
+    '涉及系统级右键菜单的操作需要管理员权限', // CM-3 contextmenu
+    '内存清理需要管理员权限'    // M-3 memory:clean
+  ];
+  for (const g of gates) {
+    if (!main.includes(g)) throw new Error('S4 门禁缺失: ' + g);
+    if (!main.includes('needAdmin')) throw new Error('S4 未返回 needAdmin 提权入口');
+  }
+});
+
+check('S6：外设写前备份 + 默认应用记录原 ProgId + 还原点补记账备份', () => {
+  const pv = fs.readFileSync(abs('src/scripts-powershell/peripheral-scripts.js'), 'utf8');
+  if (!pv.includes('peripheral-backup')) throw new Error('外设 APPLY 未写前备份（PE-5）');
+  const da = fs.readFileSync(abs('src/scripts-powershell/defaultapps-scripts.js'), 'utf8');
+  if (!da.includes('原 ProgId')) throw new Error('write-class 未记录原 ProgId（DA-3）');
+  const main = fs.readFileSync(abs('main.js'), 'utf8');
+  if (!/SR-3|OPT_STATE/.test(main)) throw new Error('create-restore 未补记账/备份（SR-3）');
+});
+
+check('PE-3：外设白名单合法值集合单一来源（PERIPHERAL_ALLOWED 接入校验）', () => {
+  const main = fs.readFileSync(abs('main.js'), 'utf8');
+  if (!main.includes('PERIPHERAL_ALLOWED')) throw new Error('main.js 缺 PERIPHERAL_ALLOWED 白名单');
 });
 
 // ==================== 汇总 ====================

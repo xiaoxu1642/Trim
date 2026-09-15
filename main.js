@@ -5352,6 +5352,12 @@ handleSafe('memory:info', async () => {
 handleSafe('memory:clean', async (event, { items = [] } = {}) => {
   const list = Array.isArray(items) ? items.filter(i => typeof i === 'string') : [];
   if (!list.length) return { success: false, message: '未选择要清理的内存区域' };
+  // M-3（S4，2026-09-15）：NtSetSystemInformation 需 SeProfileSingleProcess/
+  // SeIncreaseQuota 特权，非管理员必失败。统一走 elevate 握手，避免「点了没反应」；
+  // 与顽固专杀/自启阻断（L5454/L5479）同口径。
+  if (!(await isAdmin())) {
+    return { success: false, needAdmin: true, message: '内存清理需要管理员权限，请先提权' };
+  }
   const scriptPath = writeTempScript(MEMORY_SCRIPT.cleanScript(list));
   try {
     const { stdout, code, timedOut } = await runPowerShellFile(scriptPath, { timeout: 60000 });
@@ -6345,7 +6351,11 @@ handleSafe('fileclean:scan', async (event, { type, customPath, total, doneBase }
               if (imageExtensions.includes(ext)) category = 'image';
               else if (videoExtensions.includes(ext)) category = 'video';
               else if (cacheExtensions.includes(ext)) category = 'cache';
-              else if (entry.name.endsWith('.dat') || entry.name.endsWith('.db') || entry.name.endsWith('.adb')) category = 'data';
+              // FC-3（2026-09-15）：原实现把 .dat/.db/.adb 一律归可删「data」类，
+              // 但 .db 可能是微信/QQ 的会话/聊天数据库（实存于 msg/recv 等被递归的目录），
+              // 会被零确认批量删除 → 用户聊天记录丢失。收窄为仅 .dat（微信/QQ 缓存占位
+              // 标记文件，几乎必为垃圾），排除 .db/.adb 这类可能承载真实数据的扩展名。
+              else if (entry.name.endsWith('.dat')) category = 'data';
 
               if (category) {
                 let stat;
