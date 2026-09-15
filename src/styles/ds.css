@@ -149,6 +149,14 @@ input[type="range"].ds-slider:focus-visible {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-btn);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.32);
+  /* v3.5.1 动效审查 M5：菜单由 ds.js 按触发点定位（position:fixed + left/top），
+     原先无任何入场、凭空出现。这里用 @starting-style 补「从触发器方向长出」的
+     轻微缩放，点明空间来源；不依赖 JS 加类，浏览器不支持时自动退化为瞬时出现。 */
+  transform-origin: var(--ds-menu-origin, top left);
+  transition: opacity var(--duration-fast) var(--ease-emphasized), transform var(--duration-fast) var(--ease-emphasized);
+}
+@starting-style {
+  .ds-menu { opacity: 0; transform: scale(0.96); }
 }
 .ds-menu-item {
   display: flex;
@@ -196,5 +204,6 @@ input[type="range"].ds-slider:focus-visible {
   .ds-ring-fill,
   input[type="range"].ds-slider::-webkit-slider-thumb { transition: none; }
   .ds-tooltip { transition: none; }
+  .ds-menu { transition: none; }
   .ds-skeleton-block { animation: none; }
 }

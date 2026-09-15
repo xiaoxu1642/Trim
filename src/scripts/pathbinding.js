@@ -881,6 +881,7 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
     var valEl = document.getElementById('bgBlurVal');
     var MAX_BLUR = 20;
     var dragging = false;
+    var blurSaveTimer = null;
     function setBlur(pct) {
       pct = Math.max(0, Math.min(100, pct));
       var px = (pct / 100 * MAX_BLUR).toFixed(1);
@@ -888,11 +889,17 @@ const DOUYIN_ICON = 'data:image/x-icon;base64,AAABAAcAEBAAAAAAIABlAgAAdgAAABgYAA
       knob.style.left = pct + '%';
       valEl.textContent = Math.round(pct) + '%';
       document.documentElement.style.setProperty('--bg-blur', px + 'px');
-      try {
-        var ap = JSON.parse(localStorage.getItem('winclean-appearance') || '{}');
-        ap.wallpaperBlur = Math.round(pct);
-        localStorage.setItem('winclean-appearance', JSON.stringify(ap));
-      } catch (e) {}
+      // v3.5.1 动效审查 M7：原实现每次 mousemove 都同步写一遍全量 appearance，
+      // 拖动一次会打出上百次 JSON 序列化 + 同步 IO（阻塞主线程）；改为 150ms 防抖落盘，
+      // 与上方另一处滑块（blurSaveTimer 模式）统一。
+      clearTimeout(blurSaveTimer);
+      blurSaveTimer = setTimeout(function () {
+        try {
+          var ap = JSON.parse(localStorage.getItem('winclean-appearance') || '{}');
+          ap.wallpaperBlur = Math.round(pct);
+          localStorage.setItem('winclean-appearance', JSON.stringify(ap));
+        } catch (e) {}
+      }, 150);
     }
     function updateFromClientX(clientX) {
       var r = track.getBoundingClientRect();

@@ -322,7 +322,9 @@
       if (i > -1) activeToasts.splice(i, 1);
       if (el.classList.contains('removing')) return;
       el.classList.add('removing');
-      setTimeout(() => el.remove(), 200);
+      // v3.5.1 动效审查 H4：出场动画 --duration-base 为 220ms，原先 200ms 就移除节点，
+      // 尾巴被硬切；延到 260ms 留出余量（reduced-motion 下动画只剩 0.01ms，不影响）。
+      setTimeout(() => el.remove(), 260);
     };
     activeToasts.push(entry);
     el.querySelector('.toast-close')?.addEventListener('click', entry.remove);

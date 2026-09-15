@@ -1,6 +1,6 @@
 {
   "name": "trim",
-  "version": "3.5.0",
+  "version": "3.5.1",
   "description": "Trim",
   "main": "main.js",
   "author": "xiaoxu",
@@ -96,6 +96,7 @@
       "artifactName": "${productName}-Portable-${version}.${ext}"
     },
     "nsis": {
+      "include": "build/installer.nsh",
       "oneClick": false,
       "perMachine": false,
       "allowElevation": true,

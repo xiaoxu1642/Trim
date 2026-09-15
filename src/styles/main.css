@@ -628,11 +628,16 @@ body {
   font-size: var(--fs-body);
   font-weight: calc(400 * var(--font-weight-scale, 1));
   cursor: pointer;
-  transition: background var(--duration-fast) var(--ease-standard);
+  /* v3.5.1 动效审查 M4：侧栏主导航是最频繁的按压目标之一，此前只有 hover/选中态，
+     而同库 .nav-subitem 反而有 :active（:774），反馈层级倒置。此处补齐。 */
+  transition: background var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-emphasized);
   text-align: left;
 }
 .nav-item:hover {
   background: var(--bg-card);
+}
+.nav-item:active {
+  transform: scale(0.98);
 }
 /* v2 评估 A3：强调色退出容器表面——侧栏选中项原为 accent 底+accent 字（大面积着色），
    现填充转中性表面 token，强调色只保留 3px 选中指示条（语义需要强调的位置） */
@@ -812,7 +817,10 @@ body {
 
 .page {
   display: none;
-  animation: pageFadeIn var(--duration-slow) var(--ease-emphasized);
+  /* v3.5.1 动效审查 H3：侧栏切页是全应用最频繁的导航动作，原 320ms 位移入场
+     （translateY 8px）每次 display 切换都从零重播、无法中断。按审计结论降为
+     160ms 纯淡入（保留 opacity 反馈，去掉位移）。 */
+  animation: fadeIn var(--duration-fast) var(--ease-emphasized);
 }
 .page.active {
   display: block;
@@ -1440,10 +1448,15 @@ body {
   font-size: var(--fs-secondary);
   font-weight: calc(500 * var(--font-weight-scale, 1));
   cursor: pointer;
-  transition: all var(--duration-fast) var(--ease-standard);
+  /* v3.5.1 动效审查 M4：分段控件同样缺 :active；M8：transition: all 白名单化。 */
+  transition: background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard),
+              border-color var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-emphasized);
 }
 .filter-tab:hover {
   background: var(--bg-card-hover);
+}
+.filter-tab:active {
+  transform: scale(0.98);
 }
 .filter-tab.active {
   /* v3 方案 A：选中分段实底转中性胶囊（Apple 分段控件语言：轨道灰、选中白胶囊）；
@@ -1480,9 +1493,12 @@ body {
     0 2px 10px rgba(0, 0, 0, 0.16);
   /* v3.2.0（侧边岛滑块）：双轴 translate——横向 tab 栏只用 X，侧边栏纵向滑块走 Y（GPU 加速） */
   transform: translate(var(--lg-x, 0px), var(--lg-y, 0px));
+  /* v3.5.1 动效审查 M1：过冲曲线 cubic-bezier(0.34,1.56,0.64,1) 是刻意的
+     「液态挤压感」，予以保留；只把 460ms 压到 280ms —— 原时长明显超出 UI
+     300ms 预算，且作用在最高频的侧栏/分段选中迁移上。 */
   transition:
-    transform 460ms cubic-bezier(0.34, 1.56, 0.64, 1),
-    width 460ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    width 280ms cubic-bezier(0.34, 1.56, 0.64, 1),
     border-radius 220ms var(--ease-standard);
   will-change: transform, width;
 }
@@ -1587,7 +1603,9 @@ body.lg-mode-frost .nav-item.active:hover {
 }
 .cleanup-view.active {
   display: block;
-  animation: pageFadeIn var(--duration-base) var(--ease-standard);
+  /* v3.5.1 动效审查 H3/M2：与 .page 统一为纯淡入；曲线由 --ease-standard
+     （Material 对称曲线，初速≈0，入场显闷）换成强 ease-out 令牌 */
+  animation: fadeIn var(--duration-fast) var(--ease-emphasized);
 }
 .cleanup-view-actions {
   display: flex;
@@ -2837,7 +2855,7 @@ select.field-input { cursor: pointer; appearance: auto; }
   pointer-events: auto;
 }
 .toast.removing {
-  animation: toastSlideOut var(--duration-base) var(--ease-standard) forwards;
+  animation: toastSlideOut var(--duration-base) var(--ease-emphasized) forwards;
 }
 
 .toast.success { border-left: 3px solid var(--success); }
@@ -2888,6 +2906,9 @@ select.field-input { cursor: pointer; appearance: auto; }
   to { transform: translateX(0); opacity: 1; }
 }
 @keyframes toastSlideOut {
+  /* v3.5.1 动效审查 H4：原先只有 to 帧，隐式 from 取「未动画的计算态」——
+     入场途中被关闭时动画被整体替换，元素会先瞬跳回 translateX(0) 再滑出。 */
+  from { transform: translateX(0); opacity: 1; }
   to { transform: translateX(120%); opacity: 0; }
 }
 
@@ -2925,6 +2946,12 @@ select.field-input { cursor: pointer; appearance: auto; }
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
+    /* v3.5.1 动效审查 H1：原先只归零 duration，未归零 iteration-count，
+       于是所有 infinite 关键帧（shimmer / pulse / spin / 骨架波 / 旋转扫描）
+       变成「0.01ms 时长 × 无限次」的极高速重启，为想少看动画的用户点满 CPU。
+       归零迭代次数后这些动画一次性跑完即停。 */
+    animation-iteration-count: 1 !important;
+    animation-delay: 0ms !important;
   }
 }
 
@@ -3741,7 +3768,9 @@ input[type="radio"]:focus-visible {
   align-items: center;
   justify-content: center;
   z-index: 1200;
-  animation: toastIn 180ms var(--ease-standard);
+  /* v3.5.1 动效审查 L1：原引用 @keyframes toastIn，该关键帧全仓从未定义
+     （唯一命中就是这一行）→ 遮罩入场实为空操作。改用已定义的 fadeIn。 */
+  animation: fadeIn var(--duration-base) var(--ease-standard);
 }
 
 .ctx-detail-modal {
@@ -5677,7 +5706,7 @@ body.mw-window {
 .mw-group-content {
   padding: 6px 14px 12px;
   overflow: hidden;
-  animation: mwExpand var(--duration-base) var(--ease-standard);
+  animation: mwExpand var(--duration-base) var(--ease-emphasized);
 }
 .mw-group.collapsed .mw-group-content { display: none; }
 @keyframes mwExpand {
@@ -6133,7 +6162,8 @@ body.pv-window {
   width: 14px;
   height: 14px;
   transform: rotate(0deg);
-  transition: transform calc(160ms * var(--duration-scale, 1)) var(--ease-standard);
+  /* v3.5.1 动效审查 L2：--duration-scale 全仓未定义、仅此一处引用，靠 fallback 兜底 */
+  transition: transform var(--duration-fast) var(--ease-standard);
 }
 .mem-group-row[aria-expanded="true"] .mem-tree-toggle-icon { transform: rotate(90deg); }
 .mem-tree-name { font-weight: calc(600 * var(--font-weight-scale, 1)); }
@@ -6323,7 +6353,11 @@ body.pv-window {
   padding: 7px 8px;
   border-radius: var(--radius-small);
   cursor: pointer;
-  transition: background-color 0.3s ease;
+  /* v3.5.1 动效审查修正：这两行是优化中心看板 / 右键管理看板的**活体**可点击行
+     （.opt-card/.opt-grid/.optimizer-card 全仓零引用，是死 CSS，本批不动它们）。
+     原为手写 0.3s ease，超出 UI 预算且脱离 token；收敛到 --duration-fast。
+     刻意不加 :active 缩放——密集列表行按审计「高频列表导航应抑制动效」处理。 */
+  transition: background-color var(--duration-fast) var(--ease-standard);
 }
 .opt-row:hover,
 .ctx-kanban-row:hover { background: var(--bg-hover); }
@@ -8108,7 +8142,8 @@ body.lg-mode-frost .filter-tab.active .maint-tab-count {
   border-radius: 999px;
   background: color-mix(in srgb, var(--fg-tertiary) 38%, transparent);
   border: 1px solid var(--border-default);
-  transition: background 350ms cubic-bezier(0.4, 0, 0.2, 1);
+  /* v3.5.1 动效审查 M10：350ms 超 UI 预算，且手写 bezier 是 --ease-standard 的逐字副本 */
+  transition: background var(--duration-base) var(--ease-standard);
 }
 .mt-switch-knob {
   position: absolute;
@@ -8119,7 +8154,7 @@ body.lg-mode-frost .filter-tab.active .maint-tab-count {
   border-radius: 50%;
   background: var(--fg-primary);
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
-  transition: transform 350ms cubic-bezier(0.4, 0, 0.2, 1), background 350ms cubic-bezier(0.4, 0, 0.2, 1);
+  transition: transform var(--duration-base) var(--ease-standard), background var(--duration-base) var(--ease-standard);
 }
 .mt-switch.on .mt-switch-track { background: var(--accent); border-color: var(--accent); }
 .mt-switch.on .mt-switch-knob { transform: translateX(20px); background: var(--knob-bg); }
@@ -8411,21 +8446,78 @@ body[data-preset-bg] .layout {
   color: var(--fg-tertiary);
   font-variant-numeric: tabular-nums;
 }
-/* 更新日志：GitHub releaseNotes 纯文本展示（pre-wrap 保留换行），超高滚动 */
+/* 更新日志（v3.5.1）：releaseNotes 经渲染器转为块级版式。
+   纯文本回退态靠 pre-wrap 保留换行；富文本态把排版交给子元素。 */
 .upd-notes {
-  margin-top: 12px;
-  max-height: 200px;
+  margin-top: 14px;
+  max-height: 340px;
   overflow-y: auto;
-  padding: 10px 12px;
+  padding: 14px 16px;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-small);
   background: var(--bg-input);
   color: var(--fg-secondary);
-  font-size: var(--fs-secondary);
-  line-height: 1.7;
+  font-size: var(--fs-body);
+  line-height: 1.75;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.upd-notes.upd-notes-rich { white-space: normal; }
+.upd-notes > :first-child { margin-top: 0; }
+.upd-notes > :last-child { margin-bottom: 0; }
+.upd-notes h1,
+.upd-notes h2,
+.upd-notes h3,
+.upd-notes h4,
+.upd-notes h5,
+.upd-notes h6 {
+  margin: 18px 0 8px;
+  color: var(--fg-primary);
+  font-weight: calc(600 * var(--font-weight-scale, 1));
+  line-height: 1.4;
+}
+.upd-notes h1 { font-size: calc(17px * var(--font-size-scale, 1)); }
+.upd-notes h2 { font-size: calc(16px * var(--font-size-scale, 1)); }
+.upd-notes h3 { font-size: calc(15px * var(--font-size-scale, 1)); }
+.upd-notes h4,
+.upd-notes h5,
+.upd-notes h6 { font-size: var(--fs-body); }
+.upd-notes p { margin: 8px 0; }
+.upd-notes ul,
+.upd-notes ol { margin: 8px 0; padding-left: 22px; }
+.upd-notes li { margin: 4px 0; }
+.upd-notes li > p { margin: 4px 0; }
+.upd-notes blockquote {
+  margin: 10px 0;
+  padding: 6px 12px;
+  border-left: 3px solid var(--border-strong);
+  color: var(--fg-tertiary);
+}
+.upd-notes code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--bg-card-hover);
+  color: var(--fg-primary);
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: calc(12.5px * var(--font-size-scale, 1));
+}
+.upd-notes pre {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-small);
+  background: var(--bg-card);
+  overflow-x: auto;
+}
+.upd-notes pre code { padding: 0; background: none; }
+.upd-notes hr { margin: 14px 0; border: 0; border-top: 1px solid var(--border-default); }
+.upd-notes a { color: var(--accent); text-decoration: none; }
+.upd-notes a:hover { text-decoration: underline; }
+.upd-notes strong { color: var(--fg-primary); font-weight: calc(600 * var(--font-weight-scale, 1)); }
+.upd-notes table { width: 100%; margin: 10px 0; border-collapse: collapse; font-size: var(--fs-secondary); }
+.upd-notes th,
+.upd-notes td { padding: 5px 8px; border: 1px solid var(--border-default); text-align: left; }
+.upd-notes th { background: var(--bg-card-hover); color: var(--fg-primary); font-weight: calc(600 * var(--font-weight-scale, 1)); }
 .upd-dl-head {
   display: flex;
   align-items: baseline;
