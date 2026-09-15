@@ -1,5 +1,11 @@
-; build/installer.nsh — electron-builder NSIS 自定义钩子
+; scripts/installer.nsh — electron-builder NSIS 自定义钩子
 ; 批次：v3.5.1（桌面快捷方式在更新后丢失）
+;
+; 位置说明：electron-builder 的 nsis.include 路径解析（app-builder-lib/out/platformPackager.js
+; 的 getResource）依次尝试 ① buildResources 目录下的同名文件 ② resolve(buildResources, 值)
+; ③ resolve(项目根, 值)，命中即用。这里靠 ③ 命中，因此不需要为它单开 buildResources 目录；
+; 若日后要加 installerIcon.ico / license.txt 等默认从 buildResources 发现的资源，
+; 需在 package.json 里显式指定路径，或重新建 build/ 目录。
 ;
 ; ── 根因（读 electron-builder 26.x 自带模板逐行确认）──────────────────
 ; templates/nsis/include/installer.nsh 的 addDesktopLink 宏在

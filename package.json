@@ -96,7 +96,7 @@
       "artifactName": "${productName}-Portable-${version}.${ext}"
     },
     "nsis": {
-      "include": "build/installer.nsh",
+      "include": "scripts/installer.nsh",
       "oneClick": false,
       "perMachine": false,
       "allowElevation": true,
