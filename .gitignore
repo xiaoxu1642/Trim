@@ -16,6 +16,9 @@ trim-installer/
 # Rust 构建缓存（finder.exe 构建后由 extraResources 取件，不入库）
 native-scanner/target/
 
+# 内置 PowerShell7 运行时发行包（>100MB 超 GitHub 单文件上限，仅本地取件打包，必须不入库）
+vendor/pwsh/*.zip
+
 # 智能体工作目录
 .workbuddy/
 
