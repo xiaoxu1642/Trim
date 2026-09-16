@@ -2114,7 +2114,11 @@ check('OPT-1：高危清单服务端镜像 + confirmedHighRisk 回执双侧接�
   if (!main.includes('OPTIMIZER_HAZARD_IDS')) throw new Error('主进程缺高危镜像清单');
   if (!main.includes('params.confirmedHighRisk !== true')) throw new Error('主进程未校验确认回执');
   if (!rnd.includes('runParams.confirmedHighRisk = true')) throw new Error('渲染层未携带确认回执');
-  if (!main.includes("'disable_uac'") || !main.includes("'bcd_opt'")) throw new Error('镜像清单 id 不全');
+  for (const f of [main, rnd]) {
+    if (!f.includes("'disable_uac'") || !f.includes("'tf_drv_disable'")) throw new Error('镜像清单 id 不全');
+    // v3.6.1：BCD 优化已全线下线，镜像清单不得再出现 bcd_opt
+    if (f.includes("'bcd_opt'")) throw new Error('BCD 优化已下线，镜像清单不应再含 bcd_opt');
+  }
 });
 
 check('SR-5：DMTF ±000 偏移按本地时间解释', () => {

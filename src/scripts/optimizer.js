@@ -191,8 +191,7 @@
     'perf_vbs_off',          // 关闭 VBS / 内存完整性
     'perf_exploit_protection_off', // 关闭 Exploit Protection（乱序内存）
     'tf_svc_bulk',           // 禁用 70+ 非必要服务（含安全服务）
-    'tf_drv_disable',        // 禁用高风险驱动服务
-    'bcd_opt'                // BCD 超优化（可能影响启动）
+    'tf_drv_disable'         // 禁用高风险驱动服务
   ]);
 
   // 执行前高危确认：返回 true 继续 / false 取消
@@ -1193,7 +1192,7 @@
     if (btn) btn.style.display = '';
     if (banner) {
       banner.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 2L1 21h22L12 2zm1 15h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>' +
-        '<span>当前不是管理员权限：注册表(HKLM)、BCD 与系统服务等选项将无法生效。建议点击右上角「提升权限」以管理员身份重启。</span>';
+        '<span>当前不是管理员权限：注册表(HKLM)与系统服务等选项将无法生效。建议点击右上角「提升权限」以管理员身份重启。</span>';
       banner.style.display = 'flex';
     }
   }

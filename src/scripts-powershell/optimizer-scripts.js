@@ -9,7 +9,7 @@
 // 并逐步输出 "@@PROGRESS:n@@" 上报 0-100%；结束时输出 "@@DONE@@"。
 // step 支持 4 种动作：
 //   reg     -> { label, reg }  .reg 内容，用 reg.exe import 临时文件（保证原样保真）
-//   cmd     -> { label, cmd }  交由 cmd.exe /c 执行（bcdedit/ipconfig/netsh/fsutil/reg add）
+//   cmd     -> { label, cmd }  交由 cmd.exe /c 执行（ipconfig/netsh/fsutil/reg add）
 //   service -> { label, service, disable }  Stop-Service + 可选 Set-Service Disabled
 //   pwsh    -> { label, pwsh }  内联 PowerShell 语句（可多行；禁止内含独立成行的 '@）
 
@@ -60,40 +60,6 @@ const OOSU_CFG_B64 = 'IyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIy
 
 const OPTIONS = [
   // ---------- 启动与响应 ----------
-  {
-    id: 'bcd_opt', group: '启动与响应', title: 'BCD 超优化', risk: 'high',
-    desc: '合并自「BCD 启动优化」与「BCD 全量启动参数」：关闭平台时钟(useplatformclock/useplatformtick No)+禁用动态时钟(disabledynamictick Yes)、TSC 同步增强、启动体验(无 UI/超时 0/静默/去 Logo/去动画)、虚拟化关闭(hypervisorlaunchtype/VSM/VM，适用于不使用 Hyper-V/WSL2 的环境)、内存映射(firstmegabytepolicy UseAll、avoidlowmemory、nolowmem、allowedinmemorysettings、pae ForceEnable)、DEP OptOut、x2apicpolicy Enable、禁用 ELAM 驱动等 28 项，一站式完成 BCD 启动调优。',
-    steps: [
-      { label: '关闭平台时钟', cmd: 'bcdedit /set useplatformclock No' },
-      { label: '关闭平台 tick', cmd: 'bcdedit /set useplatformtick No' },
-      { label: '禁用动态时钟', cmd: 'bcdedit /set disabledynamictick Yes' },
-      { label: 'TSC 同步策略增强', cmd: 'bcdedit /set tscsyncpolicy Enhanced' },
-      { label: '启动超时 0', cmd: 'bcdedit /timeout 0' },
-      { label: 'DEP OptOut', cmd: 'bcdedit /set nx optout' },
-      { label: '禁用启动 UI', cmd: 'bcdedit /set bootux disabled' },
-      { label: '标准启动菜单策略', cmd: 'bcdedit /set bootmenupolicy standard' },
-      { label: '关闭超虚拟化', cmd: 'bcdedit /set hypervisorlaunchtype off' },
-      { label: '强制禁用 TPM 启动熵', cmd: 'bcdedit /set tpmbootentropy ForceDisable' },
-      { label: '静默启动', cmd: 'bcdedit /set quietboot yes' },
-      { label: '禁用启动 Logo', cmd: 'bcdedit /set {globalsettings} custom:16000067 true' },
-      { label: '禁用旋转动画', cmd: 'bcdedit /set {globalsettings} custom:16000069 true' },
-      { label: '禁用启动消息', cmd: 'bcdedit /set {globalsettings} custom:16000068 true' },
-      { label: '关闭 VSM 启动', cmd: 'bcdedit /set vsmlaunchtype Off' },
-      { label: '禁用虚拟机设置', cmd: 'bcdedit /set vm No' },
-      { label: '首 1MB 内存策略 UseAll', cmd: 'bcdedit /set firstmegabytepolicy UseAll' },
-      { label: '避免低内存占用', cmd: 'bcdedit /set avoidlowmemory 0x8000000' },
-      { label: '无低内存模式', cmd: 'bcdedit /set nolowmem Yes' },
-      { label: '允许内存设置 0x0', cmd: 'bcdedit /set allowedinmemorysettings 0x0' },
-      { label: 'x2APIC 启用', cmd: 'bcdedit /set x2apicpolicy Enable' },
-      { label: '禁用 ELAM 驱动', cmd: 'bcdedit /set disableelamdrivers Yes' },
-      { label: 'PAE 强制启用', cmd: 'bcdedit /set pae ForceEnable' },
-      { label: '禁用 UMEx', cmd: 'bcdedit /set noumex Yes' },
-      { label: '关闭传统 APIC 模式', cmd: 'bcdedit /set uselegacyapicmode No' },
-      { label: '禁用 EMS', cmd: 'bcdedit /set ems No' },
-      { label: '扩展输入启用', cmd: 'bcdedit /set extendedinput Yes' },
-      { label: '禁用调试', cmd: 'bcdedit /set debug No' }
-    ]
-  },
   // 第六大点-A/B（2026-09-14 重复点审查）：原「SSD 固态硬盘优化」(ssd_opt) 已下线。
   // 它的两步都被别处覆盖，且其中一步与 tf_ntfs 取值相反：
   //   · fsutil disableLastAccess 0（原描述"启用最后访问时间戳"）与 tf_ntfs 的 disablelastaccess=1
@@ -2083,8 +2049,6 @@ const PROS_CONS = {
   'tf_net_lanman': { pros: '优化 SMB 会话相关参数，局域网文件共享与访问响应更快。', cons: '改动 LanmanServer 参数在共享服务高负载时可能影响兼容性。' },
   'tf_net_nic': { pros: '批量关闭网卡节能并开启低延迟相关属性，降低网络唤醒与传输抖动。', cons: '关闭节能会让网卡功耗略升，老旧网卡可能不支持部分高级属性。' },
   'tf_net_weakhost': { pros: '开启 WeakHost 收发可改善多网卡下的本地访问与回流场景。', cons: '轻微降低网络隔离安全性，仅建议在明确需要时启用。' },
-  'bcd_opt': { pros: '禁用系统合成计时器等启动项，可缩短启动与唤醒延迟。', cons: '属于启动配置修改，失误可能影响启动，需管理员权限。' },
-  'tf_bcd_full': { pros: '一次性写入禁用动态时钟、关闭整页交换等全套启动参数，降低启动延迟。', cons: 'BCD 修改风险高，参数不当可能导致无法启动，务必事先备份。' },
   'tf_microcode_del': { pros: '删除 CPU 微码更新 DLL，减少启动与运行时的一处校验开销。', cons: '移除微码补丁会重新暴露已知 CPU 漏洞与稳定性修复，安全风险较大。' },
   'tf_ntfs': { pros: '关闭 8.3 短名与末次访问时间戳、增大内存使用，可提升文件系统吞吐。', cons: '8.3 名称关闭会让个别老软件找不到文件，NTFS 改动一般不可逆。' },
   'tf_hibern_off': { pros: '彻底关闭休眠与快速启动，可释放磁盘空间并减少关机/启动异常。', cons: '失去快速启动带来的开机加速，且无法再使用休眠功能。' },
@@ -2212,7 +2176,6 @@ OPTIONS.forEach(o => {
 //   微小   = 收益存在但多数场景难以感知（经典玄学项、依赖型收益）
 //   未验证 = 缺乏可靠依据或收益因机型/负载而异，无法给出负责任的结论
 const EFFECT_MAP = {
-  bcd_opt: '微小',
   tf_ntfs: '一般',
   tf_hibern_off: '一般',
   tf_core_misc: '一般',

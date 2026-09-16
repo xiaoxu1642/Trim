@@ -36,6 +36,22 @@
   var reduceMotion = false;
   try { reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
 
+  // v3.6.1 修复「开屏动画卡死」：Windows「显示动画」关闭时系统 API
+  // SPI_GETCLIENTAREAANIMATION=0 → Chromium 判定 prefers-reduced-motion:reduce。
+  // 原实现只在降级路径里跳过 FLIP 与 WebGL 续帧，启动页本体照旧渲染：背景只画一帧、
+  // CSS 入场动画被媒体查询关断、进度条以 rAF 假进到 100%，首访还要手动点「点击进入」，
+  // 用户看到的是一张完全静止、疑似卡死的开屏。
+  // 契约（index.html 第 14 行注释 / 本文件第 8 行）本是「reduced-motion 直接呈现主界面无动画」，
+  // 此处补齐该契约：不建 WebGL 上下文、不计时、不进场，直接摘除启动页放行主界面。
+  // 不写 markSeen：用户日后开启系统动画仍应获得完整首访体验。
+  if (reduceMotion) {
+    try {
+      splash.classList.add('finished');
+      if (splash.parentNode) splash.parentNode.removeChild(splash);
+    } catch (e) {}
+    return;
+  }
+
   var state = 'loading'; // loading → done → entered
   var finished = false;
   var bootReady = false;

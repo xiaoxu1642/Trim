@@ -2644,7 +2644,7 @@ const OPTIMIZER = require('./src/scripts-powershell/optimizer-scripts');
 // v2.6.0（P0-1）：优化项「已应用状态」记账——先记账后执行（fail-closed），还原成功才销账
 const OPT_STATE = require('./src/main/optimization-state');
 
-// 步骤类型分类（供记账 kinds 字段）：reg=注册表 / service=服务启停 / cmd=bcdedit、fsutil、powercfg 等命令
+// 步骤类型分类（供记账 kinds 字段）：reg=注册表 / service=服务启停 / cmd=fsutil、powercfg 等命令
 function classifyStepKinds(steps) {
   const kinds = new Set();
   for (const s of steps || []) {
@@ -2661,7 +2661,7 @@ function classifyStepKinds(steps) {
 // 回执，主进程见不到回执即拒绝——被攻陷渲染层无法绕过红色确认直接执行高危项。
 const OPTIMIZER_HAZARD_IDS = new Set([
   'disable_uac', 'tf_defender', 'tf_microcode_del', 'spectre_off', 'perf_vbs_off',
-  'perf_exploit_protection_off', 'tf_svc_bulk', 'tf_drv_disable', 'bcd_opt'
+  'perf_exploit_protection_off', 'tf_svc_bulk', 'tf_drv_disable'
 ]);
 
 handleSafe('optimizer:run', async (event, { optionId, params = {} } = {}) => {
@@ -2700,7 +2700,7 @@ handleSafe('optimizer:run', async (event, { optionId, params = {} } = {}) => {
   if (!steps || !steps.length) return { success: false, message: '选项无可执行步骤' };
 
   // v2.6.0（P0-1）：执行前先记账（fail-closed 不变式①）——状态文件写不进去就不改系统。
-  // kinds 覆盖 reg / service / cmd（bcdedit、fsutil、powercfg 等此前无任何持久化痕迹的步骤）。
+  // kinds 覆盖 reg / service / cmd（fsutil、powercfg 等此前无任何持久化痕迹的步骤）。
   const isRestoreRun = !!(params.restore && opt.restore);
   if (!isRestoreRun && OPT_STATE.ready()) {
     if (!OPT_STATE.recordPending(optionId, { title: opt.title, kinds: classifyStepKinds(steps) })) {
@@ -2955,7 +2955,7 @@ async function verifyOptionApplied(optionId, opt, params) {
       return cur.gb != null && String(cur.gb) === target ? 'pass' : 'partial';
     }
     const checkable = (opt.steps || []).some(s => s && (typeof s.reg === 'string' || (s.service && s.disable)));
-    if (!checkable) return 'unknown'; // cmd 类步骤（bcdedit 等）无逐键比对手段，不伪造结论
+    if (!checkable) return 'unknown'; // cmd 类步骤（fsutil 等）无逐键比对手段，不伪造结论
     const results = await checkOptimizedInternal([optionId]);
     return results[optionId] === true ? 'pass' : 'partial';
   } catch (e) {
@@ -2967,7 +2967,7 @@ async function verifyOptionApplied(optionId, opt, params) {
 // v2.7.0（任务2）：优化项「已优化」检测结果持久化——应用首次启动即后台全量扫描并写入
 // optimization-state.json 的 detected 段（安装版 %APPDATA%\Trim，便携版程序目录\data），
 // 此后每次执行/还原及时回写单条，常态化留痕，不再只存在渲染层内存里。
-// 只扫可检测项（reg/svc 步骤）+ 动态项；cmd 类（bcdedit 等）无检测手段，不伪造结论。
+// 只扫可检测项（reg/svc 步骤）+ 动态项；cmd 类（fsutil 等）无检测手段，不伪造结论。
 async function refreshOptimizerDetectCache() {
   if (!OPT_STATE.ready()) return;
   try {

@@ -3,7 +3,7 @@
 //   ① 先记账：执行前写入 pending 记录，写不进去就不改（fail-closed）；
 //   ② 执行成功后才把记录转正为 applied；
 //   ③ 还原成功才销账：还原失败保留记录，等下次重试。
-// 为什么需要它：optimizer-backups.json 只记注册表原值，bcdedit / fsutil / 服务启停等
+// 为什么需要它：optimizer-backups.json 只记注册表原值，fsutil 命令 / 服务启停等
 // cmd、service 类步骤此前没有任何持久化痕迹；崩溃/重启后无从知道「改过什么」，
 // 退役项与半途而废的批量执行会变成永远说不清的历史包袱。
 // 数据文件：%APPDATA%\Trim\optimization-state.json（安装版；便携版为程序目录\data，同机制）
