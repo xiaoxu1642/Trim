@@ -98,25 +98,38 @@
     }
   }
 
-  // 数值过长（如 10.3 GB / 15.7 GB 在四联卡宽度下折成三行）时自动缩小字号，
-  // 最多两行封顶（CSS 侧另有 -webkit-line-clamp 兜底）；显示/尺寸变化经 ResizeObserver 重算
+  // 数值过长（如 11.2 GB / 15.7 GB 在四联卡宽度下折成三行）时自动缩小字号，
+  // 最多两行封顶（CSS 侧另有 -webkit-line-clamp 兜底）；显示/尺寸变化经 ResizeObserver 重算。
+  // v3.6.2 修复整页 20Hz 闪烁（ResizeObserver 自激振荡）：旧实现 observe #memUseValue
+  // 自身，且每轮回调都无条件 fontSize='' 重置再 while 缩小——重置（变高）与缩小（变矮）
+  // 各改写一次自身高度，RO 必然再次投递回调，形成「20px 大字 ↔ 12px 小字」逐帧横跳
+  // （CDP 实测 1.6s 内回调 1675 次），卡片高度随之抖动并把下方整个列表顶得上下闪。
+  // 两道护栏：① observe 不受字号影响的容器 .summary-info（改字号不反作用于其宽度，
+  // 反馈环物理断开）；② 按「文本 + 容器宽度」签名拟合，签名不变零写入，收敛即停；
+  // 容器变宽时签名变化，字号自然回弹。
+  let fitSignature = '';
   function fitMemValue() {
     const el = $('memUseValue');
     if (!el) return;
-    el.style.fontSize = '';
+    const box = el.closest('.summary-info') || el;
+    const sig = el.textContent + '|' + box.clientWidth;
+    if (fitSignature === sig) return; // 已按当前文本/宽度收敛：零写入，杜绝自激
+    el.style.fontSize = ''; // 签名变化（新数值或容器改宽）：从 CSS 默认字号重新拟合
     const cs = getComputedStyle(el);
     const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.2;
     const twoLines = lh * 2 + 1;
     let size = parseFloat(cs.fontSize);
-    let guard = 8;
+    let guard = 16; // 16 档覆盖 --font-size-scale 放大（25px→12px 需 13 次）
     while (guard-- > 0 && el.scrollHeight > twoLines && size > 12) {
       size -= 1;
       el.style.fontSize = size + 'px';
     }
+    fitSignature = sig;
   }
   if (window.ResizeObserver) {
-    const fitTarget = document.getElementById('memUseValue');
-    if (fitTarget) new ResizeObserver(() => fitMemValue()).observe(fitTarget);
+    // observe 容器而非 #memUseValue 自身：字号只改元素自身高度，不影响容器宽度
+    const fitBox = document.getElementById('memUseValue')?.closest('.summary-info');
+    if (fitBox) new ResizeObserver(() => fitMemValue()).observe(fitBox);
   }
 
   function renderInfo(d) {

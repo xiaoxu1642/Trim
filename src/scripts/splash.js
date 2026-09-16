@@ -5,7 +5,7 @@
 //       （PowerPoint「平滑」效果）。
 // 进度编排（v2.7.1）：不再纯假进度——app.js 初始化完成会派发 `trim:boot-ready`，
 // 进度条到 92% 后停在原地等真实就绪事件，就绪即收尾进入（紧凑模式最快约 0.5s 进主界面）。
-// 约束：CSP 禁内联脚本，全部逻辑在此文件；prefers-reduced-motion 直接呈现主界面无动画；
+// 约束：CSP 禁内联脚本，全部逻辑在此文件；v3.6.2 起开屏动画无视系统 reduced-motion 完整播放；
 //       任何异常（目标元素缺失/脚本异常/transitionend 丢失）都有兜底路径保证进入主界面。
 (function () {
   'use strict';
@@ -36,21 +36,14 @@
   var reduceMotion = false;
   try { reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
 
-  // v3.6.1 修复「开屏动画卡死」：Windows「显示动画」关闭时系统 API
-  // SPI_GETCLIENTAREAANIMATION=0 → Chromium 判定 prefers-reduced-motion:reduce。
-  // 原实现只在降级路径里跳过 FLIP 与 WebGL 续帧，启动页本体照旧渲染：背景只画一帧、
-  // CSS 入场动画被媒体查询关断、进度条以 rAF 假进到 100%，首访还要手动点「点击进入」，
-  // 用户看到的是一张完全静止、疑似卡死的开屏。
-  // 契约（index.html 第 14 行注释 / 本文件第 8 行）本是「reduced-motion 直接呈现主界面无动画」，
-  // 此处补齐该契约：不建 WebGL 上下文、不计时、不进场，直接摘除启动页放行主界面。
-  // 不写 markSeen：用户日后开启系统动画仍应获得完整首访体验。
-  if (reduceMotion) {
-    try {
-      splash.classList.add('finished');
-      if (splash.parentNode) splash.parentNode.removeChild(splash);
-    } catch (e) {}
-    return;
-  }
+  // v3.6.2 产品决策（用户拍板）：开屏动画是 Trim 品牌资产——WebGL 流线背景、入场、FLIP
+  // 落位，即使系统关闭「显示动画」（SPI_GETCLIENTAREAANIMATION=0 → PRM:reduce）也完整播放，
+  // 不再按系统开关跳过。body.splash-live 标记供 main.css 的 reduced-motion 归零规则排除
+  // 启动页子树（开屏期间主界面渐显也需要），finish() 摘除。
+  // 注：v3.6.1 曾因 PRM 下「静态卡死还要手点」直接摘除启动页；现将 CSS 归零规则豁免 +
+  // 完整 JS 编排后，入场/进度/FLIP 全链路真实运行，卡死根因不复存在。
+  // reduceMotion 变量保留仅作日志/兜底参考，不再用于跳过任何动画路径。
+  try { document.body.classList.add('splash-live'); } catch (e) {}
 
   var state = 'loading'; // loading → done → entered
   var finished = false;
@@ -75,6 +68,8 @@
     if (finished) return;
     finished = true;
     clearTimeout(hardTimer);
+    // 开屏结束即摘标，主界面恢复 reduced-motion 无动画常态
+    try { document.body.classList.remove('splash-live'); } catch (e) {}
     // 火眼眼审查 2026-09-14（LOW）：节点摘除的同时解绑 window 级监听
     try { window.removeEventListener('trim:boot-ready', onBootReady); } catch (e) {}
     try { if (canvasResizeHandler) window.removeEventListener('resize', canvasResizeHandler); } catch (e) {}
@@ -139,9 +134,9 @@
     });
     splash.classList.add('entering'); // 背景层淡出（CSS 过渡）——主页内容同步渐显
 
-    // 无动画 / 目标缺失：直接进入，不做 FLIP
-    if (reduceMotion || !trimEl || !titleTarget || !trimEl.getBoundingClientRect || !titleTarget.getBoundingClientRect) {
-      setTimeout(finish, reduceMotion ? 0 : 500);
+    // 目标缺失：直接进入，不做 FLIP（v3.6.2 起不再因 reduceMotion 跳过）
+    if (!trimEl || !titleTarget || !trimEl.getBoundingClientRect || !titleTarget.getBoundingClientRect) {
+      setTimeout(finish, 500);
       return;
     }
 
@@ -293,7 +288,7 @@
       gl.uniform2f(uRes, canvas.width, canvas.height);
       gl.uniform1f(uTime, now * 1e-3);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-      if (!finished && !reduceMotion) requestAnimationFrame(loop); // 进入后停止渲染，释放 GPU
+      if (!finished) requestAnimationFrame(loop); // 进入后停止渲染，释放 GPU
     }
     requestAnimationFrame(loop);
   })();

@@ -2945,7 +2945,9 @@ select.field-input { cursor: pointer; appearance: auto; }
    减弱动效（可访问性）
    ================================================================ */
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
+  /* v3.6.2 产品决策：开屏进行中（body.splash-live）豁免全局归零——WebGL 背景、
+     splash 入场、FLIP 落位与主界面渐显在系统关闭动画时仍完整播放 */
+  body:not(.splash-live) *, body:not(.splash-live) *::before, body:not(.splash-live) *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
     /* v3.5.1 动效审查 H1：原先只归零 duration，未归零 iteration-count，
@@ -8787,10 +8789,12 @@ body[data-preset-bg] .layout {
   to { opacity: 1; transform: scale(1); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .splash-badge, .splash-trim, .splash-intro, .splash-progress { animation: none; }
-  .splash-overlay.entering .splash-bg,
-  .splash-overlay.entering #splash-canvas,
-  .splash-overlay.entering .splash-vignette { transition: none; }
+  /* v3.6.2：仅在非开屏状态下关断 splash 入场与进入过渡；开屏期间（body.splash-live）正常播放 */
+  body:not(.splash-live) .splash-badge, body:not(.splash-live) .splash-trim,
+  body:not(.splash-live) .splash-intro, body:not(.splash-live) .splash-progress { animation: none; }
+  body:not(.splash-live) .splash-overlay.entering .splash-bg,
+  body:not(.splash-live) .splash-overlay.entering #splash-canvas,
+  body:not(.splash-live) .splash-overlay.entering .splash-vignette { transition: none; }
 }
 /* 启动页补充：落位期间隐藏真实标题栏品牌（:has 由 Electron 44 Chromium 支持），
    splash.js 在 FLIP 结束时给 #splash 加 .finished 并移除节点，品牌同步显现，视觉无缝 */
