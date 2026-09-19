@@ -13,11 +13,12 @@
   let ctxModalCtrl = null; // v3.2.0：详情弹窗工厂 ctrl（焦点陷阱/Esc 由工厂统一管理）
   let kanbanMasonry = null; // 瀑布流布局引擎（resize 防抖 + FLIP）
 
-  // 11 个分类定义（顺序固定）
+  // 分类定义（顺序固定）。批次 C 起补齐三个原本「有 tab 无数据源」的分类：
+  // 新建菜单 / 打开方式 / Win+X —— 侧边栏一直挂着这三个入口却永远为空。
   const CATEGORY_ORDER = [
     '文件', 'EXE文件', 'LNK文件', '目录', '文件夹',
     '驱动器', '回收站', '目录背景', '桌面背景',
-    '此电脑', '库', '发送到', 'UWP应用'
+    '此电脑', '库', '发送到', '新建菜单', '打开方式', 'Win+X', 'UWP应用'
   ];
 
   const CATEGORY_ICONS = {
@@ -33,6 +34,9 @@
     '此电脑': '\u{1F5A5}\uFE0F',
     '库': '\u{1F4D6}',
     '发送到': '\u{1F4E8}',
+    '新建菜单': '\u2795',
+    '打开方式': '\u21AA',
+    'Win+X': '\u2328',
     'UWP应用': '\u{1F4F1}'
   };
 
@@ -51,10 +55,10 @@
     '此电脑': it => /\{20D04FE0-/i.test(it.regPath || it.location || ''),
     '回收站': it => it.category === '回收站' || /Recycle\.Bin/i.test(it.regPath || it.location || ''),
     '库': it => /Library/i.test(it.regPath || it.location || ''),
-    '新建菜单': it => /\\New($|\\)/i.test(it.regPath || it.location || ''),
+    '新建菜单': it => it.category === '新建菜单',
     '发送到': it => it.category === '发送到' || /SendTo/i.test(it.regPath || it.location || ''),
-    '打开方式': it => /OpenWith/i.test(it.regPath || it.location || ''),
-    'Win+X': it => /WinX/i.test(it.regPath || it.location || '')
+    '打开方式': it => it.category === '打开方式',
+    'Win+X': it => it.category === 'Win+X'
   };
   let currentCategory = '文件';
 
@@ -64,23 +68,39 @@
 
   // 阶段三：类型/状态徽章统一 design-system（ds-badge sm 紧凑变体）
   function typeBadgeHtml(item) {
-    const disabled = item.enabled === false
-      ? ' ' + (window.ds
-        ? window.ds.badgeHtml('neutral', '已禁用', { small: true, title: '已禁用（取消勾选即可重新启用）' })
-        : '<span class="badge off" data-tip="已禁用（取消勾选即可重新启用）">已禁用</span>')
-      : '';
+    const badges = [];
+    if (item.enabled === false) {
+      // 三种禁用机制要如实区分：屏蔽表（Explorer 不加载）/ 外部工具的改名约定 / Trim 自己的可逆禁用
+      const label = item.blockedBy ? '已屏蔽' : (item.unknownConvention ? '已禁用·外部约定' : '已禁用');
+      const title = item.blockedBy
+        ? `由 Shell Extensions\\Blocked 屏蔽表（${item.blockedBy === 'machine' ? '机器级' : '当前用户'}）禁用，资源管理器不会加载该扩展`
+        : (item.unknownConvention
+          ? '由其他工具（如 Autoruns）以改名方式禁用，Trim 未改动它'
+          : '已禁用（取消勾选即可重新启用）');
+      badges.push(window.ds
+        ? window.ds.badgeHtml('neutral', label, { small: true, title })
+        : `<span class="badge off" data-tip="${escapeHtml(title)}">${escapeHtml(label)}</span>`);
+    }
+    if (item.orphan) {
+      const why = item.orphanReason || '对应组件已不存在（多为软件卸载遗留）';
+      badges.push(window.ds
+        ? window.ds.badgeHtml('warn', '残留', { small: true, title: why + '；可安全清理' })
+        : `<span class="badge third-party" data-tip="${escapeHtml(why)}">残留</span>`);
+    }
     const risk = item.risk === 'protected'
       ? (window.ds ? window.ds.badgeHtml('bad', '系统保护', { small: true }) : '<span class="badge protected">系统保护</span>')
       : (item.isThirdParty
         ? (window.ds ? window.ds.badgeHtml('warn', '第三方', { small: true }) : '<span class="badge third-party">第三方</span>')
         : (window.ds ? window.ds.badgeHtml('ok', '系统原生', { small: true }) : '<span class="badge system">系统原生</span>'));
-    return risk + disabled;
+    return risk + (badges.length ? ' ' + badges.join(' ') : '');
   }
 
-  // 是否支持启停切换（UWP 无公开可逆禁用机制）
+  // 是否支持启停切换。批次 B 起 UWP/打包 COM 走 Shell Extensions\Blocked 屏蔽表实现可逆禁用，
+  // 但没有 CLSID 就无法入表，仍然不可切换。
   function isToggleable(item) {
     if (item.risk === 'protected') return false;
-    return !['packagedcom', 'uwp-contract'].includes(item.source);
+    if (['packagedcom', 'uwp-contract'].includes(item.source)) return !!item.clsid;
+    return true;
   }
 
   // 模拟数据（用于浏览器预览模式；enabled 模拟启停状态）
@@ -284,6 +304,35 @@
   }
 
   // ==================== 详情弹窗 ====================
+  // CM-9（2026-09-19）：HKCR 只是合并视图，条目真正住在哪个 hive 必须可见——
+  // 备份/恢复/删除都按真实 hive 走，展示层再给一个 HKCR 路径会让人误判。
+  function nativeRowHtml(item) {
+    const native = item.nativeRegPath || '';
+    const display = item.regPath || item.location || '';
+    if (!native || native.toLowerCase() === display.toLowerCase()) return '';
+    return `<div class="ctx-detail-row"><span class="ctx-detail-label">实际所在分支</span><span class="ctx-detail-value mono">${escapeHtml(native)}</span></div>`;
+  }
+
+  // CM-13 / 批次 B、C：详情里常驻「为什么是这个状态」——风险提示、失效原因、屏蔽来源、外部约定。
+  // 用户不必猜，也不必等点了勾选才被弹窗打断。
+  function riskRowHtml(item) {
+    const row = (label, value) => `<div class="ctx-detail-row"><span class="ctx-detail-label">${escapeHtml(label)}</span><span class="ctx-detail-value">${escapeHtml(value)}</span></div>`;
+    const rows = [];
+    if (item.confirmRequired) {
+      rows.push(row('风险提示', item.confirmReason || '该项承载资源管理器的默认「打开/浏览」行为，禁用或删除需谨慎'));
+    }
+    if (item.orphan) {
+      rows.push(row('失效残留', item.orphanReason || '对应组件已不存在（多为软件卸载遗留），可安全清理'));
+    }
+    if (item.blockedBy) {
+      rows.push(row('屏蔽来源', `Shell Extensions\\Blocked 屏蔽表（${item.blockedBy === 'machine' ? '机器级 HKLM，解除需管理员' : '当前用户 HKCU'}）`));
+    }
+    if (item.unknownConvention) {
+      rows.push(row('禁用方式', '由其他工具（如 Autoruns）以改名方式禁用，Trim 未改动它'));
+    }
+    return rows.join('');
+  }
+
   // v3.2.0 弹窗统一批次：骨架改由 modal.js 工厂生成（ctx-detail-* 保留为内容样式），
   // Esc/遮罩关闭、焦点陷阱、打开关闭日志均由工厂统一接管（ctrl 声明见文件顶部）
   function openDetail(item) {
@@ -303,6 +352,8 @@
       bodyHtml: `
           <div class="ctx-detail-grid">
             <div class="ctx-detail-row"><span class="ctx-detail-label">注册表路径</span><span class="ctx-detail-value mono ${regJumpable ? 'ctx-reg-jump' : ''}" ${regJumpable ? 'data-role="regJump" data-tip="点击在注册表编辑器中定位（需要时会自动请求管理员权限）"' : ''}>${escapeHtml(regPath || '--')}</span></div>
+            ${nativeRowHtml(item)}
+            ${riskRowHtml(item)}
              <div class="ctx-detail-row"><span class="ctx-detail-label">所属公司</span><span class="ctx-detail-value">${escapeHtml(item.company || '--')}</span></div>
              ${item.filePath ? `<div class="ctx-detail-row"><span class="ctx-detail-label">组件路径</span><span class="ctx-detail-value mono">${escapeHtml(item.filePath)}</span></div>` : ''}
              ${item.command ? `<div class="ctx-detail-row"><span class="ctx-detail-label">执行命令</span><span class="ctx-detail-value mono">${escapeHtml(item.command)}</span></div>` : ''}
@@ -472,6 +523,8 @@
           // 重命名类切换（shellex '-' 前缀 / 禁用前缀还原）后更新条目路径，
           // 保证不重新扫描的情况下反向切换仍能定位到键
           if (r.newRegPath) p.item.regPath = r.newRegPath;
+          // CM-9：真实 hive 路径同步更新，后续备份/删除/启停都以它为准
+          if (r.newNativeRegPath) p.item.nativeRegPath = r.newNativeRegPath;
           p.item.enabled = p.enabled;
           changed++;
         } else {
@@ -486,6 +539,8 @@
       } else {
         window.app?.toast('success', `已${payloads[0].enabled ? '启用' : '禁用'} ${changed} 项`);
       }
+      // 批次 B：改动要重启资源管理器才在菜单里可见，累计到生效条（不每次打断用户）
+      if (changed > 0) markPendingApply(changed);
     } catch (e) {
       window.app?.toast('error', '切换失败: ' + e.message);
     }
@@ -502,7 +557,28 @@
       }
       return;
     }
-    applyToggles([{ item, enabled: item.enabled === false }]);
+    toggleItemsWithGuard([{ item, enabled: item.enabled === false }]);
+  }
+
+  // CM-13（2026-09-19，批次 A）：open / explore 等基础打开动词与快捷方式 open 处理器，
+  // 禁用后用户感知是「双击打不开了」，必须先过红色二次确认（对齐参考实现的 ProtectOpenItem）。
+  // 判据来自扫描端 confirmRequired，渲染层不自己猜键名。
+  async function toggleItemsWithGuard(payloads) {
+    if (!payloads.length) return;
+    const risky = payloads.filter(p => p.item && p.item.confirmRequired && p.enabled === false);
+    if (risky.length && window.api?.contextmenu?.toggle) {
+      const lines = risky.map(p => '· ' + p.item.name + '：' + (p.item.confirmReason || '基础打开动词，禁用后双击与默认打开行为可能改变')).join('\n');
+      const ok = await window.app?.confirmDanger(
+        '禁用基础打开项',
+        `即将禁用 ${risky.length} 项：\n${lines}`,
+        '确认禁用',
+        '取消',
+        '这类项承载资源管理器的默认「打开/浏览」行为，禁用后可能出现双击无反应，需重新启用才能恢复。'
+      );
+      if (!ok) return;
+    }
+    // 保护项只拦「禁用方向」：已经禁用的要恢复启用时无需吓阻
+    await applyToggles(payloads);
   }
 
   async function toggleCategoryItems(cat, catItems) {
@@ -519,19 +595,24 @@
       );
       if (!ok) return;
     }
-    applyToggles(affected.map(item => ({ item, enabled: target })));
+    // CM-13：批量路径同样要过基础打开项的红色确认（否则「全选本类」可一键禁掉 open 动词）
+    toggleItemsWithGuard(affected.map(item => ({ item, enabled: target })));
   }
 
   // ==================== 行内删除（先备份后删除，不可逆） ====================
   // 审查v4-M3：右键项删除不可逆（注册表删除无回收站语义），按规范走红色二次确认，
   // dangerHint 明示备份目录是唯一恢复手段
   async function removeItem(item) {
+    // CM-13：基础打开项删除时在 dangerHint 里点明额外后果
+    const openHint = item.confirmRequired
+      ? `\n注意：${item.confirmReason || '该项是基础打开动词'}。`
+      : '';
     const ok = await window.app?.confirmDanger(
       '删除右键菜单项',
       `即将备份并删除「${item.name}」。\n备份文件将保存到桌面"右键菜单备份_时间戳"目录。\n\n是否继续？`,
       '确认删除',
       '取消',
-      '该操作不可逆（注册表删除无回收站语义），桌面备份目录是唯一恢复手段。'
+      '该操作不可逆（注册表删除无回收站语义），桌面备份目录是唯一恢复手段。' + openHint
     );
     if (!ok) return;
     try {
@@ -551,6 +632,7 @@
         }
         if (!resp.success) throw new Error(resp.message);
         window.app?.toast('success', '已备份并删除所选菜单项');
+        markPendingApply(1);
       } else {
         // 预览模式（审查v4-L8：全局横幅替代逐条 [模拟] 前缀）
         await new Promise(r => setTimeout(r, 800));
@@ -623,7 +705,16 @@
       if (window.api?.contextmenu) {
         const resp = await window.api.contextmenu.restore();
         if (!resp.success) throw new Error(resp.message);
-        window.app?.toast('success', `已从 ${resp.data.backupDir} 导入 ${resp.data.imported} 项`);
+        const d = resp.data || {};
+        const n = Number(d.imported || 0) + Number(d.restored || 0);
+        window.app?.toast('success', `已从 ${d.backupDir} 恢复 ${n} 项`);
+        // CM-9：旧版本产出的备份头是 HKCR，导入会落到 HKLM，服务端一律拒收并回报 skipped。
+        // 这种情况必须如实告诉用户，不能让他以为「恢复成功了」。
+        if (Number(d.skipped || 0) > 0) {
+          const reasons = Array.isArray(d.skipReasons) ? d.skipReasons.slice(0, 3).join('；') : '';
+          window.app?.toast('warning', `有 ${d.skipped} 个备份被拒绝导入（备份头不是真实注册表分支，多为旧版本产生）${reasons ? '：' + reasons : ''}`, 6000);
+        }
+        if (n > 0) markPendingApply(n);
       } else {
         await new Promise(r => setTimeout(r, 800));
         window.app?.showPreviewModeBanner?.();
@@ -676,10 +767,226 @@
     updateUI();
   }
 
+  // ==================== 批次 B：延迟批量生效（重启资源管理器） ====================
+  // 右键菜单由 Explorer 在加载期解析，任何启停/删除/模式切换都要重启才看得到。
+  // 学参考实现的做法：不每改一项就打断用户，累计改动，由用户一次性重启。
+  let pendingApply = 0;
+
+  function markPendingApply(count) {
+    const n = Number(count) || 0;
+    if (n <= 0) return;
+    pendingApply += n;
+    renderApplyBar();
+  }
+
+  function renderApplyBar() {
+    const bar = document.getElementById('ctxApplyBar');
+    const text = document.getElementById('ctxApplyText');
+    if (!bar || !text) return;
+    if (pendingApply <= 0) { bar.hidden = true; return; }
+    text.textContent = `已有 ${pendingApply} 项改动写入注册表，重启资源管理器后才会在右键菜单里生效。`;
+    bar.hidden = false;
+  }
+
+  async function restartExplorer() {
+    if (!window.api?.contextmenu?.restartExplorer) {
+      window.app?.toast('info', '当前环境不支持重启资源管理器');
+      return;
+    }
+    // 重启会关掉用户已打开的文件夹窗口，按红线走红色确认，不静默执行
+    const ok = await window.app?.confirmDanger(
+      '重启资源管理器',
+      '将结束并重新打开当前会话的资源管理器（explorer.exe）。\n桌面与任务栏会短暂消失后自动恢复，已打开的文件夹窗口会被关闭。',
+      '确认重启',
+      '取消',
+      '只影响当前登录会话；其他用户与服务会话的资源管理器不受影响。'
+    );
+    if (!ok) return;
+    const btn = document.getElementById('btnCtxRestartExplorer');
+    if (btn) btn.disabled = true;
+    try {
+      const resp = await window.api.contextmenu.restartExplorer();
+      if (resp && resp.success) {
+        pendingApply = 0;
+        renderApplyBar();
+        window.app?.toast('success', (resp.data && resp.data.message) || '已重启资源管理器');
+      } else {
+        window.app?.toast('error', (resp && resp.message) || '重启资源管理器失败');
+      }
+    } catch (e) {
+      window.app?.toast('error', '重启资源管理器失败: ' + e.message);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  // ==================== 批次 B：Win11 菜单形态 ====================
+  let win11Mode = '';
+
+  function setWin11ModeText(mode) {
+    const el = document.getElementById('ctxWin11Mode');
+    if (!el) return;
+    el.textContent = mode === 'classic' ? '经典完整菜单' : (mode === 'modern' ? '新版精简菜单' : '读取失败');
+  }
+
+  async function loadWin11Mode() {
+    if (!window.api?.contextmenu?.win11Mode) { setWin11ModeText(''); renderWin11Switch(); return; }
+    try {
+      const resp = await window.api.contextmenu.win11Mode('get');
+      win11Mode = (resp && resp.success && resp.data && resp.data.mode) || '';
+    } catch (e) { win11Mode = ''; }
+    setWin11ModeText(win11Mode);
+    renderWin11Switch();
+  }
+
+  // ds 未加载时优雅降级成一个普通按钮（红线：不得因为缺件就整块不渲染）
+  function renderWin11Switch() {
+    const mount = document.getElementById('ctxWin11Switch');
+    if (!mount) return;
+    mount.textContent = '';
+    if (!win11Mode) {
+      const hint = document.createElement('span');
+      hint.className = 'ctx-blocked-empty';
+      hint.textContent = '当前系统读不到该开关（可能不是 Windows 11，或键被组策略锁定）。';
+      mount.appendChild(hint);
+      return;
+    }
+    const wantClassic = win11Mode === 'classic';
+    // ds.switch 返回的是 { el, input, set } 包装对象，不是元素本身，必须取 .el 再挂载
+    if (window.ds && typeof window.ds.switch === 'function') {
+      const sw = window.ds.switch({
+        checked: wantClassic,
+        label: '经典完整菜单',
+        title: '仅对当前用户生效，切换后需重启资源管理器',
+        id: 'ctxWin11ClassicSw',
+        onChange: (checked) => { onWin11Switch(!!checked); }
+      });
+      mount.appendChild(sw.el);
+      const cap = document.createElement('span');
+      cap.className = 'ctx-mode-caption';
+      cap.textContent = wantClassic
+        ? '开 = 经典完整菜单（扩展全部平铺）'
+        : '关 = 新版精简菜单（扩展折叠进「显示更多选项」）';
+      mount.appendChild(cap);
+      return;
+    }
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-secondary';
+    btn.textContent = wantClassic ? '切回新版精简菜单' : '切换到经典完整菜单';
+    btn.addEventListener('click', () => { onWin11Switch(!wantClassic); });
+    mount.appendChild(btn);
+  }
+
+  async function onWin11Switch(checked) {
+    const target = checked ? 'classic' : 'modern';
+    if (target === win11Mode) return;
+    const ok = await window.app?.confirm(
+      checked ? '切换到经典完整菜单' : '切换回新版精简菜单',
+      checked
+        ? '所有右键扩展将直接平铺在菜单里（等同 Windows 10 行为），不再折叠进「显示更多选项」。\n\n只改当前用户的注册表，随时可切回。'
+        : '恢复 Windows 11 默认形态：菜单精简，第三方扩展折叠进「显示更多选项」。\n\n会删除当前用户下的那个开关键（HKLM 的系统默认不动）。',
+      '确认切换'
+    );
+    // 取消或失败都要把开关拨回真实状态，否则 UI 与注册表不一致
+    if (!ok) { renderWin11Switch(); return; }
+    try {
+      const resp = await window.api.contextmenu.win11Mode(target === 'classic' ? 'set-classic' : 'set-modern');
+      if (resp && resp.success && resp.data) {
+        win11Mode = resp.data.mode || target;
+        if (resp.data.requireRestart) markPendingApply(1);
+        window.app?.toast(resp.data.changed ? 'success' : 'info', resp.data.message || '已切换');
+      } else {
+        window.app?.toast('error', (resp && resp.message) || '切换失败');
+      }
+    } catch (e) {
+      window.app?.toast('error', '切换失败: ' + e.message);
+    }
+    setWin11ModeText(win11Mode);
+    renderWin11Switch();
+  }
+
+  // ==================== 批次 B：Shell Extensions\Blocked 可视化 ====================
+  let blockedEntries = [];
+
+  function blockedNameOf(guid) {
+    const g = String(guid || '').toUpperCase();
+    const hit = items.find(it => String(it.clsid || '').toUpperCase() === g);
+    return hit ? hit.name : '';
+  }
+
+  async function loadBlockedList() {
+    if (!window.api?.contextmenu?.blockedList) return;
+    try {
+      const resp = await window.api.contextmenu.blockedList();
+      blockedEntries = (resp && resp.success && resp.data && Array.isArray(resp.data.entries)) ? resp.data.entries : [];
+    } catch (e) { blockedEntries = []; }
+    renderBlockedList();
+  }
+
+  function renderBlockedList() {
+    const list = document.getElementById('ctxBlockedList');
+    const countEl = document.getElementById('ctxBlockedCount');
+    if (countEl) countEl.textContent = blockedEntries.length ? `${blockedEntries.length} 项` : '空';
+    if (!list) return;
+    if (!blockedEntries.length) {
+      list.innerHTML = '<div class="ctx-blocked-empty">屏蔽表为空：没有扩展被 Shell Extensions\\Blocked 拦下。</div>';
+      return;
+    }
+    list.innerHTML = blockedEntries.map((e, i) => {
+      const name = blockedNameOf(e.guid);
+      // 解除屏蔽复用启停通道，而主进程只认最近一次扫描的快照 —— 不在扫描结果里的 GUID
+      // 无法通过校验，因此只展示、不给按钮（多为已卸载软件的遗留登记）。
+      const known = !!name;
+      const label = known ? escapeHtml(name) : '未在扫描结果中（多为已卸载软件的遗留登记）';
+      const scope = e.scope === 'machine' ? 'HKLM' : 'HKCU';
+      return `<div class="ctx-blocked-row">
+        <span class="ctx-blocked-name" data-tip="${escapeHtml(e.guid)}">${label}</span>
+        <span class="ctx-blocked-guid mono">${scope}</span>
+        ${known ? `<button type="button" class="btn btn-secondary" data-blocked-unblock="${i}" data-tip="从屏蔽表移除该 GUID，恢复加载">解除屏蔽</button>` : ''}
+      </div>`;
+    }).join('');
+    list.querySelectorAll('[data-blocked-unblock]').forEach(btn => {
+      btn.addEventListener('click', () => { unblockEntry(Number(btn.dataset.blockedUnblock)); });
+    });
+  }
+
+  async function unblockEntry(idx) {
+    const entry = blockedEntries[idx];
+    if (!entry) return;
+    const item = items.find(it => String(it.clsid || '').toUpperCase() === String(entry.guid).toUpperCase());
+    if (!item) { window.app?.toast('info', '该项不在最近一次扫描结果里，请先重新扫描'); return; }
+    if (entry.scope === 'machine') {
+      const elevated = await window.app?.requestElevation?.('解除机器级屏蔽需要管理员权限（写入 HKLM 屏蔽表）。');
+      if (!elevated) return;
+    }
+    await applyToggles([{ item, enabled: true }]);
+    await loadBlockedList();
+  }
+
+  function toggleModePanel() {
+    const panel = document.getElementById('ctxModePanel');
+    const btn = document.getElementById('btnCtxModePanel');
+    if (!panel) return;
+    panel.hidden = !panel.hidden;
+    if (btn) btn.setAttribute('aria-expanded', panel.hidden ? 'false' : 'true');
+    // 展开时才拉数据：屏蔽表与菜单形态都是实时读注册表，不必在进页面时就阻塞扫描
+    if (!panel.hidden) { loadWin11Mode(); loadBlockedList(); }
+  }
+
   function init() {
     // 「扫描」按钮 = 强制真实扫描并覆盖缓存（v3.2.1 缓存政策）
     document.getElementById('btnScanContext')?.addEventListener('click', () => scan(true));
     document.getElementById('btnRestoreMenu')?.addEventListener('click', restore);
+    // 批次 B：生效条与菜单形态面板
+    document.getElementById('btnCtxRestartExplorer')?.addEventListener('click', restartExplorer);
+    document.getElementById('btnCtxApplyDismiss')?.addEventListener('click', () => {
+      pendingApply = 0;
+      renderApplyBar();
+      window.app?.toast('info', '改动已写入注册表，稍后可在资源管理器任务栏右键或重登后生效');
+    });
+    document.getElementById('btnCtxModePanel')?.addEventListener('click', toggleModePanel);
+    renderApplyBar();
     // v3.2.1：进入页面自动加载缓存（首次无缓存时自动扫描一次并落盘）
     scan(false);
 

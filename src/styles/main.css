@@ -6211,6 +6211,87 @@ body.pv-window {
   white-space: nowrap;
 }
 
+/* ==================== 批次 B：生效条 / Win11 菜单形态 / 屏蔽表 ==================== */
+/* 只用既有 token；卡片范式与 .ctx-col 一致（bg-card + border-default + 顶部 3px 强调边 + radius-medium） */
+.ctx-apply-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  background: var(--warning-soft, rgba(176, 129, 0, 0.10));
+  border: 1px solid var(--border-default);
+  border-left: 3px solid var(--warning, #B08100);
+  border-radius: var(--radius-medium);
+  font-size: 13px;
+  color: var(--fg-primary);
+}
+.ctx-apply-bar[hidden] { display: none; }
+.ctx-apply-bar > svg { flex: 0 0 auto; color: var(--warning, #B08100); }
+.ctx-apply-text { flex: 1 1 auto; min-width: 0; }
+.ctx-apply-bar .btn { flex: 0 0 auto; padding: 6px 12px; font-size: 12px; }
+.ctx-apply-dismiss {
+  flex: 0 0 auto;
+  padding: 4px 6px;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-small);
+  font-size: 12px;
+  color: var(--fg-tertiary);
+  cursor: pointer;
+}
+.ctx-apply-dismiss:hover { color: var(--fg-primary); background: var(--bg-hover); }
+
+.ctx-mode-panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 14px;
+  margin: 0 0 14px;
+}
+.ctx-mode-panel[hidden] { display: none; }
+.ctx-mode-card {
+  padding: 12px 14px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-top: 3px solid var(--accent);
+  border-radius: var(--radius-medium);
+  box-shadow: var(--shadow-card);
+}
+.ctx-mode-head { display: flex; align-items: center; gap: 8px; }
+.ctx-mode-title { font-size: 14px; font-weight: 700; color: var(--fg-primary); }
+.ctx-mode-current { margin-left: auto; font-size: 12px; color: var(--fg-tertiary); }
+.ctx-mode-desc { margin: 8px 0 10px; font-size: 12px; line-height: 1.6; color: var(--fg-secondary); }
+.ctx-mode-switch { display: flex; align-items: center; gap: 10px; }
+.ctx-mode-caption { font-size: 12px; color: var(--fg-secondary); }
+.ctx-blocked-list { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow-y: auto; }
+.ctx-blocked-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-small);
+  font-size: 12px;
+}
+.ctx-blocked-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-primary);
+}
+.ctx-blocked-guid { flex: 0 0 auto; font-size: 11px; color: var(--fg-tertiary); }
+.ctx-blocked-row .btn { flex: 0 0 auto; padding: 4px 10px; font-size: 12px; }
+.ctx-blocked-empty { padding: 6px 0; font-size: 12px; color: var(--fg-tertiary); }
+
+@media (prefers-reduced-motion: reduce) {
+  .ctx-apply-bar,
+  .ctx-mode-card,
+  .ctx-blocked-row { transition: none !important; }
+}
+
 .opt-kanban,
 .ctx-kanban {
   position: relative;

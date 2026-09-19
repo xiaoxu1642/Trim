@@ -167,7 +167,13 @@ contextBridge.exposeInMainWorld('api', {
     // 提取程序图标（CLSID → DLL 图标，返回 {clsid: dataUrl}）
     icons: (items) => ipcRenderer.invoke('contextmenu:icons', { items }),
     // 在注册表编辑器中定位到指定注册表项（需要管理员权限时自动提权）
-    openInRegedit: (regPath) => ipcRenderer.invoke('contextmenu:open-in-regedit', { regPath })
+    openInRegedit: (regPath) => ipcRenderer.invoke('contextmenu:open-in-regedit', { regPath }),
+    // 批次 B：重启当前会话的资源管理器，使右键菜单改动生效（渲染层先做红色确认）
+    restartExplorer: () => ipcRenderer.invoke('contextmenu:restart-explorer'),
+    // 批次 B：Win11 菜单模式，action ∈ get | set-classic | set-modern（只写 HKCU，不需要管理员）
+    win11Mode: (action) => ipcRenderer.invoke('contextmenu:win11-classic', { action }),
+    // 批次 B：Shell Extensions\Blocked 屏蔽表枚举（只读，名称由渲染层用扫描结果反查）
+    blockedList: () => ipcRenderer.invoke('contextmenu:blocked-list')
   },
 
   // 统一弹窗通道（全部应用内弹窗经此 IPC 记录日志，DOM 由渲染层统一服务构建）

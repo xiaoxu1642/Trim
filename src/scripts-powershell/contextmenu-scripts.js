@@ -92,6 +92,56 @@ function Convert-ToStdRegPath {
   return ([string]\$PsPath) -replace '^Microsoft\\.PowerShell\\.Core\\\\Registry::', ''
 }
 
+# HKCR -> 真实 hive 路径（审查 CM-9，2026-09-19）
+#   根因：HKEY_CLASSES_ROOT 是 HKCU\\Software\\Classes 与 HKLM\\SOFTWARE\\Classes 的合并视图，
+#   PowerShell 提供程序按「HKCU 优先」解析，所以经 HKCR 路径删除删掉的是 HKCU 那份；
+#   但 reg.exe 的 HKCR 别名在 **import** 时落到 HKLM\\SOFTWARE\\Classes。
+#   实测复现：项建在 HKCU -> 经 HKCR 导出 -> 删除 -> reg import -> 恢复到 HKLM（变成全机项，
+#   且再删需要管理员）。故所有写入/导出/导入一律用真实 hive 路径。
+#   解析顺序必须与合并视图一致：HKCU 命中即取，否则 HKLM，都无则原样返回。
+function Resolve-NativeRegPath {
+  param([string]\$StdPath)
+  \$p = ([string]\$StdPath) -replace '^Registry::', ''
+  if (\$p -notmatch '^HKEY_CLASSES_ROOT(\\\\|\$)') { return \$p }
+  \$rest = \$p -replace '^HKEY_CLASSES_ROOT\\\\?', ''
+  \$cu = 'HKEY_CURRENT_USER\\Software\\Classes\\' + \$rest
+  if (Test-Path -LiteralPath ('Registry::' + \$cu)) { return \$cu }
+  \$lm = 'HKEY_LOCAL_MACHINE\\SOFTWARE\\Classes\\' + \$rest
+  if (Test-Path -LiteralPath ('Registry::' + \$lm)) { return \$lm }
+  return \$p
+}
+
+# 动词隐藏判据（四值模型）—— 必须与 TOGGLE_SCRIPT 的写入端严格对称，
+# 否则会出现「写 A 判据、按 B 判据读回」的假状态（本机实测有 3 项被判成已启用而菜单里根本没有）。
+#   LegacyDisable            : 经典禁用动词
+#   ProgrammaticAccessOnly   : 仅程序可调用，不显示在菜单（Win11 常用）
+#   HideBasedOnVelocityId    : 0x639bc8 = 系统按特性开关隐藏的动词
+#   CommandFlags             : 低 4 位含 0x8 视为隐藏
+#   Blocked                  : Trim 早期一并读取的兼容值，保留
+function Test-VerbHidden {
+  param(\$Key)
+  if (\$null -eq \$Key) { return \$false }
+  foreach (\$vn in @('LegacyDisable', 'Blocked', 'ProgrammaticAccessOnly')) {
+    if (\$null -ne \$Key.GetValue(\$vn)) { return \$true }
+  }
+  \$velocity = \$Key.GetValue('HideBasedOnVelocityId')
+  if (\$null -ne \$velocity) { try { if ([int]\$velocity -eq 0x639bc8) { return \$true } } catch {} }
+  \$flags = \$Key.GetValue('CommandFlags')
+  if (\$null -ne \$flags) { try { if ((([int]\$flags) % 16) -ge 8) { return \$true } } catch {} }
+  return \$false
+}
+
+# 「打开 / 浏览」类动词保护（对齐参考实现 ShellItem.TryProtectOpenItem / ProtectedMenuItemGuard）：
+# 这类动词被禁用后用户最容易感知为「双击打不开了」，必须走红色二次确认。
+function Get-VerbConfirm {
+  param([string]\$VerbName)
+  \$v = ([string]\$VerbName).ToLowerInvariant()
+  if (\$v -eq 'open' -or \$v -eq 'explore') {
+    return @{ required = \$true; reason = '该项是对象的基础「打开/浏览」动词，禁用或删除后双击与默认打开行为可能改变' }
+  }
+  return @{ required = \$false; reason = '' }
+}
+
 # 清洗字符串：移除会导致 JSON / UTF-8 输出损坏的字符
 # （孤立代理 U+D800~U+DFFF、非字符 U+FFFE/U+FFFF、控制字符 U+0000~U+001F 与 U+007F）
 # 这些字符常见于注册表脏数据，会破坏 JSON 字符串终止引号
@@ -256,7 +306,8 @@ function Is-ThirdParty {
 function Add-Result {
   param([string]\$Name, [string]\$CLSID, [string]\$RegPath, [string]\$Location,
         [string]\$Category, [string]\$Source, [string]\$CompanyOverride = '', [string]\$FilePath = '', [string]\$Command = '',
-        [bool]\$Enabled = \$true)
+        [bool]\$Enabled = \$true, [bool]\$ConfirmRequired = \$false, [string]\$ConfirmReason = '', [bool]\$UnknownConvention = \$false,
+        [string]\$Target = '', [bool]\$Orphan = \$false)
   # 幽灵项过滤：无有效名称不输出
   if ([string]::IsNullOrWhiteSpace(\$Name)) { return }
   # 注册表类来源必须有有效路径，否则后续删除/启停/备份无法定位，直接丢弃
@@ -272,10 +323,38 @@ function Add-Result {
   \$isThirdParty = Is-ThirdParty -Name \$Name -Company \$company -Source \$Source -FilePath \$filePath
   \$isProtected = \$protectedCLSIDs -contains \$clsidText
   \$risk = if (\$isProtected) { 'protected' } elseif (\$isThirdParty) { 'high' } else { 'low' }
+  # 失效残留（批次 C）：CLSID 登记还在、但 InprocServer32 指向的文件已经没了 —— 典型的卸载残留。
+  # 只在「解析出了路径且路径不存在」时才判残留；解析不出路径的伪 CLSID（如 Taskband Pin /
+  # Start Menu Pin 这类由 shell 内部实现的）不算，否则会误伤合法系统项。
+  \$componentMissing = \$false
+  if ((Test-GuidText \$clsidText) -and -not [string]::IsNullOrWhiteSpace(\$filePath)) {
+    \$expandedPath = [Environment]::ExpandEnvironmentVariables(([string]\$filePath).Trim().Trim('"'))
+    if (\$expandedPath -and -not (Test-Path -LiteralPath \$expandedPath)) { \$componentMissing = \$true }
+  }
+  \$orphanFlag = [bool]\$Orphan -or \$componentMissing
+  \$orphanWhy = if (\$componentMissing) { '登记的处理程序文件已不存在（' + \$filePath + '）' } elseif ([bool]\$Orphan) { '列表里还挂着这个类型，但对应的 ShellNew 键已不存在' } else { '' }
+  # CM-16（批次 B）：命中 Shell Extensions\\Blocked 的 CLSID，Explorer 根本不会加载它，
+  # 等价于「已禁用」。这张表过去 Trim 完全看不见，被别的工具屏蔽过的项会显示成启用。
+  \$blockedBy = ''
+  if (\$clsidText -and \$script:blockedGuids.ContainsKey(\$clsidText.ToUpper())) {
+    \$blockedBy = [string]\$script:blockedGuids[\$clsidText.ToUpper()]
+    \$Enabled = \$false
+  }
+  # 快捷方式的「打开」处理器（ShellExc OpenWith/lnk open GUID）与 open 动词同等保护
+  if (-not \$ConfirmRequired -and \$clsidText -ieq '{00021401-0000-0000-C000-000000000046}') {
+    \$ConfirmRequired = \$true
+    \$ConfirmReason = '该项承载快捷方式的「打开」行为，禁用后 .lnk 双击可能失效'
+  }
+  # nativeRegPath = 真实 hive 路径，所有写操作（删除/启停/备份）一律用它，见 Resolve-NativeRegPath；
+  # 文件系统类来源（发送到 / Win+X）没有 hive 概念，原样保留
+  \$isFileSource = (\$Source -eq 'filesystem' -or \$Source -eq 'winx')
+  \$nativePath = if (\$isFileSource) { \$RegPath } else { Resolve-NativeRegPath \$RegPath }
   \$script:results += [pscustomobject]@{
-    name = \$Name; clsid = \$clsidText; regPath = \$RegPath; company = \$company
+    name = \$Name; clsid = \$clsidText; regPath = \$RegPath; nativeRegPath = \$nativePath; company = \$company
     location = \$Location; category = \$Category; source = \$Source; filePath = \$filePath; command = [string]\$Command
     isThirdParty = \$isThirdParty; isProtected = \$isProtected; risk = \$risk; enabled = \$Enabled
+    confirmRequired = \$ConfirmRequired; confirmReason = \$ConfirmReason; unknownConvention = \$UnknownConvention
+    blockedBy = \$blockedBy; target = [string]\$Target; orphan = \$orphanFlag; orphanReason = \$orphanWhy
   }
 }
 
@@ -328,14 +407,20 @@ function Scan-ShellItems {
       \$command = ''
       if (\$commandKey) { \$command = Get-DirectString ([string]\$commandKey.GetValue('')) }
 
-      # 启用状态：LegacyDisable / Blocked 值存在即视为已禁用（Windows 自身的禁用约定）；
-      # 键名带 'AutorunsDisabled_' 前缀为重命名禁用约定，同样视为已禁用
-      \$enabled = \$true
-      foreach (\$vn in @('LegacyDisable', 'Blocked')) {
-        if (\$null -ne \$key.GetValue(\$vn)) { \$enabled = \$false; break }
+      # 启用状态（审查 CM-10，2026-09-19）：改为四值可见性判据 Test-VerbHidden，与写入端对称。
+      # 旧实现只看 LegacyDisable/Blocked，漏掉 ProgrammaticAccessOnly 与 HideBasedOnVelocityId，
+      # 本机实测 3 项（\\*\\shell\\removeproperties、Folder\\shell\\explore、
+      # AllFilesystemObjects\\shell\\OfflineFilesLaunchSyncCenter）被误判为「已启用」。
+      \$enabled = -not (Test-VerbHidden \$key)
+      # 键名以 AutorunsDisabled 开头（Autoruns 的重命名禁用约定，无下划线形式才是真实写法）
+      \$unknownConv = \$false
+      if (\$child -match '(?i)^AutorunsDisabled') {
+        \$enabled = \$false
+        \$unknownConv = \$true
+        \$name = \$name + '（未识别的禁用约定）'
       }
-      if (\$enabled -and \$child -like 'AutorunsDisabled_*') { \$enabled = \$false }
-      Add-Result -Name \$name -CLSID \$clsid -RegPath (Convert-ToStdRegPath \$key.PSPath) -Location \$ShellPath -Category \$Category -Source 'shell' -Command \$command -Enabled \$enabled
+      \$confirm = Get-VerbConfirm \$child
+      Add-Result -Name \$name -CLSID \$clsid -RegPath (Convert-ToStdRegPath \$key.PSPath) -Location \$ShellPath -Category \$Category -Source 'shell' -Command \$command -Enabled \$enabled -ConfirmRequired \$confirm.required -ConfirmReason \$confirm.reason -UnknownConvention \$unknownConv
     } catch { continue }
   }
 }
@@ -365,7 +450,15 @@ function Scan-ShellExHandlers {
       # GUID：默认值优先，失败回退真实键名（对齐 GuidEx.TryParse(keyName)）
       \$guid = \$defaultValue
       if (-not (Test-GuidText \$guid)) { \$guid = \$realName }
-      if (-not (Test-GuidText \$guid)) { continue }
+      if (-not (Test-GuidText \$guid)) {
+        # 审查 CM-11（2026-09-19）：解析不出 GUID 过去直接 continue，会把别人禁过的项
+        # 完全吞掉（本机实测 4 处 Autoruns 约定项，其中 2 处就在 Trim 会扫的活跃组里），
+        # 用户看到的是「干净」列表。现在如实输出为「已禁用 + 未识别约定」。
+        if (\$realName -match '(?i)^AutorunsDisabled') {
+          Add-Result -Name ('未识别的禁用项（' + \$realName + '）') -CLSID '' -RegPath (Convert-ToStdRegPath \$key.PSPath) -Location \$cmPath -Category \$Category -Source 'shellex' -Enabled \$false -UnknownConvention \$true
+        }
+        continue
+      }
       \$guid = \$guid.Trim()
 
       \$info = Get-ClsidInfo \$guid
@@ -402,6 +495,25 @@ function Scan-Scene {
 \$HKCR = 'Registry::HKEY_CLASSES_ROOT'
 \$HKCU_CLASSES = 'Registry::HKEY_CURRENT_USER\\Software\\Classes'
 \$HKLM_WOW64_CLASSES = 'Registry::HKEY_LOCAL_MACHINE\\Software\\Classes\\Wow6432Node'
+
+# ---- Shell Extensions\\Blocked：Windows 原生的 COM 屏蔽表（CM-16，批次 B）----
+# 值名就是 {CLSID}，命中即该扩展不被加载。HKCU=当前用户、HKLM=全机；机器级优先。
+# 必须在任何 Add-Result 之前装载，因为它会改写条目的 enabled。
+\$script:blockedGuids = @{}
+\$script:blockedPaths = @{
+  user    = 'Registry::HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions\\Blocked'
+  machine = 'Registry::HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions\\Blocked'
+}
+foreach (\$scope in @('machine', 'user')) {
+  \$bk = Get-Item -LiteralPath \$script:blockedPaths[\$scope] -ErrorAction SilentlyContinue
+  if (-not \$bk) { continue }
+  foreach (\$vn in @(\$bk.GetValueNames())) {
+    \$g = ([string]\$vn).Trim()
+    if (-not (Test-GuidText \$g)) { continue }
+    # 先写 machine 再写 user：user 覆盖 machine，与 Explorer「用户级可解除机器级屏蔽」的语义一致
+    \$script:blockedGuids[\$g.ToUpper()] = \$scope
+  }
+}
 
 function Get-SceneViews {
   param([string]\$Suffix)
@@ -483,14 +595,85 @@ foreach (\$contractRoot in \$uwpContractRoots) {
   }
 }
 
+# ---- Win+X 菜单（批次 C：%LOCALAPPDATA%\\Microsoft\\Windows\\WinX\\Group{1,2,3}\\*.lnk）----
+# 侧边栏一直有「Win+X」分类却没有任何数据源（死 tab）。Explorer 只列 .lnk，
+# 所以可逆禁用 = 扩展名改成 .lnk.disabled；删除仍由主进程走回收站（source 归入文件类）。
+\$winxRoot = Join-Path \$env:LOCALAPPDATA 'Microsoft\\Windows\\WinX'
+foreach (\$group in @('Group1', 'Group2', 'Group3')) {
+  \$gdir = Join-Path \$winxRoot \$group
+  if (-not (Test-Path -LiteralPath \$gdir)) { continue }
+  foreach (\$f in @(Get-ChildItem -LiteralPath \$gdir -Force -ErrorAction SilentlyContinue)) {
+    if (\$f.PSIsContainer) { continue }
+    if (\$f.Name -ieq 'desktop.ini') { continue }
+    \$isOff = (\$f.Extension -ieq '.disabled')
+    \$label = if (\$isOff) { ([string]\$f.BaseName -replace '(?i)\\.lnk\$', '') } else { [string]\$f.BaseName }
+    if ([string]::IsNullOrWhiteSpace(\$label)) { continue }
+    Add-Result -Name \$label -CLSID '' -RegPath \$f.FullName -Location \$gdir -Category 'Win+X' -Source 'winx' -CompanyOverride 'Microsoft Corporation' -Enabled (-not \$isOff)
+  }
+}
+
+# ---- 新建菜单（批次 C：由 HKCU 的 PostSetup\\ShellNew 的 Classes 值驱动）----
+# 「新建」子菜单出现哪些类型，取决于这张 REG_MULTI_SZ 列表；本机实测 10 项里
+# .doc/.ppt/.xls 等已经没有对应的 ShellNew 键 = 卸载残留（悬空项），照样占着菜单位。
+# 可逆禁用 = 从 Classes 列表摘掉该类名，不碰 ShellNew 键本身；整张表在 HKCU → 不需要管理员。
+# 刻意不做全量 HKCR 扩展名枚举：那会让每次扫描多花数秒，而「有 ShellNew 却不在列表里」的类
+# 本来就不会出现在菜单中，价值低。
+\$postSetupStd = 'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Discardable\\PostSetup\\ShellNew'
+\$psKey = Get-Item -LiteralPath ('Registry::' + \$postSetupStd) -ErrorAction SilentlyContinue
+if (\$psKey) {
+  foreach (\$cls in @(\$psKey.GetValue('Classes'))) {
+    \$c = ([string]\$cls).Trim()
+    if ([string]::IsNullOrWhiteSpace(\$c)) { continue }
+    \$hasShellNew = \$false
+    foreach (\$view in @(\$HKCR, \$HKCU_CLASSES, \$HKLM_WOW64_CLASSES)) {
+      if (Test-Path -LiteralPath (\$view + '\\' + \$c + '\\ShellNew')) { \$hasShellNew = \$true; break }
+    }
+    \$nm = if (\$hasShellNew) { ('新建 ' + \$c) } else { ('新建 ' + \$c + '（残留：无 ShellNew 键）') }
+    Add-Result -Name \$nm -CLSID '' -RegPath \$postSetupStd -Location \$postSetupStd -Category '新建菜单' -Source 'shellnew' -CompanyOverride 'Microsoft Corporation' -Enabled \$true -Target \$c -Orphan (-not \$hasShellNew)
+  }
+}
+
+# ---- 打开方式（批次 C：HKCR\\Applications\\<app>\\shell\\<verb>，禁用 = 写 NoOpenWith）----
+\$appRoot = \$HKCR + '\\Applications'
+if (Test-Path -LiteralPath \$appRoot) {
+  foreach (\$app in @((Get-Item -LiteralPath \$appRoot -ErrorAction SilentlyContinue).GetSubKeyNames())) {
+    \$appPath = \$appRoot + '\\' + \$app
+    \$shellPath = \$appPath + '\\shell'
+    if (-not (Test-Path -LiteralPath \$shellPath)) { continue }
+    \$verbs = @((Get-Item -LiteralPath \$shellPath -ErrorAction SilentlyContinue).GetSubKeyNames())
+    if (-not \$verbs.Count) { continue }
+    \$appKey = Get-Item -LiteralPath \$appPath -ErrorAction SilentlyContinue
+    if (-not \$appKey) { continue }
+    \$friendly = Get-DirectString ([string]\$appKey.GetValue('FriendlyAppName'))
+    if ([string]::IsNullOrWhiteSpace(\$friendly)) { \$friendly = \$app }
+    \$noOpen = (\$null -ne \$appKey.GetValue('NoOpenWith'))
+    Add-Result -Name \$friendly -CLSID '' -RegPath (Convert-ToStdRegPath \$appPath) -Location \$appRoot -Category '打开方式' -Source 'openwith' -Enabled (-not \$noOpen) -Command (\$verbs -join ', ')
+  }
+}
+# *\\OpenWithList\\<app>：对所有文件生效的「打开方式」候选；禁用 = 键名加 '-' 前缀（与 shellex 同约定）
+\$owlRoot = \$HKCR + '\\*\\OpenWithList'
+if (Test-Path -LiteralPath \$owlRoot) {
+  foreach (\$child in @((Get-Item -LiteralPath \$owlRoot -ErrorAction SilentlyContinue).GetSubKeyNames())) {
+    \$real = [string]\$child
+    \$en = \$true
+    if (\$real.StartsWith('-')) { \$en = \$false; \$real = \$real.Substring(1) }
+    if ([string]::IsNullOrWhiteSpace(\$real)) { continue }
+    \$k = Get-Item -LiteralPath (\$owlRoot + '\\' + \$child) -ErrorAction SilentlyContinue
+    if (-not \$k) { continue }
+    Add-Result -Name (\$real + '（所有文件）') -CLSID '' -RegPath (Convert-ToStdRegPath \$k.PSPath) -Location \$owlRoot -Category '打开方式' -Source 'openwith-list' -Enabled \$en -Command ([string]\$k.GetValue(''))
+  }
+}
+
 # ---- 全局去重：同一分类、名称、CLSID、启用状态在多个注册表视图中只展示一次 ----
 # （enabled 参与去重：同名处理器可能在活跃组与 '-ContextMenuHandlers' 禁用组各出现一次）
+# CM-9 附带修正：无 CLSID 的条目改用 nativeRegPath 作身份键。原来用 regPath（HKCR 合并视图路径），
+# 同一物理键经 HKCR 与 HKCU 两个视图各扫一次时会留下两行（重复行 + 禁一半的观感来源）。
 \$seen = @{}
 \$deduped = @()
 foreach (\$result in @(\$script:results)) {
   \$enabledText = if (\$result.enabled) { '1' } else { '0' }
   \$key = if ([string]::IsNullOrWhiteSpace([string]\$result.clsid)) {
-    '{0}|{1}|{2}|{3}|{4}' -f \$result.category, \$result.name, \$result.source, \$result.regPath, \$enabledText
+    '{0}|{1}|{2}|{3}|{4}' -f \$result.category, \$result.name, \$result.source, \$result.nativeRegPath, \$enabledText
   } else {
     '{0}|{1}|{2}|{3}' -f \$result.category, \$result.name, \$result.clsid, \$enabledText
   }
@@ -505,6 +688,7 @@ foreach (\$result in @(\$deduped)) {
     '"name":' + (ConvertTo-JsonSafeString (Format-CleanStr \$result.name)) + ',' +
     '"clsid":' + (ConvertTo-JsonSafeString (Format-CleanStr \$result.clsid)) + ',' +
     '"regPath":' + (ConvertTo-JsonSafeString (Format-CleanStr \$result.regPath)) + ',' +
+    '"nativeRegPath":' + (ConvertTo-JsonSafeString (Format-CleanStr \$result.nativeRegPath)) + ',' +
     '"company":' + (ConvertTo-JsonSafeString (Format-CleanStr \$result.company)) + ',' +
     '"location":' + (ConvertTo-JsonSafeString (Format-CleanStr \$result.location)) + ',' +
     '"category":' + (ConvertTo-JsonSafeString (Format-CleanStr \$result.category)) + ',' +
@@ -513,6 +697,13 @@ foreach (\$result in @(\$deduped)) {
     '"command":' + (ConvertTo-JsonSafeString (Format-CleanStr \$result.command)) + ',' +
     '"isThirdParty":' + (ConvertTo-JsonSafeBool \$result.isThirdParty) + ',' +
     '"isProtected":' + (ConvertTo-JsonSafeBool \$result.isProtected) + ',' +
+    '"confirmRequired":' + (ConvertTo-JsonSafeBool \$result.confirmRequired) + ',' +
+    '"unknownConvention":' + (ConvertTo-JsonSafeBool \$result.unknownConvention) + ',' +
+    '"orphan":' + (ConvertTo-JsonSafeBool \$result.orphan) + ',' +
+    '"orphanReason":' + (ConvertTo-JsonSafeString (Format-CleanStr \$result.orphanReason)) + ',' +
+    '"blockedBy":' + (ConvertTo-JsonSafeString (Format-CleanStr \$result.blockedBy)) + ',' +
+    '"target":' + (ConvertTo-JsonSafeString (Format-CleanStr \$result.target)) + ',' +
+    '"confirmReason":' + (ConvertTo-JsonSafeString (Format-CleanStr \$result.confirmReason)) + ',' +
     '"risk":' + (ConvertTo-JsonSafeString (Format-CleanStr \$result.risk)) + ',' +
     '"enabled":' + (ConvertTo-JsonSafeBool \$result.enabled) +
     '}'
@@ -545,30 +736,92 @@ function Convert-ToRegPath([string]\$Path) {
   return \$p
 }
 
+# 审查 CM-9（2026-09-19）：导出后校验 .reg 头部的 hive 与来源 hive 一致。
+# 老实现把 HKCR（合并视图）路径直接交给 reg.exe，导出的 .reg 头是 [HKEY_CLASSES_ROOT\\...]，
+# 而 reg.exe **import** 这种头时会写进 HKLM\\\\SOFTWARE\\\\Classes —— 于是「删掉自己用户的项、
+# 恢复后变成全机项」。这里两头都堵：导出只用真实 hive 路径，导入前再校验一次头部。
+function Get-RegFileHeaderHive([string]\$File) {
+  if (-not (Test-Path -LiteralPath \$File)) { return '' }
+  foreach (\$line in @(Get-Content -LiteralPath \$File -TotalCount 8 -ErrorAction SilentlyContinue)) {
+    \$t = [string]\$line
+    if (\$t.StartsWith('[')) {
+      \$h = \$t.TrimStart('[')
+      foreach (\$root in @('HKEY_CLASSES_ROOT', 'HKEY_CURRENT_USER', 'HKEY_LOCAL_MACHINE', 'HKEY_USERS')) {
+        if (\$h.StartsWith(\$root)) { return \$root }
+      }
+      return 'OTHER'
+    }
+  }
+  return ''
+}
+
+# CM-15（2026-09-19）：reg.exe 会把「操作已成功完成」写到 **stdout**，而本脚本的返回值也是
+# stdout——主进程 JSON.parse(stdout) 会因此直接失败。这里统一走 Invoke-RegCmd：吞掉子进程
+# 输出、只取退出码（结果一律用文件内容/注册表回读来验证）。
+# 注意调用形式：函数用自动变量 \$args 接收，调用处写成 Invoke-RegCmd export \$k \$f '/y'。
+# 不要写成 param([string[]]\$RegArgs) 再用 Invoke-RegCmd @('export', ...) 这种数组字面量调用
+# —— 命令参数模式里的数组字面量会被拼成单个字符串传给 reg.exe，
+# 报 Invalid Argument/Option '@export ...'。
+function Invoke-RegCmd {
+  \$eap = \$ErrorActionPreference
+  \$ErrorActionPreference = 'SilentlyContinue'
+  try { & reg.exe @args 2>\$null | Out-Null } finally { \$ErrorActionPreference = \$eap }
+  return \$LASTEXITCODE
+}
+
+\$exported = 0
+\$exportFailed = 0
+\$regRecords = @()
 foreach (\$item in @(\$items)) {
   \$index++
   \$source = [string]\$item.source
   \$regPath = [string]\$item.regPath
-  if (\$source -eq 'filesystem') {
+  # 文件类来源（发送到 / Win+X）走复制备份，绝不能掉进下面的 reg export 分支
+  if (\$source -eq 'filesystem' -or \$source -eq 'winx') {
     if (-not (Test-Path -LiteralPath \$regPath)) { continue }
-    \$name = 'sendto_{0}_{1}_{2}' -f \$index, ([IO.Path]::GetFileNameWithoutExtension(\$regPath)), ([IO.Path]::GetExtension(\$regPath).TrimStart('.'))
+    \$name = 'file_{0}_{1}_{2}' -f \$index, ([IO.Path]::GetFileNameWithoutExtension(\$regPath)), ([IO.Path]::GetExtension(\$regPath).TrimStart('.'))
     \$dest = Join-Path \$filesDir \$name
     try { Copy-Item -LiteralPath \$regPath -Destination \$dest -Force -Recurse; \$fileRecords += [pscustomobject]@{ source = \$regPath; backup = \$dest }; \$backupFiles += \$dest } catch {}
     continue
   }
-  if ([string]::IsNullOrWhiteSpace(\$regPath)) { continue }
-  \$nativePath = Convert-ToRegPath \$regPath
-  \$safeName = (\$nativePath -replace '[\\/:*?"<>|]', '_')
+  # 一律用扫描阶段解析出的真实 hive 路径；缺失（旧缓存/异常）时退回 regPath 但仍拒绝 HKCR 头
+  \$writePath = [string]\$item.nativeRegPath
+  if ([string]::IsNullOrWhiteSpace(\$writePath)) { \$writePath = \$regPath }
+  if ([string]::IsNullOrWhiteSpace(\$writePath)) { \$exportFailed++; continue }
+  if (\$writePath -match '^HKEY_CLASSES_ROOT(?=\\\\|\$)') {
+    # 无法归位到具体 hive（键已消失或解析失败）——不产备份，交由上层阻断删除
+    \$exportFailed++
+    continue
+  }
+  \$nativePath = Convert-ToRegPath \$writePath
+  # CM-14（2026-09-19）：文件名必须连反斜杠一起替换。旧写法是正则字符类 '[\\\\/:*?...]'，
+  # 但这段脚本活在 JS 模板字符串里，文件中的 \\\\\\\\ 经模板转义后只剩 \\\\，
+  # 字符类里根本没有反斜杠 → 文件名带着路径分隔符 → reg.exe 报「Unable to write to the file」
+  # → 注册表项备份从来没成功过，删除被自己的备份步骤阻断。
+  # 这里改用 [IO.Path]::GetInvalidFileNameChars() + String.Replace：不写正则、不写转义，
+  # 从根上没有二次转义陷阱（也别用 [string]\$x.ToCharArray()，那是把 char 数组拼成带空格字符串）。
+  \$safeName = [string]\$nativePath
+  foreach (\$ch in [IO.Path]::GetInvalidFileNameChars()) {
+    \$safeName = \$safeName.Replace([string]\$ch, '_')
+  }
+  if (\$safeName.Length -gt 120) { \$safeName = \$safeName.Substring(\$safeName.Length - 120) }
   \$regFile = Join-Path \$backupDir ('registry_{0}_{1}.reg' -f \$index, \$safeName)
   try {
-    \$proc = Start-Process -FilePath 'reg.exe' -ArgumentList @('export', ('"' + \$nativePath + '"'), ('"' + \$regFile + '"'), '/y') -Wait -PassThru -NoNewWindow
-    if (\$proc.ExitCode -eq 0) { \$backupFiles += \$regFile }
-  } catch {}
+    \$expCode = Invoke-RegCmd export \$writePath \$regFile '/y'
+    \$hdr = Get-RegFileHeaderHive \$regFile
+    if (\$expCode -eq 0 -and \$hdr -and \$hdr -ne 'HKEY_CLASSES_ROOT' -and \$writePath.StartsWith(\$hdr)) {
+      \$backupFiles += \$regFile; \$exported++
+      \$regRecords += [pscustomobject]@{ source = \$writePath; backup = \$regFile; hive = \$hdr }
+    } else {
+      if (Test-Path -LiteralPath \$regFile) { Remove-Item -LiteralPath \$regFile -Force -ErrorAction SilentlyContinue }
+      \$exportFailed++
+    }
+  } catch { \$exportFailed++ }
 }
 
-\$manifest = [pscustomobject]@{ version = 1; created = (Get-Date).ToString('o'); items = @(\$items); files = @(\$fileRecords) }
+\$manifest = [pscustomobject]@{ version = 2; created = (Get-Date).ToString('o'); items = @(\$items); files = @(\$fileRecords); registryFiles = @(\$regRecords) }
 \$manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path \$backupDir 'manifest.json') -Encoding UTF8
-[pscustomobject]@{ backupDir = \$backupDir; files = @(\$backupFiles); count = \$backupFiles.Count } | ConvertTo-Json -Compress
+[pscustomobject]@{ backupDir = \$backupDir; files = @(\$backupFiles); count = (\$exported + @(\$fileRecords).Count); exported = \$exported; copied = @(\$fileRecords).Count; failed = \$exportFailed } | ConvertTo-Json -Compress
 `;
 
 const REMOVE_SCRIPT = `
@@ -584,22 +837,35 @@ foreach (\$item in @(\$items)) {
   if (\$item.risk -eq 'protected') { \$results += @{ name = \$item.name; status = 'skip'; message = '系统保护项' }; continue }
   # 复核 N1（删除红线，2026-09-16）：文件系统项（「发送到」快捷方式）不再在 PS 内裸删，
   # 主进程已改为 trashOrUnlink（回收站优先）+ 全局删除清单；本脚本若仍收到此类项，跳过并如实回报。
-  if ([string]\$item.source -eq 'filesystem') {
+  if ([string]\$item.source -eq 'filesystem' -or [string]\$item.source -eq 'winx') {
     \$results += @{ name = \$item.name; status = 'skip'; message = '文件系统项由主进程回收站删除' }
     continue
   }
   try {
-    \$target = [string]\$item.regPath
+    # CM-9（2026-09-19）：删除也走真实 hive 路径，与备份/恢复同源；
+    # 原来经 HKEY_CLASSES_ROOT 合并视图删，删的是「解析到的那一份」，与备份的 hive 可能对不上
+    \$target = [string]\$item.nativeRegPath
+    if ([string]::IsNullOrWhiteSpace(\$target)) { \$target = [string]\$item.regPath }
     if ([string]::IsNullOrWhiteSpace(\$target) -or \$target -match '(?i)^(Registry::)?HKEY_(CLASSES_ROOT|LOCAL_MACHINE|CURRENT_USER|USERS|CURRENT_CONFIG)\\\\?\$') {
       \$results += @{ name = \$item.name; status = 'skip'; message = '无效或过宽路径' }; continue
     }
-    # 标准路径（HKEY_CLASSES_ROOT\\...）转 PowerShell 提供程序路径
+    # 标准路径（HKEY_CURRENT_USER\\...）转 PowerShell 提供程序路径
     if (\$target -match '^HKEY_') { \$target = 'Registry::' + \$target }
+    # R7（v3.6.6 M1）：ShellNew 项共享父键 PostSetup\ShellNew，-Recurse 会删整键连带其他 9 项。
+    # ShellNew 的禁用/启用应通过修改 Classes 值列表实现（由启停通道处理），不走删除通道。
+    if ([string]\$item.source -eq 'shellnew') {
+      \$results += @{ id = [string]\$item.id; name = \$item.name; status = 'skip'; message = '新建菜单项请通过启停操作管理，禁止整键删除' }
+      continue
+    }
     if (Test-Path -LiteralPath \$target) {
       Remove-Item -LiteralPath \$target -Recurse -Force -ErrorAction Stop
-      \$success++
-      \$results += @{ name = \$item.name; status = 'ok'; message = '已删除' }
-    } else { \$results += @{ name = \$item.name; status = 'skip'; message = '路径不存在' } }
+      if (Test-Path -LiteralPath \$target) {
+        \$failed++; \$results += @{ id = [string]\$item.id; name = \$item.name; status = 'error'; message = '删除后键仍存在（可能被占用或权限不足）' }
+      } else {
+        \$success++
+        \$results += @{ id = [string]\$item.id; name = \$item.name; status = 'ok'; message = '已删除' }
+      }
+    } else { \$results += @{ id = [string]\$item.id; name = \$item.name; status = 'skip'; message = '路径不存在' } }
   } catch { \$failed++; Write-TFDiag -Stage 'contextmenu.remove' -Mutation 'rolled_back' -Detail ([string]\$item.regPath + ' -> ' + \$_.Exception.Message); \$results += @{ name = \$item.name; status = 'error'; message = \$_.Exception.Message } }
 }
 [pscustomobject]@{ success = \$success; failed = \$failed; results = @(\$results) } | ConvertTo-Json -Depth 6 -Compress
@@ -615,8 +881,65 @@ if (-not \$backupDirs) { @{ success = \$false; message = '未找到备份目录'
 \$latestBackup = \$backupDirs[0].FullName
 \$imported = 0
 \$failed = 0
+\$skipped = 0
+\$skipReasons = @()
+
+# CM-15：吞掉 reg.exe 的 stdout（否则污染本脚本的 JSON 返回值），只取退出码。
+# 调用形式必须用 \$args 位置参数，不能用数组字面量（见 BACKUP_SCRIPT 同处的说明）。
+function Invoke-RegCmd {
+  \$eap = \$ErrorActionPreference
+  \$ErrorActionPreference = 'SilentlyContinue'
+  try { & reg.exe @args 2>\$null | Out-Null } finally { \$ErrorActionPreference = \$eap }
+  return \$LASTEXITCODE
+}
+
+# CM-9（2026-09-19）：导入前校验 .reg 头部 hive。reg.exe 遇到 [HKEY_CLASSES_ROOT\\...] 头会把
+# 键写进 HKLM\\\\SOFTWARE\\\\Classes（合并视图的机器级），即「用户级项恢复成全机项」，
+# 且非管理员上下文下还会直接失败。旧版 Trim 产生的这类备份一律拒绝导入并如实回报。
+function Get-RegFileHeaderHive {
+  param([string]\$File)
+  foreach (\$line in @(Get-Content -LiteralPath \$File -TotalCount 8 -ErrorAction SilentlyContinue)) {
+    \$t = [string]\$line
+    if (\$t.StartsWith('[')) {
+      \$h = \$t.TrimStart('[')
+      foreach (\$root in @('HKEY_CLASSES_ROOT', 'HKEY_CURRENT_USER', 'HKEY_LOCAL_MACHINE', 'HKEY_USERS')) {
+        if (\$h.StartsWith(\$root)) { return \$root }
+      }
+      return 'OTHER'
+    }
+  }
+  return ''
+}
+
+function Get-RegFileFirstKey {
+  param([string]\$File)
+  foreach (\$line in @(Get-Content -LiteralPath \$File -TotalCount 8 -ErrorAction SilentlyContinue)) {
+    \$t = [string]\$line
+    if (\$t.StartsWith('[')) { return \$t.TrimStart('[').TrimEnd(']', '\\') }
+  }
+  return ''
+}
+
 foreach (\$regFile in @(Get-ChildItem -LiteralPath \$latestBackup -Filter '*.reg' -ErrorAction SilentlyContinue)) {
-  try { \$proc = Start-Process -FilePath 'reg.exe' -ArgumentList @('import', ('"' + \$regFile.FullName + '"')) -Wait -PassThru -NoNewWindow; if (\$proc.ExitCode -eq 0) { \$imported++ } else { \$failed++ } } catch { \$failed++ }
+  try {
+    \$hdr = Get-RegFileHeaderHive \$regFile.FullName
+    if (-not \$hdr -or \$hdr -eq 'HKEY_CLASSES_ROOT' -or \$hdr -eq 'OTHER') {
+      \$skipped++
+      \$hdrText = if (\$hdr) { \$hdr } else { '无法识别' }
+      \$skipReasons += (\$regFile.Name + '（备份头为 ' + \$hdrText + '，非真实 hive，已拒绝导入）')
+      continue
+    }
+    \$impCode = Invoke-RegCmd import \$regFile.FullName
+    if (\$impCode -ne 0) { \$failed++; continue }
+    # 导入后回读：退出码 0 但键没落地不算成功（防假成功）
+    \$firstKey = Get-RegFileFirstKey \$regFile.FullName
+    if (\$firstKey -and -not (Test-Path -LiteralPath ('Registry::' + \$firstKey))) {
+      \$failed++
+      \$skipReasons += (\$regFile.Name + '（reg import 报成功但键未出现）')
+      continue
+    }
+    \$imported++
+  } catch { \$failed++ }
 }
 \$restored = 0
 \$manifestPath = Join-Path \$latestBackup 'manifest.json'
@@ -630,15 +953,18 @@ if (Test-Path -LiteralPath \$manifestPath) {
     }
   } catch {}
 }
-[pscustomobject]@{ success = ((\$imported + \$restored) -gt 0 -and \$failed -eq 0); backupDir = \$latestBackup; imported = \$imported; restored = \$restored; failed = \$failed } | ConvertTo-Json -Compress
+[pscustomobject]@{ success = ((\$imported + \$restored) -gt 0 -and \$failed -eq 0); backupDir = \$latestBackup; imported = \$imported; restored = \$restored; skipped = \$skipped; skipReasons = @(\$skipReasons); failed = \$failed } | ConvertTo-Json -Compress
 `;
 
 // 启停切换脚本（勾选=启用，取消=禁用，可逆操作）
-// 禁用/启用约定：
-//   - shell 项：写入/删除 LegacyDisable 值（Windows 自身禁用动词的约定；顺带清理 Blocked）
+// 禁用/启用约定（CM-10，2026-09-19 升级为四值模型，与扫描端 Test-VerbHidden 同源）：
+//   - shell 项：禁用写 LegacyDisable + ProgrammaticAccessOnly + HideBasedOnVelocityId=0x639bc8，
+//     启用删这三值并清 CommandFlags 的 0x8 位；**Folder\\shell\\opennewwindow 例外**，
+//     它绝不能带 LegacyDisable（会连带废掉 Win+E 与任务栏「新开窗口」，两家参考实现均硬特判）
 //   - shellex 项：处理器键名加/去 '-' 前缀（重命名，可逆）
 //   - 发送到（filesystem）：切换文件 Hidden 属性（发送到菜单忽略隐藏文件）
-//   - UWP（packagedcom / uwp-contract）：无公开可逆禁用机制，明确拒绝
+//   - UWP（packagedcom / uwp-contract）：本批仍拒绝（改走 Shell Extensions\\Blocked 屏蔽表在批次 B）
+// 所有写入一律用 nativeRegPath（真实 hive），避免合并视图把用户级项写到机器级
 // 每项操作后均回读验证，权限不足（HKLM 需要管理员）时报告失败而非静默假成功
 const TOGGLE_SCRIPT = `
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -649,24 +975,128 @@ const TOGGLE_SCRIPT = `
 \$failed = 0
 \$results = @()
 
+# 与 SCAN_SCRIPT 中的同名函数保持一致（两段脚本各自独立进程执行，故各存一份）
+function Test-VerbHidden {
+  param(\$Key)
+  if (\$null -eq \$Key) { return \$false }
+  foreach (\$vn in @('LegacyDisable', 'Blocked', 'ProgrammaticAccessOnly')) {
+    if (\$null -ne \$Key.GetValue(\$vn)) { return \$true }
+  }
+  \$velocity = \$Key.GetValue('HideBasedOnVelocityId')
+  if (\$null -ne \$velocity) { try { if ([int]\$velocity -eq 0x639bc8) { return \$true } } catch {} }
+  \$flags = \$Key.GetValue('CommandFlags')
+  if (\$null -ne \$flags) { try { if ((([int]\$flags) % 16) -ge 8) { return \$true } } catch {} }
+  return \$false
+}
+
+# Shell Extensions\\Blocked 两级路径（CM-16）
+\$blockedPaths = @{
+  user    = 'Registry::HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions\\Blocked'
+  machine = 'Registry::HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions\\Blocked'
+}
+
+# 该 CLSID 的 COM 服务器是否落在 Windows 系统目录。
+# 用「归属」而不是「GUID 名单」来判系统内置扩展：把内置命令的 ExplorerCommandHandler 加进
+# 屏蔽表可能让整个 Win11 现代菜单失效、Explorer 回退经典菜单，所以这类一律拒绝入表。
+function Test-SystemComServer {
+  param([string]\$Guid)
+  \$g = ([string]\$Guid).Trim()
+  if (-not \$g) { return \$false }
+  \$sysRoot = [string]\$env:SystemRoot
+  foreach (\$view in @('Registry::HKEY_CLASSES_ROOT\\CLSID',
+                       'Registry::HKEY_CLASSES_ROOT\\WOW6432Node\\CLSID',
+                       'Registry::HKEY_LOCAL_MACHINE\\SOFTWARE\\Classes\\Wow6432Node\\CLSID')) {
+    foreach (\$sub in @('InprocServer32', 'LocalServer32')) {
+      \$p = \$view + '\\' + \$g + '\\' + \$sub
+      if (-not (Test-Path -LiteralPath \$p)) { continue }
+      \$raw = [string](Get-Item -LiteralPath \$p -ErrorAction SilentlyContinue).GetValue('')
+      if ([string]::IsNullOrWhiteSpace(\$raw)) { \$raw = [string](Get-Item -LiteralPath \$p).GetValue('CodeBase') }
+      if ([string]::IsNullOrWhiteSpace(\$raw)) { continue }
+      \$expanded = [Environment]::ExpandEnvironmentVariables(\$raw.Trim().Trim('"'))
+      if (\$expanded.StartsWith(\$sysRoot, [StringComparison]::OrdinalIgnoreCase)) { return \$true }
+    }
+  }
+  return \$false
+}
+
 foreach (\$item in @(\$items)) {
   \$name = [string]\$item.name
   \$source = [string]\$item.source
-  \$target = [string]\$item.regPath
+  # CM-9：优先真实 hive 路径（重命名后回传的 newNativeRegPath 也是这个口径）
+  \$target = [string]\$item.nativeRegPath
+  if ([string]::IsNullOrWhiteSpace(\$target)) { \$target = [string]\$item.regPath }
+  \$displayPath = [string]\$item.regPath
   # ConvertFrom-Json 已将 enabled 解析为布尔，直接比较避免 -not/-and 优先级陷阱
   \$wantEnabled = (\$item.enabled -eq \$true)
+  # CM-17（批次 B）：与 REMOVE_SCRIPT 对齐，系统保护项在服务端就拒绝——
+  # 不能只靠渲染层 isToggleable 的自觉，IPC 是信任边界。
+  if ([string]\$item.risk -eq 'protected') {
+    \$results += @{ id = [string]\$item.id; name = \$name; regPath = \$displayPath; status = 'skip'; message = '系统保护项' }
+    continue
+  }
   if ([string]::IsNullOrWhiteSpace(\$target)) { \$results += @{ name = \$name; regPath = ''; status = 'skip'; message = '缺少目标路径' }; continue }
 
   try {
-    # ---- UWP：不支持可逆启停 ----
-    if (\$source -eq 'packagedcom' -or \$source -eq 'uwp-contract') {
-      \$results += @{ name = \$name; regPath = \$target; status = 'skip'; message = 'UWP 项暂不支持启停切换' }
+    \$blockedBy = [string]\$item.blockedBy
+    \$clsid = ([string]\$item.clsid).Trim()
+
+    # ---- Shell Extensions\\Blocked 屏蔽表（CM-16，批次 B）----
+    # 适用两类：① UWP / 打包 COM 项——过去直接「暂不支持启停」，现在用 Windows 原生屏蔽表
+    # 实现可逆禁用；② 任何本来就靠屏蔽表禁用的项（blockedBy 非空）——必须用同一机制还原，
+    # 否则「启用」只会去改键名，屏蔽值还在，项照样不出现。
+    # 安全边界：默认只写 HKCU（当前用户）；blockedBy=machine 时才写 HKLM，那条路径由主进程
+    # 的 contextmenuWriteNeedsAdmin 拦住要提权。系统内置 GUID 一律拒绝入表——把内置命令的
+    # ExplorerCommandHandler 加进屏蔽表可能让整个 Win11 现代菜单失效、Explorer 回退经典菜单。
+    if (\$source -eq 'packagedcom' -or \$source -eq 'uwp-contract' -or \$blockedBy) {
+      if (\$clsid -notmatch '^\\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\\}\$') {
+        \$results += @{ id = [string]\$item.id; name = \$name; regPath = \$displayPath; status = 'skip'; message = '缺少有效 CLSID，无法用屏蔽表启停' }; continue
+      }
+      if (([string]\$item.risk -eq 'protected') -or (Test-SystemComServer \$clsid)) {
+        \$results += @{ id = [string]\$item.id; name = \$name; regPath = \$displayPath; status = 'skip'; message = '系统内置扩展不允许加入屏蔽表（可能导致整个新式右键菜单失效）' }; continue
+      }
+      \$scope = if (\$blockedBy -eq 'machine') { 'machine' } else { 'user' }
+      \$blkPath = \$blockedPaths[\$scope]
+      if (-not (Test-Path -LiteralPath \$blkPath)) { New-Item -Path \$blkPath -Force -ErrorAction Stop | Out-Null }
+      if (\$wantEnabled) {
+        Remove-ItemProperty -LiteralPath \$blkPath -Name \$clsid -ErrorAction SilentlyContinue
+      } else {
+        New-ItemProperty -LiteralPath \$blkPath -Name \$clsid -PropertyType String -Value '' -Force -ErrorAction Stop | Out-Null
+      }
+      \$bk = Get-Item -LiteralPath \$blkPath -ErrorAction SilentlyContinue
+      \$stillBlocked = (\$bk -and (\$null -ne \$bk.GetValue(\$clsid)))
+      if (\$stillBlocked -eq (-not \$wantEnabled)) {
+        \$success++
+        \$results += @{ id = [string]\$item.id; name = \$name; regPath = \$displayPath; status = 'ok'; newBlockedBy = \$(if (\$wantEnabled) { '' } else { \$scope }); message = (\$(if (\$wantEnabled) { '已解除屏蔽' } else { '已屏蔽（不加载该扩展）' })) }
+      } else {
+        \$failed++
+        \$results += @{ id = [string]\$item.id; name = \$name; regPath = \$displayPath; status = 'error'; message = \$(if (\$scope -eq 'machine') { '屏蔽表写入未生效（机器级需要管理员权限）' } else { '屏蔽表写入未生效' }) }
+      }
+      continue
+    }
+
+    # ---- Win+X：.lnk ⇄ .lnk.disabled 重命名（Explorer 的 Win+X 只列 .lnk）----
+    if (\$source -eq 'winx') {
+      if (-not (Test-Path -LiteralPath \$target)) { \$results += @{ id = [string]\$item.id; name = \$name; regPath = \$displayPath; status = 'skip'; message = '文件不存在' }; continue }
+      \$leaf = [IO.Path]::GetFileName(\$target)
+      \$dir = [IO.Path]::GetDirectoryName(\$target)
+      \$isOff = (\$leaf -match '(?i)\\.disabled\$')
+      if (\$wantEnabled -and -not \$isOff) { \$success++; \$results += @{ id = [string]\$item.id; name = \$name; regPath = \$displayPath; status = 'ok'; message = '已处于启用状态' }; continue }
+      if (-not \$wantEnabled -and \$isOff) { \$success++; \$results += @{ id = [string]\$item.id; name = \$name; regPath = \$displayPath; status = 'ok'; message = '已处于禁用状态' }; continue }
+      \$newLeaf = if (\$wantEnabled) { \$leaf -replace '(?i)\\.disabled\$', '' } else { \$leaf + '.disabled' }
+      Rename-Item -LiteralPath \$target -NewName \$newLeaf -ErrorAction Stop
+      \$newPath = Join-Path \$dir \$newLeaf
+      if ((Test-Path -LiteralPath \$newPath) -and -not (Test-Path -LiteralPath \$target)) {
+        \$success++
+        \$results += @{ id = [string]\$item.id; name = \$name; regPath = \$displayPath; newRegPath = \$newPath; newNativeRegPath = \$newPath; status = 'ok'; message = (\$(if (\$wantEnabled) { '已启用' } else { '已禁用' })) }
+      } else {
+        \$failed++; \$results += @{ id = [string]\$item.id; name = \$name; regPath = \$displayPath; status = 'error'; message = '重命名未生效' }
+      }
       continue
     }
 
     # ---- 发送到：Hidden 属性切换 ----
     if (\$source -eq 'filesystem') {
-      if (-not (Test-Path -LiteralPath \$target)) { \$results += @{ name = \$name; regPath = \$target; status = 'skip'; message = '文件不存在' }; continue }
+      if (-not (Test-Path -LiteralPath \$target)) { \$results += @{ name = \$name; regPath = \$displayPath; status = 'skip'; message = '文件不存在' }; continue }
       \$file = Get-Item -LiteralPath \$target -Force
       if (\$wantEnabled) {
         \$file.Attributes = \$file.Attributes -band (-bnot [IO.FileAttributes]::Hidden)
@@ -675,9 +1105,9 @@ foreach (\$item in @(\$items)) {
       }
       \$nowHidden = (([IO.FileAttributes]::Hidden -band (Get-Item -LiteralPath \$target -Force).Attributes) -ne 0)
       if (\$nowHidden -eq (-not \$wantEnabled)) {
-        \$success++; \$results += @{ name = \$name; regPath = \$target; status = 'ok'; message = (\$(if (\$wantEnabled) { '已启用' } else { '已禁用' })) }
+        \$success++; \$results += @{ name = \$name; regPath = \$displayPath; status = 'ok'; message = (\$(if (\$wantEnabled) { '已启用' } else { '已禁用' })) }
       } else {
-        \$failed++; \$results += @{ name = \$name; regPath = \$target; status = 'error'; message = '切换未生效' }
+        \$failed++; \$results += @{ name = \$name; regPath = \$displayPath; status = 'error'; message = '切换未生效' }
       }
       continue
     }
@@ -685,33 +1115,115 @@ foreach (\$item in @(\$items)) {
     # ---- 注册表项：统一转 PowerShell 提供程序路径 ----
     \$regPath = \$target
     if (\$regPath -match '^HKEY_') { \$regPath = 'Registry::' + \$regPath }
-    if (-not (Test-Path -LiteralPath \$regPath)) { \$results += @{ name = \$name; regPath = \$target; status = 'skip'; message = '注册表路径不存在' }; continue }
+    if (-not (Test-Path -LiteralPath \$regPath)) { \$results += @{ name = \$name; regPath = \$displayPath; status = 'skip'; message = '注册表路径不存在' }; continue }
+
+    # ---- 新建菜单：改 HKCU PostSetup\\ShellNew 的 Classes（REG_MULTI_SZ）列表 ----
+    # 只摘/加类名，不动各扩展名下的 ShellNew 键本身 —— 键还在，随时可还原。
+    if (\$source -eq 'shellnew') {
+      \$cls = ([string]\$item.target).Trim()
+      if ([string]::IsNullOrWhiteSpace(\$cls)) { \$results += @{ id = [string]\$item.id; name = \$name; regPath = \$displayPath; status = 'skip'; message = '缺少类名（target）' }; continue }
+      \$psk = Get-Item -LiteralPath \$regPath -ErrorAction Stop
+      # 先 Where-Object 过滤再 @() 包装：@(\$null).Count 是 1，PS 判空陷阱
+      \$cur = @(\$psk.GetValue('Classes') | Where-Object { -not [string]::IsNullOrWhiteSpace([string]\$_) } | ForEach-Object { [string]\$_ })
+      \$has = (@(\$cur | Where-Object { \$_ -ieq \$cls }).Count -gt 0)
+      if (\$wantEnabled -and \$has) { \$success++; \$results += @{ id = [string]\$item.id; name = \$name; regPath = \$displayPath; status = 'ok'; message = '已处于启用状态' }; continue }
+      if (-not \$wantEnabled -and -not \$has) { \$success++; \$results += @{ id = [string]\$item.id; name = \$name; regPath = \$displayPath; status = 'ok'; message = '已处于禁用状态' }; continue }
+      if (\$wantEnabled) {
+        \$new = @(\$cur) + \$cls
+      } else {
+        \$new = @(\$cur | Where-Object { \$_ -ine \$cls })
+      }
+      if (\$new.Count -eq 0) {
+        Remove-ItemProperty -LiteralPath \$regPath -Name 'Classes' -ErrorAction Stop
+      } else {
+        Set-ItemProperty -LiteralPath \$regPath -Name 'Classes' -Value ([string[]]\$new) -Type MultiString -ErrorAction Stop
+      }
+      \$chk = Get-Item -LiteralPath \$regPath -ErrorAction SilentlyContinue
+      \$nowHas = \$false
+      if (\$chk) { \$nowHas = (@(@(\$chk.GetValue('Classes')) | Where-Object { [string]\$_ -ieq \$cls }).Count -gt 0) }
+      if (\$nowHas -eq \$wantEnabled) {
+        \$success++; \$results += @{ id = [string]\$item.id; name = \$name; regPath = \$displayPath; status = 'ok'; message = (\$(if (\$wantEnabled) { '已启用' } else { '已禁用' })) }
+      } else {
+        \$failed++; \$results += @{ id = [string]\$item.id; name = \$name; regPath = \$displayPath; status = 'error'; message = 'Classes 列表写入未生效' }
+      }
+      continue
+    }
+
+    # ---- 打开方式（应用）：NoOpenWith 值的写入与清除 ----
+    if (\$source -eq 'openwith') {
+      if (\$wantEnabled) {
+        Remove-ItemProperty -LiteralPath \$regPath -Name 'NoOpenWith' -ErrorAction SilentlyContinue
+      } else {
+        New-ItemProperty -LiteralPath \$regPath -Name 'NoOpenWith' -PropertyType String -Value '' -Force -ErrorAction Stop | Out-Null
+      }
+      \$ok2 = Get-Item -LiteralPath \$regPath -ErrorAction SilentlyContinue
+      \$nowOff = (\$ok2 -and (\$null -ne \$ok2.GetValue('NoOpenWith')))
+      if (\$nowOff -eq (-not \$wantEnabled)) {
+        \$success++; \$results += @{ id = [string]\$item.id; name = \$name; regPath = \$displayPath; status = 'ok'; message = (\$(if (\$wantEnabled) { '已启用' } else { '已禁用' })) }
+      } else {
+        \$failed++; \$results += @{ id = [string]\$item.id; name = \$name; regPath = \$displayPath; status = 'error'; message = '切换未生效（可能需要管理员权限）' }
+      }
+      continue
+    }
 
     if (\$source -eq 'shell') {
-      # shell 动词：LegacyDisable / Blocked 值的写入与清除；
-      # 启用时兼容还原 'AutorunsDisabled_' 前缀重命名
+      # 四值可见性模型（CM-10）：禁用一次性写 LegacyDisable + ProgrammaticAccessOnly +
+      # HideBasedOnVelocityId(0x639bc8)，启用一次性删三值并清 CommandFlags 的 0x8 位；
+      # 写入与读回共用同一个 Test-VerbHidden，杜绝「按 A 写、按 B 判」的假状态。
       # （Split-Path 对 'Registry::' 路径会报参数集冲突，用字符串切分）
       \$sepIdx = \$regPath.LastIndexOf('\\')
       \$leaf = if (\$sepIdx -ge 0) { \$regPath.Substring(\$sepIdx + 1) } else { \$regPath }
       \$parent = if (\$sepIdx -gt 0) { \$regPath.Substring(0, \$sepIdx) } else { '' }
+      \$renamedTo = ''
       if (\$wantEnabled) {
-        if (\$leaf -like 'AutorunsDisabled_*') {
-          \$origName = \$leaf.Substring('AutorunsDisabled_'.Length)
-          if (-not \$origName) { \$results += @{ name = \$name; regPath = \$target; status = 'skip'; message = '无效的重命名键' }; continue }
-          Rename-Item -LiteralPath \$regPath -NewName \$origName -ErrorAction Stop
-          \$regPath = \$parent + '\\' + \$origName
+        # Autoruns 的重命名禁用约定：真实写法是无下划线的 'AutorunsDisabled'，
+        # 旧实现只认 'AutorunsDisabled_' 前缀，导致这类键还原不了
+        if (\$leaf -match '(?i)^AutorunsDisabled_?(.+)\$') {
+          \$renamedTo = \$Matches[1]
+          Rename-Item -LiteralPath \$regPath -NewName \$renamedTo -ErrorAction Stop
+          \$regPath = \$parent + '\\' + \$renamedTo
         }
-        Remove-ItemProperty -LiteralPath \$regPath -Name 'LegacyDisable' -ErrorAction SilentlyContinue
-        Remove-ItemProperty -LiteralPath \$regPath -Name 'Blocked' -ErrorAction SilentlyContinue
+        foreach (\$vn in @('LegacyDisable', 'Blocked', 'ProgrammaticAccessOnly', 'HideBasedOnVelocityId')) {
+          Remove-ItemProperty -LiteralPath \$regPath -Name \$vn -ErrorAction SilentlyContinue
+        }
+        # CommandFlags 只清 0x8（隐藏位）；其余位是合法动词属性，不能整值删除
+        \$kNow = Get-Item -LiteralPath \$regPath -ErrorAction SilentlyContinue
+        \$cf = if (\$kNow) { \$kNow.GetValue('CommandFlags') } else { \$null }
+        if (\$null -ne \$cf) {
+          try {
+            \$cleared = ([int]\$cf) -band (-bnot 0x8)
+            if (\$cleared -eq 0) {
+              Remove-ItemProperty -LiteralPath \$regPath -Name 'CommandFlags' -ErrorAction SilentlyContinue
+            } else {
+              Set-ItemProperty -LiteralPath \$regPath -Name 'CommandFlags' -Value \$cleared -Type DWord -ErrorAction SilentlyContinue
+            }
+          } catch {}
+        }
       } else {
-        New-ItemProperty -LiteralPath \$regPath -Name 'LegacyDisable' -PropertyType String -Value '' -Force -ErrorAction Stop | Out-Null
+        New-ItemProperty -LiteralPath \$regPath -Name 'ProgrammaticAccessOnly' -PropertyType String -Value '' -Force -ErrorAction SilentlyContinue | Out-Null
+        New-ItemProperty -LiteralPath \$regPath -Name 'HideBasedOnVelocityId' -PropertyType DWord -Value 0x639bc8 -Force -ErrorAction SilentlyContinue | Out-Null
+        # opennewwindow 硬特判：带 LegacyDisable 会连带废掉 Win+E 与任务栏「新开窗口」，
+        # 只靠 ProgrammaticAccessOnly + velocity 即可达成「不在菜单显示」而不破坏程序化调用
+        if (\$regPath -notmatch '(?i)\\\\Folder\\\\shell\\\\opennewwindow\$') {
+          New-ItemProperty -LiteralPath \$regPath -Name 'LegacyDisable' -PropertyType String -Value '' -Force -ErrorAction Stop | Out-Null
+        }
       }
-      \$nowDisabled = (\$null -ne (Get-Item -LiteralPath \$regPath).GetValue('LegacyDisable')) -or (\$null -ne (Get-Item -LiteralPath \$regPath).GetValue('Blocked'))
-      if (\$nowDisabled -eq (-not \$wantEnabled)) {
-        # newRegPath 统一为标准格式（剥离 Registry:: 提供程序前缀），与扫描输出一致
-        \$success++; \$results += @{ name = \$name; regPath = \$target; newRegPath = (\$regPath -replace '^Registry::', ''); status = 'ok'; message = (\$(if (\$wantEnabled) { '已启用' } else { '已禁用' })) }
+      \$kFinal = Get-Item -LiteralPath \$regPath -ErrorAction SilentlyContinue
+      \$nowHidden = Test-VerbHidden \$kFinal
+      # 特例项不写 LegacyDisable，因此只校验「确实处于隐藏态」而非逐值比对
+      if (\$nowHidden -eq (-not \$wantEnabled)) {
+        \$success++
+        \$res = @{ id = [string]\$item.id; name = \$name; regPath = \$displayPath; status = 'ok'; message = (\$(if (\$wantEnabled) { '已启用' } else { '已禁用' })) }
+        if (\$renamedTo) {
+          \$res.newNativeRegPath = (\$regPath -replace '^Registry::', '')
+          if (\$displayPath) {
+            \$dIdx = \$displayPath.LastIndexOf('\\')
+            if (\$dIdx -ge 0) { \$res.newRegPath = (\$displayPath.Substring(0, \$dIdx + 1) + \$renamedTo) }
+          }
+        }
+        \$results += \$res
       } else {
-        \$failed++; \$results += @{ name = \$name; regPath = \$target; status = 'error'; message = '切换未生效（可能需要管理员权限）' }
+        \$failed++; \$results += @{ name = \$name; regPath = \$displayPath; status = 'error'; message = '切换未生效（可能需要管理员权限）' }
       }
       continue
     }
@@ -723,23 +1235,28 @@ foreach (\$item in @(\$items)) {
     \$parent = if (\$sepIdx -gt 0) { \$regPath.Substring(0, \$sepIdx) } else { '' }
     \$leaf = if (\$sepIdx -ge 0) { \$regPath.Substring(\$sepIdx + 1) } else { \$regPath }
     if (\$wantEnabled) {
-      if (-not \$leaf.StartsWith('-')) { \$success++; \$results += @{ name = \$name; regPath = \$target; status = 'ok'; message = '已处于启用状态' }; continue }
+      if (-not \$leaf.StartsWith('-')) { \$success++; \$results += @{ name = \$name; regPath = \$displayPath; status = 'ok'; message = '已处于启用状态' }; continue }
       \$newName = \$leaf.Substring(1)
     } else {
-      if (\$leaf.StartsWith('-')) { \$success++; \$results += @{ name = \$name; regPath = \$target; status = 'ok'; message = '已处于禁用状态' }; continue }
+      if (\$leaf.StartsWith('-')) { \$success++; \$results += @{ name = \$name; regPath = \$displayPath; status = 'ok'; message = '已处于禁用状态' }; continue }
       \$newName = '-' + \$leaf
     }
     Rename-Item -LiteralPath \$regPath -NewName \$newName -ErrorAction Stop
     \$newPath = \$parent + '\\' + \$newName
     if ((Test-Path -LiteralPath \$newPath) -and -not (Test-Path -LiteralPath \$regPath)) {
-      # 返回重命名后的新路径（标准格式，剥离 Registry:: 前缀），渲染层据此更新条目
-      \$success++; \$results += @{ name = \$name; regPath = \$target; newRegPath = (\$newPath -replace '^Registry::', ''); status = 'ok'; message = (\$(if (\$wantEnabled) { '已启用' } else { '已禁用' })) }
+      # 返回重命名后的新路径（标准格式，剥离 Registry:: 前缀）；
+      # newRegPath=展示用（HKCR 口径，渲染层按它关联）、newNativeRegPath=真实 hive（主进程回写快照）
+      \$success++
+      \$stdNew = \$newPath -replace '^Registry::', ''
+      \$dIdx = \$displayPath.LastIndexOf('\\')
+      \$newDisplay = if (\$dIdx -ge 0) { \$displayPath.Substring(0, \$dIdx + 1) + \$newName } else { \$displayPath }
+      \$results += @{ id = [string]\$item.id; name = \$name; regPath = \$displayPath; newRegPath = \$newDisplay; newNativeRegPath = \$stdNew; status = 'ok'; message = (\$(if (\$wantEnabled) { '已启用' } else { '已禁用' })) }
     } else {
-      \$failed++; \$results += @{ name = \$name; regPath = \$target; status = 'error'; message = '重命名未生效（可能需要管理员权限）' }
+      \$failed++; \$results += @{ name = \$name; regPath = \$displayPath; status = 'error'; message = '重命名未生效（可能需要管理员权限）' }
     }
   } catch {
     \$failed++
-    \$results += @{ name = \$name; regPath = \$target; status = 'error'; message = \$_.Exception.Message }
+    \$results += @{ name = \$name; regPath = \$displayPath; status = 'error'; message = \$_.Exception.Message }
   }
 }
 [pscustomobject]@{ success = \$success; failed = \$failed; results = @(\$results) } | ConvertTo-Json -Depth 6 -Compress
@@ -787,6 +1304,133 @@ foreach (\$it in \$items) {
 \$icons | ConvertTo-Json -Compress
 `;
 
+// ==================== 批次 B：生效链路与 Win11 菜单模型 ====================
+
+// 重启资源管理器：只动「当前交互会话」的 explorer。
+// 服务会话 / 其他登录用户的 explorer 一律不碰（参考实现 ExplorerRestartService 的同款约束），
+// 也绝不按进程名无差别 taskkill —— 那是多用户机器上的事故来源。
+const RESTART_EXPLORER_SCRIPT = `
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+\$OutputEncoding = [System.Text.Encoding]::UTF8
+\$ErrorActionPreference = 'SilentlyContinue'
+
+\$mySession = (Get-Process -Id \$PID).SessionId
+\$targets = @(Get-Process -Name explorer -ErrorAction SilentlyContinue | Where-Object { \$_.SessionId -eq \$mySession })
+if (-not \$targets.Count) {
+  [pscustomobject]@{ success = \$false; killed = 0; restarted = 0; alive = 0; message = '当前会话没有运行中的资源管理器' } | ConvertTo-Json -Compress
+  exit
+}
+# 先记下原路径，逐个原样拉回（多显示器/多实例场景下 Path 可能不同）
+\$paths = @(\$targets | ForEach-Object { [string]\$_.Path } | Where-Object { \$_ } | Select-Object -Unique)
+foreach (\$p in \$targets) { try { Stop-Process -Id \$p.Id -Force -ErrorAction Stop } catch {} }
+Start-Sleep -Milliseconds 700
+\$started = 0
+foreach (\$path in \$paths) {
+  if (\$path -and (Test-Path -LiteralPath \$path)) {
+    try { Start-Process -FilePath \$path -ErrorAction Stop; \$started++ } catch {}
+  }
+}
+if (\$started -eq 0) {
+  \$fallback = Join-Path \$env:SystemRoot 'explorer.exe'
+  try { Start-Process -FilePath \$fallback -ErrorAction Stop; \$started = 1 } catch {}
+}
+Start-Sleep -Milliseconds 900
+\$alive = @(Get-Process -Name explorer -ErrorAction SilentlyContinue | Where-Object { \$_.SessionId -eq \$mySession }).Count
+[pscustomobject]@{
+  success   = (\$alive -gt 0)
+  killed    = \$targets.Count
+  restarted = \$started
+  alive     = \$alive
+  message   = \$(if (\$alive -gt 0) { '已重启资源管理器' } else { '资源管理器未能自动拉起，请手动启动 explorer.exe' })
+} | ConvertTo-Json -Compress
+`;
+
+// Win11 右键菜单模式：{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\\InprocServer32 默认值置空
+// = 经典完整菜单（Win10 样式，所有扩展直接平铺）；删掉该 CLSID 键 = 回到新版精简菜单。
+// 只碰 HKCU：HKLM 侧那份是系统默认（本机实测默认值指向 Windows.UI.FileExplorer.dll），
+// 用户级键天然覆盖它，改 HKCU 不需要管理员、也不影响其他账户。
+const WIN11_MODE_SCRIPT = `
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+\$OutputEncoding = [System.Text.Encoding]::UTF8
+\$ErrorActionPreference = 'SilentlyContinue'
+\$action = '__ACTION__'
+
+\$clsidRoot = 'Registry::HKEY_CURRENT_USER\\Software\\Classes\\CLSID\\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}'
+\$inproc = \$clsidRoot + '\\InprocServer32'
+
+function Get-CurrentMode {
+  \$k = Get-Item -LiteralPath \$inproc -ErrorAction SilentlyContinue
+  if (-not \$k) { return 'modern' }
+  \$v = \$k.GetValue('')
+  if (\$null -eq \$v) { return 'modern' }
+  if ([string]::IsNullOrEmpty([string]\$v)) { return 'classic' }
+  return 'modern'
+}
+
+\$before = Get-CurrentMode
+if (\$action -eq 'get') {
+  [pscustomobject]@{ success = \$true; mode = \$before; changed = \$false; requireRestart = \$false } | ConvertTo-Json -Compress
+  exit
+}
+
+\$mode = 'modern'
+if (\$action -eq 'set-classic') {
+  try {
+    if (-not (Test-Path -LiteralPath \$inproc)) { New-Item -Path \$inproc -Force -ErrorAction Stop | Out-Null }
+    # 默认值必须是「存在的空字符串」，不是「不存在」——这是该开关生效的唯一形态
+    New-ItemProperty -LiteralPath \$inproc -Name '(default)' -PropertyType String -Value '' -Force -ErrorAction Stop | Out-Null
+    \$mode = 'classic'
+  } catch {
+    [pscustomobject]@{ success = \$false; mode = \$before; changed = \$false; message = ('写入失败: ' + \$_.Exception.Message) } | ConvertTo-Json -Compress
+    exit
+  }
+} elseif (\$action -eq 'set-modern') {
+  try {
+    if (Test-Path -LiteralPath \$clsidRoot) { Remove-Item -LiteralPath \$clsidRoot -Recurse -Force -ErrorAction Stop }
+    \$mode = 'modern'
+  } catch {
+    [pscustomobject]@{ success = \$false; mode = \$before; changed = \$false; message = ('还原失败: ' + \$_.Exception.Message) } | ConvertTo-Json -Compress
+    exit
+  }
+} else {
+  [pscustomobject]@{ success = \$false; mode = \$before; changed = \$false; message = '未知动作' } | ConvertTo-Json -Compress
+  exit
+}
+
+# 回读校验：写没生效绝不报成功（该开关必须重启资源管理器才可见，故 requireRestart 恒真）
+\$after = Get-CurrentMode
+[pscustomobject]@{
+  success        = (\$after -eq \$mode)
+  mode           = \$after
+  changed        = (\$after -ne \$before)
+  requireRestart = \$true
+  message        = \$(if (\$after -eq \$mode) { '已切换，重启资源管理器后生效' } else { '切换未生效' })
+} | ConvertTo-Json -Compress
+`;
+
+// 屏蔽表枚举：只返回 GUID 与作用域，友好名由渲染层拿扫描结果反查
+// （扫描已覆盖同一批 CLSID，避免在两段脚本里各维护一份名称解析链）。
+const BLOCKED_LIST_SCRIPT = `
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+\$OutputEncoding = [System.Text.Encoding]::UTF8
+\$ErrorActionPreference = 'SilentlyContinue'
+\$roots = @(
+  @{ scope = 'machine'; path = 'Registry::HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions\\Blocked' },
+  @{ scope = 'user';    path = 'Registry::HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions\\Blocked' }
+)
+\$entries = @()
+foreach (\$r in \$roots) {
+  \$k = Get-Item -LiteralPath \$r.path -ErrorAction SilentlyContinue
+  if (-not \$k) { continue }
+  foreach (\$vn in @(\$k.GetValueNames())) {
+    \$g = ([string]\$vn).Trim()
+    if (\$g -notmatch '^\\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\\}\$') { continue }
+    \$entries += [pscustomobject]@{ guid = \$g; scope = \$r.scope }
+  }
+}
+[pscustomobject]@{ success = \$true; entries = @(\$entries) } | ConvertTo-Json -Depth 4 -Compress
+`;
+
 function serializeItems(items) {
   const json = JSON.stringify(Array.isArray(items) ? items : []);
   return json.replace(/'/g, "''");
@@ -798,5 +1442,13 @@ module.exports = {
   remove(items) { return REMOVE_SCRIPT.replace('__ITEMS_JSON__', serializeItems(items)); },
   toggle(items) { return TOGGLE_SCRIPT.replace('__ITEMS_JSON__', serializeItems(items)); },
   restore() { return RESTORE_SCRIPT; },
-  icons(items) { return ICONS_SCRIPT.replace('__ITEMS_JSON__', serializeItems(items)); }
+  icons(items) { return ICONS_SCRIPT.replace('__ITEMS_JSON__', serializeItems(items)); },
+  restartExplorer() { return RESTART_EXPLORER_SCRIPT; },
+  // 动作是白名单枚举后才拼进脚本，杜绝把渲染层字符串直接插进 PowerShell
+  win11Mode(action) {
+    const allowed = ['get', 'set-classic', 'set-modern'];
+    const a = allowed.includes(String(action)) ? String(action) : 'get';
+    return WIN11_MODE_SCRIPT.replace('__ACTION__', a);
+  },
+  blockedList() { return BLOCKED_LIST_SCRIPT; }
 };

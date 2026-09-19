@@ -717,6 +717,13 @@
       }
       const go = await confirmHazard(opt);
       if (!go) return;
+      // R3（v3.6.6 M1）：dynamic 项的下拉值必须在 closeOptModal 之前读取，
+      // 否则 optModal 被置 null 后 querySelector 恒返回 undefined → 任何档位都回落 8GB。
+      let preCloseGbVal = null;
+      if (opt.dynamic) {
+        const selEl = optModal?.modal?.querySelector('.opt-mem-select');
+        preCloseGbVal = selEl ? Number(selEl.value) || 8 : 8;
+      }
       // 立即执行后自动关闭弹窗
       closeOptModal();
       // tf_svc_bulk：单独弹窗询问是否连商店相关服务一并禁用（用户选择经 params 传递）
@@ -725,8 +732,7 @@
       // tf_restore_point 本身就是创建动作，再走检查会「先弹建议创建、再重复创建」，直接放行。
       if (opt.id !== 'tf_restore_point' && !(await ensureRestorePoint())) return;
       if (opt.dynamic) {
-        const selEl = optModal?.modal?.querySelector('.opt-mem-select');
-        const gbVal = selEl ? selEl.value : 8;
+        const gbVal = preCloseGbVal ?? 8;
         // 本会话立即记录已应用档位：重开弹窗时该档位按钮置灰
         svcAppliedGb = gbVal;
         // B11：与 runBatch 对齐 —— await + try/catch，避免浮动 Promise 变成

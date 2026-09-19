@@ -73,6 +73,13 @@ const PLAN_CAP_TOTAL = 1000000;
 // CM-6 / SU-5 / M-4（2026-09-15，S3）：原三个模块级单全局快照未按 sender.id 隔离，
 // 多窗口并发时 A 窗的扫描结果会被 B 窗覆盖，启停/删除/结束校验串台。改为 per-sender Map。
 const contextmenuSnapshots = new Map(); // sender.id -> Map(item.id -> item)
+// CM-12（2026-09-19）：最近一次扫描的条目数组。启停/删除后必须同步它并回写扫描缓存，
+// 否则 v3.2.1 的「进页面读缓存」会把用户刚做的改动显示回旧状态（缓存会说谎）。
+let lastContextmenuScan = null;
+function syncContextmenuCache() {
+  if (!Array.isArray(lastContextmenuScan)) return;
+  saveScanCache('contextmenu-scan.json', lastContextmenuScan);
+}
 const startupSnapshots = new Map();     // sender.id -> Map(item.id -> item)
 const processSnapshots = new Map();     // sender.id -> Map(pid -> { Id, ProcessName, Path })
 // finder 删除只允许操作最近一次 Rust 扫描返回的路径，避免渲染层构造任意删除目标。
@@ -227,6 +234,22 @@ function snapshotById(items) {
     if (item && typeof item.id === 'string' && item.id.length <= 160) map.set(item.id, item);
   }
   return map;
+}
+
+// CM-3（S4，2026-09-15）：HKLM/HKCR 作用域的右键菜单写操作需要管理员。
+// CM-9（2026-09-19）：判据必须看真实写入路径 nativeRegPath——展示用的 HKCR 合并视图
+// 可能对应 HKCU 的键，按 regPath 判会对纯用户级项误要提权（本机实测 8 个 HKCU 侧项）。
+function contextmenuWriteNeedsAdmin(item) {
+  // 机器级屏蔽表（HKLM\...\Shell Extensions\Blocked）的解除/写入同样要管理员
+  if (item && item.blockedBy === 'machine') return true;
+  const p = String((item && (item.nativeRegPath || item.regPath)) || '');
+  return /^(HKEY_LOCAL_MACHINE|HKEY_CLASSES_ROOT|HKLM|HKCR)[\\/]/i.test(p);
+}
+
+// 文件系统类来源：删除必须走主进程 trashOrUnlink（回收站优先），绝不能进 PS 的注册表删除分支
+function contextmenuIsFileSource(item) {
+  const s = String((item && item.source) || '');
+  return s === 'filesystem' || s === 'winx';
 }
 
 function validateSnapshotItems(items, snapshot) {
@@ -1544,10 +1567,11 @@ handleSafe('cleanup:item-detail', async (event, { id, path: itemPath }) => {
 //      { "urls": ["https://..."], "headers": { "Authorization": "Bearer <token>" } }
 // 另有 git 回退：应用目录在 git 仓库内（开发机）且本机已存有该仓库凭据时，
 // 经 `git fetch` 深拉远程 main 并 `git show` 取文件（只 fetch，不动工作树）。
+// R5（v3.6.6 M1）：仓库已从 TuneForge 更名为 Trim，旧 URL 指向不存在/过时的文件
 const RULES_UPDATE_URLS = [
-  'https://raw.githubusercontent.com/xiaoxu1642/TuneForge/main/src/data/cleanup-rules.json',
-  'https://cdn.jsdelivr.net/gh/xiaoxu1642/TuneForge@main/src/data/cleanup-rules.json',
-  'https://gh-proxy.com/https://raw.githubusercontent.com/xiaoxu1642/TuneForge/main/src/data/cleanup-rules.json'
+  'https://raw.githubusercontent.com/xiaoxu1642/Trim/main/src/data/cleanup-rules.json',
+  'https://cdn.jsdelivr.net/gh/xiaoxu1642/Trim@main/src/data/cleanup-rules.json',
+  'https://gh-proxy.com/https://raw.githubusercontent.com/xiaoxu1642/Trim/main/src/data/cleanup-rules.json'
 ];
 const RULES_MIN_SIZE = 4096;          // 内容下限（当前规则约 20KB，低于 4KB 视为异常）
 const RULES_MAX_SIZE = 2 * 1024 * 1024; // 内容上限（审查 1-1）：先拦超大响应再解析，防 OOM
@@ -2345,9 +2369,14 @@ function saveScanCache(name, data) {
 
 handleSafe('contextmenu:scan', async (event, { refresh = false } = {}) => {
   // v3.2.1：优先读持久缓存（首次扫描后一直读文件，refresh=true 才真正重扫）
+  // CM-9（2026-09-19）：缓存必须带 nativeRegPath 才可用——老版本缓存没有该字段，
+  // 直接沿用会让备份/删除继续走 HKCR 合并视图（正是本次修的 bug），故视为未命中。
   if (!refresh) {
     const cached = loadScanCache('contextmenu-scan.json');
-    if (cached) {
+    const cacheUsable = cached && Array.isArray(cached.data)
+      && cached.data.every(it => it && typeof it.nativeRegPath === 'string');
+    if (cacheUsable) {
+      lastContextmenuScan = cached.data;
       contextmenuSnapshots.set(event.sender.id, snapshotById(cached.data));
       return { success: true, data: cached.data, cached: true, cachedAt: cached.timestamp };
     }
@@ -2370,8 +2399,22 @@ handleSafe('contextmenu:scan', async (event, { refresh = false } = {}) => {
       const data = raw ? JSON.parse(raw) : [];
       if (!Array.isArray(data)) throw new Error('结果不是数组');
       writeLog('info', `扫描右键菜单完成: ${data.length} 项`);
-      const normalized = data.map((item, index) => ({ ...item, id: String(item.id || item.regPath || index) }));
+      // R7（v3.6.6 M1）：ShellNew 10 项共享同一 regPath（PostSetup\ShellNew），
+      // 仅靠 regPath 做 id 会导致 Map.set 折叠为 1 项 → 启停作用错误目标、删除连带 9 项。
+      // 复合键 regPath|target 保证唯一（target 为类名如 .txt/.docx，ShellNew 各项互异）。
+      const normalized = data.map((item, index) => {
+        let id = item.id;
+        if (!id) {
+          if (item.target && item.regPath) {
+            id = `${item.regPath}|${item.target}`;
+          } else {
+            id = item.regPath || String(index);
+          }
+        }
+        return { ...item, id: String(id) };
+      });
       contextmenuSnapshots.set(event.sender.id, snapshotById(normalized));
+      lastContextmenuScan = normalized;
       saveScanCache('contextmenu-scan.json', normalized);
       return { success: true, data: normalized };
     } catch (e) {
@@ -2400,6 +2443,11 @@ handleSafe('contextmenu:backup', async (event, { items, clsids } = {}) => {
       try {
         const data = JSON.parse(stdout.trim());
         if (!data || !data.backupDir || Number(data.count || 0) < 1) return { success: false, message: '备份未生成有效文件' };
+        // CM-9：有任何一项导出失败都不能继续删除（备份是唯一恢复手段，且必须回到原 hive）
+        if (Number(data.failed || 0) > 0) {
+          writeLog('error', `右键菜单备份部分失败: ${data.failed} 项未能导出`);
+          return { success: false, message: `有 ${data.failed} 项未能生成有效备份（无法归位到真实注册表 hive），已停止删除` };
+        }
         return { success: true, data };
       } catch (e) {
         return { success: false, message: '解析备份结果失败' };
@@ -2418,14 +2466,14 @@ handleSafe('contextmenu:remove', async (event, { items, clsids } = {}) => {
   if (!safeRemoveItems.length) return { success: false, message: '没有可删除的右键菜单项' };
   // CM-3（S4，2026-09-15）：HKLM/HKCR 作用域的右键菜单写操作需要管理员，
   // 无权限直接拒绝并给提权入口，避免静默失败（权限不足时 PS 只在详情里报失败）。
-  const hasHklm = safeRemoveItems.some(it => it && /^(HKEY_LOCAL_MACHINE|HKEY_CLASSES_ROOT|HKLM|HKCR)\\/i.test(String(it.regPath || '')));
+  const hasHklm = safeRemoveItems.some(contextmenuWriteNeedsAdmin);
   if (hasHklm && !(await isAdmin())) {
     return { success: false, needAdmin: true, message: '涉及系统级右键菜单的操作需要管理员权限，请先提权' };
   }
   // 复核 N1（删除红线，2026-09-16）：文件系统项（「发送到」.lnk 等）不进 PS 裸删，
   // 改由主进程 trashOrUnlink（回收站优先）+ 全局删除清单；注册表类维持 .reg 备份 + PS 删除。
-  const fsRemoveItems = safeRemoveItems.filter(it => it && it.source === 'filesystem');
-  const regRemoveItems = safeRemoveItems.filter(it => it && it.source !== 'filesystem');
+  const fsRemoveItems = safeRemoveItems.filter(contextmenuIsFileSource);
+  const regRemoveItems = safeRemoveItems.filter(it => it && !contextmenuIsFileSource(it));
   let data = null;
   if (regRemoveItems.length) {
     const script = CONTEXTMENU_SCRIPT.remove(regRemoveItems);
@@ -2455,13 +2503,27 @@ handleSafe('contextmenu:remove', async (event, { items, clsids } = {}) => {
       if (r.ok) {
         data.success = (Number(data.success) || 0) + 1;
         manifestEntries.push({ path: p, name: it.name || '', recycled: !!r.recycled, deletedAt: new Date().toISOString() });
-        data.results.push({ name: it.name, status: 'ok', message: r.recycled ? '已移入回收站' : '已删除（回收站不可用，已永久删除）' });
+        data.results.push({ id: it.id, name: it.name, status: 'ok', message: r.recycled ? '已移入回收站' : '已删除（回收站不可用，已永久删除）' });
       } else {
         data.failed++;
-        data.results.push({ name: it.name, status: 'error', message: r.message || '删除失败' });
+        data.results.push({ id: it.id, name: it.name, status: 'error', message: r.message || '删除失败' });
       }
     }
     try { saveDeleteManifest(`ctxmenu-${Date.now()}`, manifestEntries); } catch (e) { writeLog('warn', `右键菜单删除清单落盘失败: ${e.message}`); }
+  }
+  // CM-12（2026-09-19）：删除成功的项必须同时从快照、lastContextmenuScan 与扫描缓存里摘掉，
+  // 否则重新进页面该项仍会列出（再点删除会报「路径不存在」，用户以为没删掉）。
+  const goneIds = new Set((data.results || [])
+    .filter(r => r && (r.status === 'ok' || r.message === '路径不存在'))
+    .map(r => (typeof r.id === 'string' ? r.id : ''))
+    .filter(Boolean));
+  if (goneIds.size) {
+    const snap = contextmenuSnapshots.get(event.sender.id);
+    if (snap) for (const id of goneIds) snap.delete(id);
+    if (Array.isArray(lastContextmenuScan)) {
+      lastContextmenuScan = lastContextmenuScan.filter(it => !(it && goneIds.has(it.id)));
+      syncContextmenuCache();
+    }
   }
   return { success: data.failed === 0, data };
 });
@@ -2480,23 +2542,62 @@ handleSafe('contextmenu:toggle', async (event, { items } = {}) => {
   const toggleItems = safeItems
     .filter(it => it && typeof it === 'object' && it.regPath && it.source)
     .map(it => ({
-      name: it.name || '', regPath: it.regPath, source: it.source,
+      id: it.id, // CM-12：PS 回传时带上 id，主进程据此把重命名后的新路径写回快照
+      name: it.name || '', regPath: it.regPath,
+      // CM-9（2026-09-19）：写入一律用扫描阶段解析出的真实 hive 路径（HKCR 是合并视图，
+      // 经它写入会落到「解析到的那一份」，与备份/恢复的 hive 对不上）。旧缓存无此字段时退回 regPath。
+      nativeRegPath: it.nativeRegPath || it.regPath,
+      source: it.source,
+      // CM-16/批次 C：屏蔽表与新数据源需要这几个字段才能定位写入点
+      clsid: it.clsid || '',
+      blockedBy: it.blockedBy || '',
+      target: it.target || '',
+      risk: it.risk || '',
       enabled: wantedEnabled.has(it.id) ? wantedEnabled.get(it.id) : !!it.enabled
     }));
   if (!toggleItems.length) return { success: false, message: '没有可切换的菜单项' };
   // CM-3（S4，2026-09-15）：HKLM/HKCR 作用域的右键菜单写操作需要管理员
-  const hasHklm = toggleItems.some(it => it && /^(HKEY_LOCAL_MACHINE|HKEY_CLASSES_ROOT|HKLM|HKCR)\\/i.test(String(it.regPath || '')));
+  // CM-9：判据走 contextmenuWriteNeedsAdmin（真实 hive 口径）
+  const hasHklm = toggleItems.some(contextmenuWriteNeedsAdmin);
   if (hasHklm && !(await isAdmin())) {
     return { success: false, needAdmin: true, message: '涉及系统级右键菜单的操作需要管理员权限，请先提权' };
   }
   const script = CONTEXTMENU_SCRIPT.toggle(toggleItems);
   const scriptPath = writeTempScript(script);
+  // CM-12（2026-09-19）：把 PS 回写的实际结果同步进「快照 + 最近扫描数组 + 扫描缓存」。
+  // 两个必要性：① 重命名类切换（shellex 的 '-' 前缀 / AutorunsDisabled 还原）会改变键路径，
+  // 快照不更新则反向切换继续用过期路径 → 报「路径不存在」；② 渲染层只改自己内存里的 items，
+  // 重新进页面走 loadScanCache 会把刚做完的启停显示回旧状态。
+  const wantedById = new Map(toggleItems.map(t => [t.id, t.enabled]));
+  const commitToggleResult = (results) => {
+    const snap = contextmenuSnapshots.get(event.sender.id);
+    let touched = false;
+    for (const r of (Array.isArray(results) ? results : [])) {
+      if (!r || r.status !== 'ok' || typeof r.id !== 'string') continue;
+      const targets = [];
+      if (snap && snap.get(r.id)) targets.push(snap.get(r.id));
+      if (Array.isArray(lastContextmenuScan)) {
+        const cached = lastContextmenuScan.find(x => x && x.id === r.id);
+        if (cached && !targets.includes(cached)) targets.push(cached);
+      }
+      for (const t of targets) {
+        if (typeof wantedById.get(r.id) === 'boolean') t.enabled = wantedById.get(r.id);
+        if (r.newRegPath) t.regPath = r.newRegPath;
+        if (r.newNativeRegPath) t.nativeRegPath = r.newNativeRegPath;
+        // 屏蔽表切换后同步 blockedBy（'' 表示已解除，必须照写，否则下次点击走错分支）
+        if (typeof r.newBlockedBy === 'string') t.blockedBy = r.newBlockedBy;
+      }
+      touched = true;
+    }
+    if (touched) syncContextmenuCache();
+  };
   try {
     writeLog('info', `切换右键菜单启停: ${toggleItems.length} 项`);
     const { stdout, code, timedOut } = await runPowerShellFile(scriptPath, { timeout: 60000 });
     if (timedOut) return { success: false, message: '切换超时，请稍后重试' };
     if (code !== 0) return { success: false, message: '切换失败' };
     const data = JSON.parse(stdout.trim());
+    commitToggleResult(data && data.results);
     if (data.failed > 0) {
       const firstErr = (data.results || []).find(r => r.status === 'error');
       writeLog('warn', `启停切换部分失败: ${data.failed} 项`);
@@ -2519,7 +2620,19 @@ handleSafe('contextmenu:restore', async (event) => {
     if (code === 0) {
       try {
         const data = JSON.parse(stdout.trim());
-        return { success: !!(data && data.success && (Number(data.imported || 0) + Number(data.restored || 0) > 0)), data };
+        const importedCount = Number((data && data.imported) || 0) + Number((data && data.restored) || 0);
+        const okAll = !!(data && data.success && importedCount > 0);
+        // CM-9：整批都是旧版 HKCR 头备份时，一个都恢复不了。必须说清原因，
+        // 不能只丢一句「恢复失败」让用户以为备份坏了。
+        if (!okAll && data && Number(data.skipped || 0) > 0 && importedCount === 0) {
+          const reasons = Array.isArray(data.skipReasons) ? data.skipReasons.slice(0, 3).join('；') : '';
+          return {
+            success: false,
+            data,
+            message: `${data.skipped} 个备份被拒绝导入（备份头不是真实注册表分支，多为旧版本产生）${reasons ? '：' + reasons : ''}`
+          };
+        }
+        return { success: okAll, data };
       } catch (e) {
         return { success: false, message: '解析恢复结果失败' };
       }
@@ -2638,6 +2751,66 @@ if (\$elevated) { Write-Output 'OK-ELEVATED' } else { Write-Output 'OK' }
   }
 });
 
+// ==================== 批次 B：生效链路与 Win11 菜单模型 ====================
+// 重启资源管理器：右键菜单是 Explorer 在加载期解析的，改完不重启就看不到变化。
+// 渲染层负责红色确认与「延迟批量」计数（多项改动只重启一次），这里只做执行 + 日志。
+// 危险操作前按红线先落盘日志。
+handleSafe('contextmenu:restart-explorer', async () => {
+  const scriptPath = writeTempScript(CONTEXTMENU_SCRIPT.restartExplorer());
+  try {
+    flushLogSync();
+    writeLog('warn', '重启资源管理器（使右键菜单改动生效）');
+    const { stdout, code, timedOut } = await runPowerShellFile(scriptPath, { timeout: 30000, diagOp: 'contextmenu.restart-explorer' });
+    if (timedOut) return { success: false, message: '重启超时，请手动结束并重新打开资源管理器' };
+    if (code !== 0) return { success: false, message: '重启资源管理器失败' };
+    const data = JSON.parse(String(stdout || '').trim() || '{}');
+    return { success: !!data.success, data };
+  } catch (e) {
+    return { success: false, message: e.message };
+  } finally {
+    try { fs.unlinkSync(scriptPath); } catch (e) {}
+  }
+});
+
+// Win11 右键菜单模式：classic = 经典完整菜单（所有扩展平铺），modern = 新版精简 + 「显示更多选项」。
+// 只写 HKCU 的那个 CLSID 键，用户级天然覆盖 HKLM，因此不需要管理员、也不影响其他账户。
+handleSafe('contextmenu:win11-classic', async (event, { action } = {}) => {
+  const allowed = ['get', 'set-classic', 'set-modern'];
+  const act = allowed.includes(String(action)) ? String(action) : 'get';
+  const scriptPath = writeTempScript(CONTEXTMENU_SCRIPT.win11Mode(act));
+  try {
+    if (act !== 'get') writeLog('warn', `切换 Win11 右键菜单模式: ${act}`);
+    const { stdout, code } = await runPowerShellFile(scriptPath, { timeout: 30000 });
+    if (code !== 0) return { success: false, message: '读取或切换 Win11 菜单模式失败' };
+    const data = JSON.parse(String(stdout || '').trim() || '{}');
+    return { success: !!data.success, data };
+  } catch (e) {
+    return { success: false, message: e.message };
+  } finally {
+    try { fs.unlinkSync(scriptPath); } catch (e) {}
+  }
+});
+
+// Shell Extensions\Blocked 枚举（只读）：返回 GUID + 作用域，友好名由渲染层拿扫描结果反查，
+// 避免在两段 PowerShell 里各维护一份名称解析链。条数设上限防无界载荷。
+handleSafe('contextmenu:blocked-list', async () => {
+  const scriptPath = writeTempScript(CONTEXTMENU_SCRIPT.blockedList());
+  try {
+    const { stdout, code } = await runPowerShellFile(scriptPath, { timeout: 30000 });
+    if (code !== 0) return { success: true, data: { entries: [] } };
+    const data = JSON.parse(String(stdout || '').trim() || '{}');
+    const entries = (Array.isArray(data.entries) ? data.entries : [])
+      .filter(e => e && typeof e.guid === 'string' && /^\{[0-9A-Fa-f-]{36}\}$/.test(e.guid))
+      .map(e => ({ guid: e.guid, scope: e.scope === 'machine' ? 'machine' : 'user' }))
+      .slice(0, 500);
+    return { success: true, data: { entries } };
+  } catch (e) {
+    return { success: false, message: e.message };
+  } finally {
+    try { fs.unlinkSync(scriptPath); } catch (e) {}
+  }
+});
+
 // ==================== 优化电脑 IPC ====================
 // 每个选项循序渐进执行，并把 "@@PROGRESS:n@@" 以流式进度推送到渲染层
 const OPTIMIZER = require('./src/scripts-powershell/optimizer-scripts');
@@ -2675,9 +2848,11 @@ handleSafe('optimizer:run', async (event, { optionId, params = {} } = {}) => {
     return { success: false, needAdmin: true, message: '优化操作需要管理员权限，请先提权' };
   }
 
-  // OPT-1（2026-09-15 v7）：高危确认服务端镜像。restore 还原方向不属高危写入，不需回执。
-  if (!params.restore && OPTIMIZER_HAZARD_IDS.has(optionId) && params.confirmedHighRisk !== true) {
-    writeLog('warn', `高危优化缺少确认回执，已拒绝: ${optionId}`);
+  // R2（v3.6.6 M1）：高危确认门禁对正向与还原方向均生效。
+  // 旧代码 !params.restore && … 使 restore=true 时整条判据短路 → 一个渲染层参数即可
+  // 无确认关闭 Defender（用户以为在恢复原状，实际重新应用正向步骤）。
+  if (OPTIMIZER_HAZARD_IDS.has(optionId) && params.confirmedHighRisk !== true) {
+    writeLog('warn', `高危优化缺少确认回执，已拒绝: ${optionId} (restore=${!!params.restore})`);
     return { success: false, needConfirm: true, message: '高危操作缺少红色确认回执，请在界面重新确认后执行' };
   }
 
@@ -2695,7 +2870,17 @@ handleSafe('optimizer:run', async (event, { optionId, params = {} } = {}) => {
     // 在基础清单后追加商店 5 服务步骤（含更新与下载通道，用户裁定覆盖面）。
     steps = OPTIMIZER.svcBulkAppendStoreSteps(opt.steps);
   } else {
-    steps = params.restore && opt.restore ? opt.restore : opt.steps;
+    // R2（v3.6.6 M1）：还原方向必须有专属 restore 步骤；无定义即拒绝，
+    // 禁止回落正向步骤（否则「还原」=「重新应用」，用户认知与实际行为相反）。
+    if (params.restore) {
+      if (!opt.restore || !opt.restore.length) {
+        writeLog('warn', `优化项 ${optionId} 无还原步骤定义，已拒绝还原请求`);
+        return { success: false, message: '该优化项暂不支持一键还原，请手动恢复或使用系统还原点' };
+      }
+      steps = opt.restore;
+    } else {
+      steps = opt.steps;
+    }
   }
   if (!steps || !steps.length) return { success: false, message: '选项无可执行步骤' };
 
@@ -2853,7 +3038,9 @@ async function checkOptimizedInternal(ids) {
       // reg 块：逐键值解析期望值
       if (typeof s.reg === 'string') {
         const block = s.reg;
-        const secRe = /^\[([^\]\r\n]+)\]\r?\n([\s\S]*?)(?=\r?\n\[|$)/gm;
+        // R1（v3.6.6 M1）：原正则 /gm 模式下 $ 匹配每行行尾，懒惰量词在第一行末即停 → 截断。
+        // 去掉 /m，^ 改为 (?:^|\r?\n)，$ 仅匹配字符串末尾，确保捕获整个键组全部值行。
+        const secRe = /(?:^|\r?\n)\[([^\]\r\n]+)\][ \t]*\r?\n([\s\S]*?)(?=\r?\n\[|$)/g;
         let m;
         while ((m = secRe.exec(block)) !== null) {
           const root = m[1].trim().split('\\')[0];
@@ -3106,7 +3293,8 @@ function saveOptBackups(map) {
 // 解析 .reg 块 → 目标键值列表 [{ root, sub, key }]（与 check-optimized 的解析规则一致）
 function parseRegTargets(regBlock) {
   const out = [];
-  const secRe = /^\[([^\]\r\n]+)\]\r?\n([\s\S]*?)(?=\r?\n\[|$)/gm;
+  // R1（v3.6.6 M1）：同 :3015 修复，保持两处解析口径一致
+  const secRe = /(?:^|\r?\n)\[([^\]\r\n]+)\][ \t]*\r?\n([\s\S]*?)(?=\r?\n\[|$)/g;
   let m;
   while ((m = secRe.exec(regBlock)) !== null) {
     const full = m[1].trim();

@@ -2319,6 +2319,238 @@ check('F2：checkupCache 死代码已删除', () => {
 });
 
 
+// ==================== 11. v3.6.6 右键批次 A（正确性收口） ====================
+// 每条对应 update history/9.19 方案里的一个 🔴/🟡 项；断言用源码文本锚，
+// 真机往返验证另见 %APPDATA%\Trim\tmp\roundtrip.ps1（27 条，全绿）。
+console.log('[11] v3.6.6 右键批次 A');
+
+check('CM-9：扫描输出 nativeRegPath，写入/备份/删除一律用它，不再经 HKCR 合并视图', () => {
+  const ps = fs.readFileSync(abs('src/scripts-powershell/contextmenu-scripts.js'), 'utf8');
+  for (const sym of ['function Resolve-NativeRegPath', 'nativeRegPath = \\$nativePath', '[string]\\$item.nativeRegPath']) {
+    if (!ps.includes(sym)) throw new Error('缺少: ' + sym);
+  }
+  // 备份必须拒绝把 HKCR 路径交给 reg.exe（HKCR 头的 .reg 在 import 时会落到 HKLM）
+  if (!ps.includes("'^HKEY_CLASSES_ROOT(?=\\\\\\\\|\\$)'")) throw new Error('BACKUP 未拒绝 HKCR 路径');
+  if (!ps.includes("'HKEY_CLASSES_ROOT'")) throw new Error('RESTORE 未校验 .reg 头部 hive');
+  const main = fs.readFileSync(abs('main.js'), 'utf8');
+  if (!main.includes('nativeRegPath: it.nativeRegPath || it.regPath')) throw new Error('toggle 未传真实 hive 路径');
+  if (!main.includes('cached.data.every(it => it && typeof it.nativeRegPath')) throw new Error('旧结构扫描缓存未失效（会继续沿用 HKCR 路径）');
+});
+
+check('CM-14：备份文件名的非法字符处理不得用正则字符类（JS 模板二次转义会吞掉反斜杠）', () => {
+  const ps = fs.readFileSync(abs('src/scripts-powershell/contextmenu-scripts.js'), 'utf8');
+  if (ps.includes("-replace '[\\\\/:*?\"<>|]'")) throw new Error('回到旧的 -replace 字符类写法，文件名会残留反斜杠');
+  if (!ps.includes('[IO.Path]::GetInvalidFileNameChars()')) throw new Error('未使用 GetInvalidFileNameChars');
+});
+
+check('CM-15：reg.exe 调用必须吞掉 stdout（成功提示会污染脚本的 JSON 返回值）', () => {
+  const ps = fs.readFileSync(abs('src/scripts-powershell/contextmenu-scripts.js'), 'utf8');
+  if (ps.includes("Start-Process -FilePath 'reg.exe'")) throw new Error('仍有 Start-Process 直调 reg.exe');
+  const defs = (ps.match(/function Invoke-RegCmd/g) || []).length;
+  if (defs < 2) throw new Error('BACKUP/RESTORE 两段脚本各需一份 Invoke-RegCmd，实际 ' + defs);
+  if (!ps.includes('& reg.exe @args 2>\\$null | Out-Null')) throw new Error('Invoke-RegCmd 未吞输出');
+});
+
+check('CM-10：动词可见性四值模型，读写共用 Test-VerbHidden + opennewwindow 特判', () => {
+  const ps = fs.readFileSync(abs('src/scripts-powershell/contextmenu-scripts.js'), 'utf8');
+  const defs = (ps.match(/function Test-VerbHidden/g) || []).length;
+  if (defs < 2) throw new Error('SCAN/TOGGLE 需各一份 Test-VerbHidden，实际 ' + defs);
+  for (const sym of ['ProgrammaticAccessOnly', 'HideBasedOnVelocityId', '0x639bc8', 'CommandFlags']) {
+    if (!ps.includes(sym)) throw new Error('四值模型缺少: ' + sym);
+  }
+  if (!ps.includes('\\\\\\\\Folder\\\\\\\\shell\\\\\\\\opennewwindow')) throw new Error('缺 opennewwindow 特判（写 LegacyDisable 会废掉 Win+E）');
+  if (!ps.includes('-not (Test-VerbHidden \\$key)')) throw new Error('扫描端未用四值判据');
+  if (!ps.includes('\\$nowHidden = Test-VerbHidden')) throw new Error('写入端读回未用同一判据');
+});
+
+check('CM-11：未识别的禁用约定（AutorunsDisabled）不再被静默丢弃', () => {
+  const ps = fs.readFileSync(abs('src/scripts-powershell/contextmenu-scripts.js'), 'utf8');
+  if (!ps.includes("Add-Result -Name ('未识别的禁用项")) throw new Error('shellex 侧未输出未知约定项');
+  if (!ps.includes("'(?i)^AutorunsDisabled'")) throw new Error('未放宽 AutorunsDisabled 匹配（旧写法要求下划线后缀）');
+  if (!ps.includes('unknownConvention = \\$UnknownConvention')) throw new Error('结果未带 unknownConvention 字段');
+});
+
+check('CM-13：open/explore 基础动词需红色二次确认', () => {
+  const ps = fs.readFileSync(abs('src/scripts-powershell/contextmenu-scripts.js'), 'utf8');
+  if (!ps.includes("function Get-VerbConfirm")) throw new Error('扫描端缺 Get-VerbConfirm');
+  if (!ps.includes("00021401-0000-0000-C000-000000000046")) throw new Error('未覆盖快捷方式 open 处理器 GUID');
+  const cm = fs.readFileSync(abs('src/scripts/contextmenu.js'), 'utf8');
+  if (!cm.includes('async function toggleItemsWithGuard')) throw new Error('渲染层缺二次确认闸门');
+  if (!cm.includes('toggleItemsWithGuard(affected.map')) throw new Error('「全选本类」批量路径未过闸门');
+  if (cm.includes('applyToggles(affected.map')) throw new Error('批量切换仍绕过闸门直调 applyToggles');
+});
+
+check('CM-12：启停/删除结果回写快照与扫描缓存（防反向切换用过期路径、防缓存说谎）', () => {
+  const main = fs.readFileSync(abs('main.js'), 'utf8');
+  for (const sym of ['function syncContextmenuCache', 'const commitToggleResult', 'commitToggleResult(data && data.results)', 'const goneIds']) {
+    if (!main.includes(sym)) throw new Error('缺少: ' + sym);
+  }
+  if (!main.includes('lastContextmenuScan = normalized')) throw new Error('扫描后未记录最近结果');
+  const cm = fs.readFileSync(abs('src/scripts/contextmenu.js'), 'utf8');
+  if (!cm.includes('if (r.newNativeRegPath) p.item.nativeRegPath = r.newNativeRegPath')) throw new Error('渲染层未同步真实 hive 路径');
+});
+
+check('CM-3/CM-9：管理员判据按真实写入 hive 判定（HKCU 项不得误要求提权）', () => {
+  const main = fs.readFileSync(abs('main.js'), 'utf8');
+  if (!main.includes('function contextmenuWriteNeedsAdmin')) throw new Error('缺统一判据函数');
+  if (!main.includes('toggleItems.some(contextmenuWriteNeedsAdmin)')) throw new Error('toggle 未用统一判据');
+  if (!main.includes('safeRemoveItems.some(contextmenuWriteNeedsAdmin)')) throw new Error('remove 未用统一判据');
+});
+
+
+// ==================== 12. v3.6.6 右键批次 B/C（生效链路 + Win11 + 覆盖面） ====================
+// 真机验证脚本：%APPDATA%\Trim\tmp\verify3.ps1（23 条）、roundtrip2.ps1（26 条）、assert-scan2.js（17 条）
+console.log('[12] v3.6.6 右键批次 B/C');
+
+check('CM-16：Shell Extensions\\Blocked 屏蔽表接入（扫描读 + 启停写 + 系统扩展拒绝入表）', () => {
+  const ps = fs.readFileSync(abs('src/scripts-powershell/contextmenu-scripts.js'), 'utf8');
+  if (!ps.includes('blockedGuids')) throw new Error('扫描未装载屏蔽表');
+  if (!ps.includes('Shell Extensions\\\\Blocked')) throw new Error('缺少屏蔽表路径');
+  if (!ps.includes('function Test-SystemComServer')) throw new Error('缺系统扩展判定（防整菜单失效）');
+  if (!ps.includes('newBlockedBy')) throw new Error('启停未回传屏蔽状态');
+  const main = fs.readFileSync(abs('main.js'), 'utf8');
+  if (!main.includes("item.blockedBy === 'machine'")) throw new Error('机器级屏蔽未纳入提权判据');
+  if (!main.includes('typeof r.newBlockedBy === ')) throw new Error('主进程未把屏蔽状态回写快照');
+});
+
+check('CM-17：启停在服务端拒绝系统保护项（不依赖渲染层自觉）', () => {
+  const ps = fs.readFileSync(abs('src/scripts-powershell/contextmenu-scripts.js'), 'utf8');
+  const togglePart = ps.slice(ps.indexOf('const TOGGLE_SCRIPT'));
+  if (!togglePart.includes("if ([string]\\$item.risk -eq 'protected')")) throw new Error('TOGGLE 未拦 protected');
+});
+
+check('CM-18：Win11 菜单模式只写 HKCU，动作走白名单', () => {
+  const ps = fs.readFileSync(abs('src/scripts-powershell/contextmenu-scripts.js'), 'utf8');
+  if (!ps.includes('86ca1aa0-34aa-4e8b-a509-50c905bae2a2')) throw new Error('缺 Win11 开关 CLSID');
+  if (!ps.includes("__ACTION__")) throw new Error('缺动作占位符');
+  if (!ps.includes("['get', 'set-classic', 'set-modern']")) throw new Error('动作未做白名单（拼接进 PowerShell 前必须枚举）');
+  const win11 = ps.slice(ps.indexOf('const WIN11_MODE_SCRIPT'), ps.indexOf('const BLOCKED_LIST_SCRIPT'));
+  if (/HKEY_LOCAL_MACHINE[^']*Software\\+Classes\\+CLSID/.test(win11)) throw new Error('Win11 开关不得写 HKLM');
+  if (!win11.includes('requireRestart')) throw new Error('未声明需要重启资源管理器');
+});
+
+check('CM-19：重启资源管理器按 SessionId 过滤，禁止无差别 taskkill', () => {
+  const ps = fs.readFileSync(abs('src/scripts-powershell/contextmenu-scripts.js'), 'utf8');
+  const part = ps.slice(ps.indexOf('const RESTART_EXPLORER_SCRIPT'), ps.indexOf('const WIN11_MODE_SCRIPT'));
+  if (!part.includes('SessionId')) throw new Error('未按会话过滤');
+  if (!part.includes('Stop-Process -Id')) throw new Error('未按 PID 结束');
+  if (/taskkill/i.test(part)) throw new Error('不得用 taskkill 按映像名杀进程');
+  const cm = fs.readFileSync(abs('src/scripts/contextmenu.js'), 'utf8');
+  if (!/restartExplorer[\s\S]{0,600}confirmDanger/.test(cm)) throw new Error('重启前未走红色确认');
+});
+
+check('CM-20：三个新数据源与分类/侧边栏对齐（不再有空 tab）', () => {
+  const ps = fs.readFileSync(abs('src/scripts-powershell/contextmenu-scripts.js'), 'utf8');
+  for (const sym of ["-Source 'winx'", "-Source 'shellnew'", "-Source 'openwith'", "-Source 'openwith-list'", 'PostSetup', 'NoOpenWith', 'OpenWithList']) {
+    if (!ps.includes(sym)) throw new Error('扫描缺少: ' + sym);
+  }
+  const cm = fs.readFileSync(abs('src/scripts/contextmenu.js'), 'utf8');
+  const order = cm.slice(cm.indexOf('const CATEGORY_ORDER'), cm.indexOf('const CATEGORY_ICONS'));
+  for (const cat of ['新建菜单', '打开方式', 'Win+X']) {
+    if (!order.includes(cat)) throw new Error('CATEGORY_ORDER 缺分类: ' + cat);
+    if (!cm.includes(`'${cat}': it => it.category === '${cat}'`)) throw new Error('侧边栏匹配器仍按路径正则（会永远为空）: ' + cat);
+  }
+  // WinX 是文件类来源：删除必须走回收站，备份必须走复制而非 reg export
+  const main = fs.readFileSync(abs('main.js'), 'utf8');
+  if (!main.includes("s === 'filesystem' || s === 'winx'")) throw new Error('WinX 未纳入回收站删除路径');
+  if (!ps.includes("\\$source -eq 'filesystem' -or \\$source -eq 'winx'")) throw new Error('WinX 未纳入文件类备份/跳过分支');
+});
+
+check('CM-21：批次 B 三条新通道 main/preload 双侧对齐', () => {
+  const main = fs.readFileSync(abs('main.js'), 'utf8');
+  const pre = fs.readFileSync(abs('preload.js'), 'utf8');
+  for (const ch of ['contextmenu:restart-explorer', 'contextmenu:win11-classic', 'contextmenu:blocked-list']) {
+    if (!main.includes(`'${ch}'`)) throw new Error('main.js 缺少通道 ' + ch);
+    if (!pre.includes(`'${ch}'`)) throw new Error('preload.js 缺少通道 ' + ch);
+  }
+  for (const fn of ['restartExplorer', 'win11Mode', 'blockedList']) {
+    if (!pre.includes(fn + ':')) throw new Error('preload 未暴露 ' + fn);
+  }
+  // 重启资源管理器是有副作用的危险操作，绝不允许进「跳过来源校验」的只读白名单
+  const wl = main.match(/const SIDE_EFFECT_FREE = new Set\(\[([\s\S]*?)\]\);/);
+  if (wl && /contextmenu:(restart-explorer|win11-classic)/.test(wl[1])) throw new Error('重启/模式切换不得进只读白名单');
+});
+
+check('CM-22：失效残留只在「解析出路径且路径不存在」时判定', () => {
+  const ps = fs.readFileSync(abs('src/scripts-powershell/contextmenu-scripts.js'), 'utf8');
+  if (!ps.includes('componentMissing')) throw new Error('缺组件缺失判定');
+  if (!ps.includes('orphanReason')) throw new Error('缺残留原因（用户看不到为什么）');
+  const cm = fs.readFileSync(abs('src/scripts/contextmenu.js'), 'utf8');
+  if (!cm.includes('item.orphanReason')) throw new Error('渲染层未展示残留原因');
+});
+
+check('CM-23：延迟批量生效条接入启停/删除/恢复三处', () => {
+  const cm = fs.readFileSync(abs('src/scripts/contextmenu.js'), 'utf8');
+  if (!cm.includes('function markPendingApply')) throw new Error('缺生效条计数');
+  const calls = (cm.match(/markPendingApply\(/g) || []).length;
+  if (calls < 4) throw new Error('markPendingApply 调用点不足（定义 + 启停 + 删除 + 恢复 + 模式切换），实际 ' + calls);
+  const html = fs.readFileSync(abs('src/index.html'), 'utf8');
+  for (const id of ['ctxApplyBar', 'btnCtxRestartExplorer', 'ctxModePanel', 'ctxWin11Switch', 'ctxBlockedList']) {
+    if (!html.includes(id)) throw new Error('index.html 缺少 #' + id);
+  }
+  const css = fs.readFileSync(abs('src/styles/main.css'), 'utf8');
+  for (const cls of ['.ctx-apply-bar', '.ctx-mode-panel', '.ctx-blocked-row']) {
+    if (!css.includes(cls)) throw new Error('main.css 缺少 ' + cls);
+  }
+  if (!/prefers-reduced-motion[\s\S]{0,200}ctx-apply-bar/.test(css)) throw new Error('生效条未纳入 reduced-motion 豁免');
+});
+
+
+// ==================== v3.6.6 M1 修复断言 ====================
+
+// R1（v3.6.6 M1）：.reg 块解析必须覆盖每个键组的全部值行
+check('R1：.reg 块多值行解析完整性', () => {
+  const regBlock = '[HKEY_LOCAL_MACHINE\\SOFTWARE\\Test]\r\n"Val1"=dword:00000001\r\n"Val2"=dword:00000002\r\n"Val3"="string_data"\r\n\r\n[HKEY_LOCAL_MACHINE\\SOFTWARE\\Test2]\r\n"A"=dword:00000000\r\n"B"="hello"';
+  const secRe = /(?:^|\r?\n)\[([^\]\r\n]+)\][ \t]*\r?\n([\s\S]*?)(?=\r?\n\[|$)/g;
+  let totalValues = 0;
+  let m;
+  while ((m = secRe.exec(regBlock)) !== null) {
+    const lineRe = /"([^"]+)"=([^\r\n]+)/g;
+    let lm;
+    while ((lm = lineRe.exec(m[2])) !== null) totalValues++;
+  }
+  if (totalValues !== 5) throw new Error(`期望 5 个值行，实际 ${totalValues}`);
+});
+
+// R2（v3.6.6 M1）：params.restore 不得旁路高危确认门禁
+check('R2：restore 不绕过 confirmedHighRisk', () => {
+  const mainSrc = fs.readFileSync(abs('main.js'), 'utf8');
+  if (/if\s*\(\s*!params\.restore\s*&&\s*OPTIMIZER_HAZARD_IDS/.test(mainSrc))
+    throw new Error('仍存在 !params.restore && HAZARD 短路');
+  if (/params\.restore\s*&&\s*opt\.restore\s*\?\s*opt\.restore\s*:\s*opt\.steps/.test(mainSrc))
+    throw new Error('仍存在 restore 回落 opt.steps 的三元表达式');
+});
+
+// R3（v3.6.6 M1）：dynamic 项必须在 closeOptModal 之前读取下拉值
+check('R3：optimizer dynamic 档位读取时序', () => {
+  const src = fs.readFileSync(abs('src/scripts/optimizer.js'), 'utf8');
+  // 查找执行按钮 click handler 中的 preCloseGbVal 赋值（R3 修复引入的变量）
+  if (!src.includes('preCloseGbVal')) throw new Error('找不到 preCloseGbVal，R3 修复未生效');
+  // 验证 preCloseGbVal 赋值在 closeOptModal() 之前
+  const execBlock = src.slice(src.indexOf('const go = await confirmHazard'));
+  if (execBlock.length < 10) throw new Error('找不到执行入口块');
+  const preCloseIdx = execBlock.indexOf('preCloseGbVal');
+  const closeModalIdx = execBlock.indexOf('closeOptModal()');
+  if (preCloseIdx < 0 || closeModalIdx < 0) throw new Error('找不到关键代码段');
+  if (preCloseIdx > closeModalIdx) throw new Error('preCloseGbVal 在 closeOptModal 之后');
+});
+
+// R7（v3.6.6 M1）：右键扫描 id 生成逻辑必须包含 target 去重
+check('R7：contextmenu id 含 target 去重', () => {
+  const mainSrc = fs.readFileSync(abs('main.js'), 'utf8');
+  if (/id:\s*String\(item\.id\s*\|\|\s*item\.regPath\s*\|\|\s*index\)/.test(mainSrc))
+    throw new Error('id 仍仅用 regPath，ShellNew 多项会碰撞');
+});
+
+// R5（v3.6.6 M1）：随包 cleanup-rules.json 必须通过内置公钥自验签
+check('R5：随包规则库自验签', () => {
+  const rulesText = fs.readFileSync(abs('src/data/cleanup-rules.json'), 'utf8');
+  const { verifyRulesSignature } = require('./src/main/rules-signature.js');
+  const result = verifyRulesSignature(rulesText);
+  if (!result.ok) throw new Error(result.reason);
+});
+
+
 // ==================== 汇总 ====================
 console.log('');
 console.log(`结果: ${passed} 通过, ${failed} 失败`);
