@@ -1,6 +1,6 @@
 {
   "name": "trim",
-  "version": "3.6.2",
+  "version": "3.6.5",
   "description": "Trim",
   "main": "main.js",
   "author": "xiaoxu",
@@ -24,7 +24,8 @@
     "build:setup": "electron-builder --win nsis --x64 --publish never",
     "build:dir": "electron-builder --win --x64 --dir --publish never",
     "postinstall": "electron-builder install-app-deps",
-    "release": "electron-builder --win nsis --x64 --publish always"
+    "release": "electron-builder --win nsis --x64 --publish always",
+    "postrelease": "node scripts/sign-update.js sign"
   },
   "devDependencies": {
     "electron": "^44.1.1",

@@ -85,6 +85,10 @@
   }
 
   // ==================== 测速过程流量检测（状态机） ====================
+  // M2（v3.6.5）M2-3：detectTimer 生命周期核对——唯一创建点是 beginDetect()，
+  // 且其首行先 stopDetect() 复位（不会叠加定时器）。清理路径：finishDetect（测速结束）、
+  // loadExternalTest（换站点/重载）、站点 change 处理器、window.netspeed.stop()
+  // （离开网络测速页时由 app.js 调用）。即「创建前必先清、离开页面必清」，无遗留定时器。
   function stopDetect() {
     if (detectTimer) { clearInterval(detectTimer); detectTimer = null; }
     tickInFlight = false;
@@ -383,5 +387,11 @@
     showChartView();
   }
 
-  window.netspeed = { init, loadExternalTest, stop };
+  // M2（v3.6.5）M2-6：统一销毁契约。本模块不持有常驻 window 级监听（站点/按钮监听挂在
+  // 静态 DOM 节点上，节点随文档存活），destroy 等价于 stop()，重复调用安全。
+  function destroy() {
+    stop();
+  }
+
+  window.netspeed = { init, loadExternalTest, stop, destroy };
 })();

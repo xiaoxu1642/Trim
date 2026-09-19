@@ -29,14 +29,33 @@
 
   var current = null;
 
+  // M3（v3.6.5）N-4：剔除 base 中「旧的 transform 过渡片段」，而不是整条替换。
+  // 原实现：base 只要含 'transform' 就把整个 base 丢掉 → 连带丢弃容器自带的
+  // box-shadow / border-color 等过渡（表现为悬停时阴影/描边由渐变退化为瞬跳）。
+  // 做法：按逗号分段，逐段判定属性名是否为 transform（含厂商前缀），是则丢弃该段，
+  // 其余过渡（颜色/阴影/透明度等）原样保留。
+  function stripTransformTransition(base) {
+    if (!base) return '';
+    return base.split(',')
+      .map(function (seg) { return seg.trim(); })
+      .filter(function (seg) {
+        // 词边界匹配属性名，避免误伤 cubic-bezier/函数名里恰好出现的字样
+        return !/^(?:-(?:webkit|moz|ms|o)-)?transform(?:[\s]|$)/.test(seg);
+      })
+      .filter(Boolean)
+      .join(', ');
+  }
+
   function setTransform(el, transform, transition) {
-    // 保留容器已有的行内 transition（若含 transform 则不重复追加）
+    // 保留容器已有的行内 transition；其中旧的 transform 片段先剔除再拼接（M3 N-4），
+    // 其余过渡属性（box-shadow / border-color 等）原样保留。
     var base = el.dataset.tiltBase;
     if (base === undefined) {
       base = el.style.transition || '';
       el.dataset.tiltBase = base;
     }
-    var merged = base && base.indexOf('transform') === -1 ? transition + ', ' + base : transition;
+    var rest = stripTransformTransition(base);
+    var merged = rest ? transition + ', ' + rest : transition;
     el.style.transform = transform;
     el.style.transition = merged;
   }

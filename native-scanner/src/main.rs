@@ -1330,32 +1330,21 @@ fn is_protected_path(p: &str) -> bool {
     false
 }
 
-/// 永久删除（回收站不可用时的兜底）。
-fn permanent_delete(p: &Path, kind: &str) -> Result<(), String> {
-    let r = if kind == "dir" {
-        fs::remove_dir_all(p)
-    } else {
-        fs::remove_file(p)
-    };
-    r.map_err(|e| e.to_string())
-}
-
-/// 删除单项：优先移入回收站（用户可还原）；回收站失败（卷不支持、COM 失败等）
-/// 时回退为永久删除，真实失败原因透传给结果行（v7-3，不得硬编码误导文案）。
-/// Ok((true,_))=已进回收站，Ok((false,Some(reason)))=已永久删除+原因，Err=失败。
+/// 删除单项：只移入回收站（用户可还原）。
+/// M3（v3.6.5）N-5（安全红线）：回收站失败时**不再降级为永久删除**。
+/// 根因：原实现在 send_to_trash 失败后直接 permanent_delete，把「移入回收站失败」静默
+/// 变成不可逆的永久删除——用户以为文件进了回收站可还原，实际已被彻底删除。
+/// 新约定：Ok(()) = 已进回收站；Err(reason) = **文件保持原样、未删除**，失败原因透传给
+/// 调用方（JSON 结果行 status=fail + message 标注原因），由上层决定如何告知用户。
+/// 本函数在任何分支都不会删除文件。
 #[cfg(windows)]
-fn delete_one(p: &Path, kind: &str) -> Result<(bool, Option<String>), String> {
-    // v7-3（2026-09-15）：回收站失败原因透传——任意失败（不只是卷不支持）都会触发
-    // 永久删除降级，结果行必须带真实原因，不得硬编码「卷不支持回收站」误导用户。
-    if let Err(reason) = recycle::send_to_trash(&p.to_string_lossy()) {
-        return permanent_delete(p, kind).map(|_| (false, Some(reason)));
-    }
-    Ok((true, None))
+fn delete_one(p: &Path, _kind: &str) -> Result<(), String> {
+    recycle::send_to_trash(&p.to_string_lossy()).map_err(|reason| format!("回收站失败: {}", reason))
 }
 
 #[cfg(not(windows))]
-fn delete_one(p: &Path, kind: &str) -> Result<(bool, Option<String>), String> {
-    permanent_delete(p, kind).map(|_| (false, Some("非 Windows 平台无回收站语义".to_string())))
+fn delete_one(_p: &Path, _kind: &str) -> Result<(), String> {
+    Err("非 Windows 平台无回收站语义，已拒绝删除（不降级为永久删除）".to_string())
 }
 
 /// 火眼眼审查 2026-09-14（M-1）：删除目标本身是 reparse point（junction/symlink）时拒绝——
@@ -1398,19 +1387,16 @@ fn cmd_delete(items: &[(String, OsString)]) {
             fs::metadata(p).map(|m| m.len()).unwrap_or(0)
         };
         match delete_one(p, kind) {
-            Ok((recycled, trash_fail)) => {
+            Ok(()) => {
                 ok += 1;
                 freed += sz;
-                if recycled {
-                    del_item("delresult", p, kind, "ok", sz, "已移入回收站", "recycled");
-                } else {
-                    let why = trash_fail.unwrap_or_else(|| "回收站不可用".to_string());
-                    del_item("delresult", p, kind, "ok", sz, &format!("已永久删除（回收站失败: {}）", why), "permanent");
-                }
+                del_item("delresult", p, kind, "ok", sz, "已移入回收站", "recycled");
             }
+            // M3（v3.6.5）N-5：回收站失败即视为删除失败——文件仍在原位，freed 计 0，
+            // 真实原因随结果行回传，绝不静默转为永久删除。
             Err(e) => {
                 fail += 1;
-                del_item("delresult", p, kind, "fail", 0, &e, "failed");
+                del_item("delresult", p, kind, "fail", 0, &e, "trash-failed");
             }
         }
     }

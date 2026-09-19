@@ -749,6 +749,9 @@ pub fn list_deletable(root_str: &str, pattern: &str) -> DeletableResult {
 
 // ==================== Get-PathDeletableStats 口径（三态出口） ====================
 
+// L6（2026-09-19）：missing / nfiles 是 Get-PathDeletableStats 的 PS 侧契约字段，
+// Rust 当前调用方只消费 ok / size；保留字段以维持与 PS 口径的结构对等，显式豁免 dead_code。
+#[allow(dead_code)]
 pub struct PathStats {
     pub ok: bool,
     pub missing: bool,
@@ -906,7 +909,10 @@ mod rstrtmgr {
     const CCH_RM_SESSION_KEY: usize = 32;
     const ERROR_MORE_DATA: i32 = 234;
 
+    // L6（2026-09-19）：Win32 结构体字段名必须与 SDK 原名逐字一致，重命名既不改变内存布局
+    // 也破坏 #[repr(C)] 的可读性契约，故局部豁免 non_snake_case（改动字段名属于高危改动，禁止）。
     #[repr(C)]
+    #[allow(non_snake_case)]
     struct RM_UNIQUE_PROCESS {
         dwProcessId: u32,
         // FILETIME 本体是 { DWORD low, DWORD high }，4 字节对齐、共 8 字节——
@@ -916,6 +922,7 @@ mod rstrtmgr {
     }
 
     #[repr(C)]
+    #[allow(non_snake_case)]
     struct RM_PROCESS_INFO {
         Process: RM_UNIQUE_PROCESS,
         strAppName: [u16; CCH_RM_MAX_APP_NAME + 1],

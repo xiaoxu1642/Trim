@@ -93,7 +93,21 @@ const SYNTAX_FILES = [
   'src/scripts-powershell/peripheral-scripts.js',
   'src/scripts-powershell/realtime-scripts.js',
   'src/scripts-powershell/runtimes-scripts.js',
-  'src/scripts-powershell/startup-scripts.js'
+  'src/scripts-powershell/startup-scripts.js',
+  // M3+L5（2026-09-19 全量审查）：补齐原先零语法覆盖的 7 个脚本。
+  //   M3 · 浏览器侧生产脚本（不走 require 链、由 index.html <script> 直接加载，无任何间接保护）：
+  //       liquid-glass.js = 核心玻璃引擎（28/48/420 性能护栏宿主）、theme-boot.js = 首屏最早执行
+  //       （语法破损表现为白屏且无报错出口）、window-material.js / models-window.js = 独立窗口脚本。
+  //   L5 · 构建/发布链路脚本（会实际执行：双源生成、规则库签名、规则重构）。
+  //   有意排除：scripts/cdp-*.js ×4（一次性 CDP 调试探针，不参与构建与发布）、
+  //             fix_icons.py / *.nsh / *.ps1（非 Node 语法，不受 node --check 约束）。
+  'src/scripts/liquid-glass.js',
+  'src/scripts/theme-boot.js',
+  'src/scripts/window-material.js',
+  'src/scripts/models-window.js',
+  'scripts/gen-fallback.js',
+  'scripts/sign-rules.js',
+  'scripts/restructure-rules.js'
 ];
 
 console.log('[1/5] JS 语法检查');
@@ -1332,6 +1346,138 @@ check('火眼眼审查修复：updater 防降级 fail-closed', () => {
     throw new Error('版本段解析失败未 fail-closed（畸形远端版本不得绕过降级拦截）');
   }
   if (!/\} catch \{ return false; \}/.test(vfn)) throw new Error('比较异常分支未 fail-closed');
+});
+
+// ============================================================
+// v3.6.5 M1-1：自动更新通道的 ed25519 可信锚点
+// update-signature.js 是纯 Node 模块（禁 require electron），故可离线真签真验，
+// 不做「文件存在性」这种空断言。
+// ============================================================
+const US = require(abs('src/main/update-signature.js'));
+
+// 临时替换内置公钥数组做验证，用完还原（不改变模块常量本身）
+function withPubkeys(pems, fn) {
+  const saved = US.UPDATE_PUBKEYS.slice();
+  US.UPDATE_PUBKEYS.length = 0;
+  pems.forEach((p) => US.UPDATE_PUBKEYS.push(p));
+  try { return fn(); } finally {
+    US.UPDATE_PUBKEYS.length = 0;
+    saved.forEach((p) => US.UPDATE_PUBKEYS.push(p));
+  }
+}
+
+check('M1-1: 能从真实 latest.yml 抽出锚点', () => {
+  const yml = fs.readFileSync(abs('build-release/latest.yml'), 'utf8');
+  const a = US.extractUpdateAnchor(yml);
+  if (!a || !/^\d+\.\d+\.\d+/.test(a.version) || !a.sha512 || !/\.exe$/i.test(a.file)) {
+    throw new Error('锚点抽取失败');
+  }
+  // 顶层锚定：必须命中顶层 path，而不是 files[] 里缩进的同名字段
+  const topPath = (yml.match(/^path:[ \t]*(\S+)[ \t]*$/m) || [])[1];
+  if (a.file !== topPath) throw new Error('path 抽取未锚定顶层（可能命中了 files[]）');
+});
+
+check('M1-1: 三态判定正确（verified / unsigned / mismatch）', () => {
+  const crypto2 = require('crypto');
+  const { publicKey, privateKey } = crypto2.generateKeyPairSync('ed25519');
+  const body = Buffer.from('version: 9.9.9\nsha512: AAAA\npath: X.exe\n', 'utf8');
+  const sig = crypto2.sign(null, body, privateKey).toString('base64');
+  withPubkeys([publicKey.export({ type: 'spki', format: 'pem' })], () => {
+    if (!US.verifyUpdateInfoSignature(body, sig).ok) throw new Error('正常签名未判为 verified');
+    const bad = US.verifyUpdateInfoSignature(Buffer.concat([Buffer.from('x'), body]), sig);
+    if (bad.ok || bad.kind !== 'mismatch') throw new Error('篡改内容未判为 mismatch');
+    const none = US.verifyUpdateInfoSignature(body, '');
+    if (none.ok || none.kind !== 'unsigned') throw new Error('空签名未判为 unsigned');
+    const nul = US.verifyUpdateInfoSignature(body, null);
+    if (nul.ok || nul.kind !== 'unsigned') throw new Error('null 签名未判为 unsigned');
+    const short = US.verifyUpdateInfoSignature(body, 'AAAA');
+    if (short.ok || short.kind !== 'mismatch') throw new Error('长度非法签名未判为 mismatch');
+    // 原始字节语义：多一个换行就验不过，证明实现没有做 trim/归一化
+    if (US.verifyUpdateInfoSignature(Buffer.from('version: 9.9.9\nsha512: AAAA\npath: X.exe\n\n', 'utf8'), sig).ok) {
+      throw new Error('多一个换行仍通过：未使用原始字节语义');
+    }
+  });
+});
+
+check('M1-1: 公钥数组支持轮换（第二把公钥也能验通过）', () => {
+  const crypto2 = require('crypto');
+  const { publicKey, privateKey } = crypto2.generateKeyPairSync('ed25519');
+  const body = Buffer.from('rotate-test', 'utf8');
+  const sig = crypto2.sign(null, body, privateKey).toString('base64');
+  const decoy = crypto2.generateKeyPairSync('ed25519').publicKey.export({ type: 'spki', format: 'pem' });
+  // 数组第一把是无关的旧公钥，第二把才是真签名的——数组必须逐个都试，不能只试第一个
+  withPubkeys([decoy, publicKey.export({ type: 'spki', format: 'pem' })], () => {
+    if (!US.verifyUpdateInfoSignature(body, sig).ok) throw new Error('第二把公钥未参与验签（轮换能力缺失）');
+  });
+});
+
+check('M1-1: updater.js 已接入验签闸门（检查 + 下载前复验）', () => {
+  const src = fs.readFileSync(abs('src/main/updater.js'), 'utf8');
+  if (!src.includes("require('./update-signature')")) throw new Error('updater.js 未引入验签模块');
+  if (!/async function resolveTrustedAnchor\(/.test(src)) throw new Error('缺少 resolveTrustedAnchor');
+  const sc = (src.match(/async function safeCheck\([\s\S]*?\n\}/) || [])[0] || '';
+  if (!sc.includes('resolveTrustedAnchor')) throw new Error('safeCheck 未做验签');
+  if (!sc.includes("anchor.kind !== 'unreachable'")) throw new Error('未区分 unreachable 与签名类失败');
+  if (!/verifiedAnchor\.version !== remote \|\| String\(info\.sha512 \|\| ''\) !== verifiedAnchor\.sha512/.test(src)) {
+    throw new Error('update-available 缺少锚点比对闸门');
+  }
+  const sd = (src.match(/async function startDownload\([\s\S]*?\n\}/) || [])[0] || '';
+  if (!sd.includes('pendingAnchor')) throw new Error('startDownload 未做下载前复验');
+  if (!sd.includes('anchor-changed')) throw new Error('startDownload 缺少锚点变化的拒绝分支');
+});
+
+check('M1-1: 验签失败必须给用户手动出口（不能只剩 fail-closed）', () => {
+  const ui = fs.readFileSync(abs('src/scripts/updater-ui.js'), 'utf8');
+  if (!ui.includes('data-upd="releases"')) throw new Error('缺少「前往下载页」按钮');
+  if (!ui.includes('state.sigFailed')) throw new Error('未根据 sigFailed 控制出口显隐');
+  if (!ui.includes('openExternal')) throw new Error('手动出口未走 open-external');
+  if (!/const RELEASES_URL = 'https:/.test(ui)) throw new Error('下载页地址不是 https');
+});
+
+check('M1-1: 未引入免验签应急开关（用户已否决）', () => {
+  const src = fs.readFileSync(abs('src/main/updater.js'), 'utf8');
+  const us = fs.readFileSync(abs('src/main/update-signature.js'), 'utf8');
+  if (/skipVerify|noVerify|verifyOff|disableVerify|mode:\s*'off'/.test(src + us)) {
+    throw new Error('出现了免验签开关（任何本地可写开关都是攻击面）');
+  }
+});
+
+check('M1-2: apply-xml 已消除冗余 needAdmin 分支', () => {
+  const mainSrc = fs.readFileSync(abs('main.js'), 'utf8');
+  const from = mainSrc.indexOf('defaultapps:apply-xml');
+  const to = mainSrc.indexOf('defaultapps:remove-xml-policy');
+  if (from < 0 || to < 0 || to < from) throw new Error('apply-xml 段定位失败');
+  const seg = mainSrc.slice(from, to);
+  // 必须先剥掉整行注释：合并分支的说明注释里就含有 needAdmin: true 字面量，直接全文正则会把注释算成一处
+  const code = seg.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+  if (code.includes('/管理员|administrator|denied|拒绝/i')) throw new Error('自相矛盾的双分支判据仍在');
+  const n = (code.match(/needAdmin: true/g) || []).length;
+  if (n !== 2) throw new Error('apply-xml 段 needAdmin 应为 2 处（合并分支 + catch），实际 ' + n);
+});
+
+check('M1-3: clear-state 具备服务端确认回执门禁', () => {
+  const mainSrc = fs.readFileSync(abs('main.js'), 'utf8');
+  const from = mainSrc.indexOf('defaultapps:clear-state');
+  const to = mainSrc.indexOf('defaultapps:open-settings');
+  if (from < 0 || to < 0 || to < from) throw new Error('clear-state 段定位失败');
+  const seg = mainSrc.slice(from, to);
+  if (!seg.includes('confirmed !== true')) throw new Error('clear-state 缺少回执门禁');
+  if (!seg.includes('needConfirm: true')) throw new Error('clear-state 拒绝时未回传 needConfirm');
+  if (!seg.includes('flushLogSync')) throw new Error('危险操作前未刷盘');
+});
+
+check('M1-3: preload clearState 已传回执参数', () => {
+  const preloadSrc = fs.readFileSync(abs('preload.js'), 'utf8');
+  if (!/clearState:\s*\(confirmed\)\s*=>\s*ipcRenderer\.invoke\('defaultapps:clear-state',\s*\{\s*confirmed\s*\}\)/.test(preloadSrc)) {
+    throw new Error('preload.clearState 未传递 confirmed（门禁会永久拒绝该通道）');
+  }
+});
+
+check('M1-3: 回归防护——clear-state 不得混入只读白名单', () => {
+  const mainSrc = fs.readFileSync(abs('main.js'), 'utf8');
+  const m = mainSrc.match(/const SIDE_EFFECT_FREE = new Set\(\[([\s\S]*?)\]\);/);
+  if (!m) throw new Error('未找到 SIDE_EFFECT_FREE 白名单');
+  if (m[1].includes("'defaultapps:clear-state'")) throw new Error('clear-state 混入 SIDE_EFFECT_FREE');
 });
 
 check('火眼眼审查修复：settings:save 全 URL 字段 SSRF 校验', () => {

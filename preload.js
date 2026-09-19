@@ -300,15 +300,11 @@ contextBridge.exposeInMainWorld('api', {
     }
   },
 
-  // 关闭流程
+  // 关闭流程（L1，2026-09-19）：onRequest 已随主进程 shutdown 流程重构移除——
+  // 主进程不再发送 app:shutdown、app.js 不再监听，此处同步删除暴露，消除死订阅面。
   shutdown: {
     begin: () => ipcRenderer.send('shutdown:begin'),
-    complete: () => ipcRenderer.send('shutdown:complete'),
-    onRequest: (callback) => {
-      const handler = () => callback();
-      ipcRenderer.on('app:shutdown', handler);
-      return () => ipcRenderer.removeListener('app:shutdown', handler);
-    }
+    complete: () => ipcRenderer.send('shutdown:complete')
   },
 
   // 安装路径绑定
@@ -354,7 +350,9 @@ contextBridge.exposeInMainWorld('api', {
     setUcpd: (disable, entries, originalStart) => ipcRenderer.invoke('defaultapps:set-ucpd', { disable, entries, originalStart }),
     writeClass: (entries) => ipcRenderer.invoke('defaultapps:write-class', { entries }),
     getState: () => ipcRenderer.invoke('defaultapps:get-state'),
-    clearState: () => ipcRenderer.invoke('defaultapps:clear-state'),
+    // v3.6.5 M1-3：回执必须由调用方显式传入（主进程门禁的前提；不传即被拒）。
+    // 该通道当前无渲染层调用方，此处先把契约固定下来，将来接入时按注释的样例调用。
+    clearState: (confirmed) => ipcRenderer.invoke('defaultapps:clear-state', { confirmed }),
     openSettings: () => ipcRenderer.invoke('defaultapps:open-settings')
   },
 

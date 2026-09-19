@@ -92,6 +92,16 @@
     startObserver();
   }
 
+  // M2（v3.6.5）M2-5：补销毁契约——observer 与 DOMContentLoaded 监听原本没有解绑路径。
+  // 约束/时机说明（不主动调用）：本模块的 MutationObserver 与弹窗 open/close 的 IPC 上报
+  // 在渲染进程整个生命周期内都需要存在（弹窗可在任意时刻打开），静态下不存在「观察器
+  // 可以安全摘除」的确定时机；因此这里只提供 destroy 契约（供窗口级回收复用），
+  // 由调用方按需调用，不在此处猜测时机自行调用。重复调用安全。
+  function stopObserver() {
+    try { observer.disconnect(); } catch (e) { /* 尚未开始观察时断开无副作用 */ }
+    document.removeEventListener('DOMContentLoaded', startObserver);
+  }
+
   // ---------- 统一弹窗骨架工厂 ----------
   // opts: { id, title, bodyHtml, footerHtml, backdropClass, modalClass,
   //         bodyClass, footerClass, width, onRequestClose(reason)->false 可阻止关闭,
@@ -212,6 +222,7 @@
     });
   }
 
-  window.modal = { create, confirm, closeAll };
+  // M2（v3.6.5）M2-6：统一销毁契约（destroy 解绑 MutationObserver + DOMContentLoaded）
+  window.modal = { create, confirm, closeAll, destroy: stopObserver };
   window.emptyState = emptyState;
 })();

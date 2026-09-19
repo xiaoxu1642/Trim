@@ -7061,10 +7061,19 @@ handleSafe('defaultapps:apply-xml', async (event, { entries } = {}) => {
       writeLog('info', `默认应用策略 XML 已应用: ${items.map(i => i.key).join(',')}`);
       return { success: true, data: { xmlPath } };
     }
-    if (code !== 0 && stderr && /管理员|administrator|denied|拒绝/i.test(stderr) === false && !result.message) {
-      return { success: false, message: stderr.slice(0, 200), needAdmin: true };
-    }
-    return { success: false, message: result.message || stderr || '策略键写入失败（可能需要管理员权限）', needAdmin: true };
+    // v3.6.5 M1-2：原为双分支，但两分支返回字段完全一致（success/message/needAdmin），
+    // 差异仅在 message 取值优先级；且原第一个分支的判据（stderr 不含权限关键词）与它自己的
+    // needAdmin: true 自相矛盾——会把「策略键写入后校验不一致」这类非权限失败也引导去 UAC 提权，
+    // 而提权对已经失败的动作并没有用。合并为单一形态：
+    // 结构化 message 优先 → 裸 stderr（截断）→ 兜底文案；needAdmin 恒为 true，
+    // 因为本操作写 HKLM 策略键属系统级变更（与下行 set-ucpd 的单分支形态保持一致）。
+    // 行为等价性：result.message 为空时两式同得 stderr.slice(0,200)；stderr 为空时同得兜底文案。
+    // 遗留：「非权限类失败不应提示提权」的语义修正见 v3.6.5 设计文档遗留项 #9，本批不改行为。
+    return {
+      success: false,
+      message: result.message || (stderr ? stderr.slice(0, 200) : '') || '策略键写入失败（可能需要管理员权限）',
+      needAdmin: true
+    };
   } catch (e) {
     return { success: false, message: e.message, needAdmin: true };
   } finally {
@@ -7225,8 +7234,19 @@ handleSafe('defaultapps:load-all', async (event, { refresh = false } = {}) => {
   return { success: true, statusResp, progResp, stateResp: { success: true, state: resolveDefaultAppsState() } };
 });
 
-handleSafe('defaultapps:clear-state', async () => {
-  saveDefaultAppsState({});
+// v3.6.5 M1-3：清空接管状态属**不可逆的状态丢失**操作（会抹掉 pendingWrites 续接清单与
+// ucpdOriginalStart 恢复基线，两者都无法重建）。沿用 OPT-1 的既有先例（main.js:2659-2682）：
+// 渲染层红色确认后携带回执，主进程见不到回执即拒绝——被攻陷的渲染层无法绕过确认直接清空。
+// 严格等值（!== true）对齐 :2679 的写法，防止 { confirmed: 'false' } 这类真值串被当作回执。
+handleSafe('defaultapps:clear-state', async (event, params) => {
+  const confirmed = params && params.confirmed;
+  if (confirmed !== true) {
+    writeLog('warn', '默认应用状态清空缺少确认回执，已拒绝');
+    return { success: false, needConfirm: true, message: '重置接管状态缺少确认回执，请在界面重新确认后执行' };
+  }
+  flushLogSync();               // 危险操作前刷盘（与同模块其它写操作一致）
+  saveDefaultAppsState({});     // 仍走 atomicWriteJson
+  writeLog('warn', '默认应用接管状态已被重置');
   return { success: true };
 });
 
@@ -7633,11 +7653,13 @@ app.on('before-quit', () => {
   try { saveWindowState(); } catch (e) {}
   // 清理本应用 spawn 的子进程（仅清理已登记的 PID，绝误杀用户的其它进程）
   if (backendProcs.size > 0) {
-    const { execSync } = require('child_process');
+    const { execFileSync } = require('child_process');
     for (const info of backendProcs.values()) {
       try {
         if (process.platform === 'win32') {
-          execSync(`taskkill /pid ${info.pid} /T /F`, { stdio: 'ignore' });
+          // L2（2026-09-19）：原为模板字符串拼 `taskkill /pid ${pid}`，改参数数组与全仓一致；
+          // pid 取自 spawn 自产 child.pid，非注入面，此处仅为消除拼接式命令串调用的风险面。
+          execFileSync('taskkill', ['/pid', String(info.pid), '/T', '/F'], { stdio: 'ignore' });
         } else {
           process.kill(info.pid, 'SIGTERM');
         }

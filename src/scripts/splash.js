@@ -33,22 +33,30 @@
   // 落位目标：标题栏品牌文字（index.html .titlebar-title）
   var titleTarget = document.querySelector('.titlebar-title');
 
-  var reduceMotion = false;
-  try { reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
-
   // v3.6.2 产品决策（用户拍板）：开屏动画是 Trim 品牌资产——WebGL 流线背景、入场、FLIP
-  // 落位，即使系统关闭「显示动画」（SPI_GETCLIENTAREAANIMATION=0 → PRM:reduce）也完整播放，
-  // 不再按系统开关跳过。body.splash-live 标记供 main.css 的 reduced-motion 归零规则排除
-  // 启动页子树（开屏期间主界面渐显也需要），finish() 摘除。
+  // 落位，即使系统关闭「显示动画」（SPI_GETCLIENTAREAANIMATION=0 → prefers-reduced-motion:
+  // reduce）也完整播放，不再按系统开关跳过。body.splash-live 标记供 main.css 的
+  // reduced-motion 归零规则排除启动页子树（开屏期间主界面渐显也需要），finish() 摘除。
   // 注：v3.6.1 曾因 PRM 下「静态卡死还要手点」直接摘除启动页；现将 CSS 归零规则豁免 +
   // 完整 JS 编排后，入场/进度/FLIP 全链路真实运行，卡死根因不复存在。
-  // reduceMotion 变量保留仅作日志/兜底参考，不再用于跳过任何动画路径。
+  // M3（v3.6.5）N-3：原先此处声明并求值了
+  //   var reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // 但 v3.6.2 改为「开屏完整播放」后，全文再无任何读取点（仅注释提及），属死变量。
+  // 处理：删除（而非保留作「参考」）——留着会让后来者误以为仍存在 PRM 分支，
+  // 从而错误地在别处依赖它。若将来真要按系统偏好降级，请在真正读取它的位置重新引入。
   try { document.body.classList.add('splash-live'); } catch (e) {}
 
   var state = 'loading'; // loading → done → entered
   var finished = false;
   var bootReady = false;
   var enterScheduled = false;
+  // M3（v3.6.5）N-6：isFirstVisit（及其来源 seen）原先声明在文件末尾的「进度编排」区，
+  // 却在其上方就被读取（onBootReady、tick）——那些读取点目前都是异步回调，不会真的触发
+  // TDZ，但属隐患（将来任何同步路径读取即抛 ReferenceError）。上移到 state 声明区，
+  // 保证所有读取点都晚于声明。
+  var seen = false;
+  try { seen = localStorage.getItem(SEEN_KEY) === '1'; } catch (e) {}
+  var isFirstVisit = !seen;
   var hardTimer = setTimeout(finish, HARD_EXIT_MS);
   // 火眼眼审查 2026-09-14（LOW）：启动页是短生命周期节点，window 级监听（boot-ready /
   // canvas resize）须在 finish 摘除节点时同步解绑，否则闭包与 WebGL 画布残留至窗口关闭
@@ -296,9 +304,8 @@
   // ===== 进度编排（v2.7.1：真实事件驱动） =====
   // timer 只推进到 92%（诚实进度：剩余的是等 app.js 真实初始化完成）；
   // `trim:boot-ready` 到达即跳 100% 并进入；4s 硬兜底防止卡死在启动页。
-  var seen = false;
-  try { seen = localStorage.getItem(SEEN_KEY) === '1'; } catch (e) {}
-  var isFirstVisit = !seen;
+  // M3（v3.6.5）N-6：seen / isFirstVisit 已上移到 state 声明区（消除 TDZ 隐患），
+  // 此处只保留依赖它的紧凑模式标记。
   if (!isFirstVisit && splash.classList) splash.classList.add('compact'); // 后续启动：仅 Trim + 进度
 
   var PROGRESS_MS = isFirstVisit ? PROGRESS_MS_FIRST : PROGRESS_MS_COMPACT;

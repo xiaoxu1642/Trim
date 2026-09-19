@@ -7,21 +7,36 @@
 // 2) 状态全部经 'updater:state-changed' 事件推给渲染层，由渲染层统一弹窗服务呈现，主进程不弹原生 dialog；
 // 3) 发现新版不自动下载、下载完成不强制退出：避免偷跑流量与打断清理/测速/大文件扫描任务；
 // 4) 更新源来自打包时自动生成的 resources/app-update.yml（build.publish 配置），不要手写、不要入库；
-// 5) 完整性锚点说明（审查 H-1 修订，2026-09-14）：
-//    latest.yml 内 sha512 由 electron-updater 下载后强校验。但 latest.yml 与安装包
-//    来自同一个 url——若镜像被接管，它可同时提供「恶意 latest.yml（写恶意包 sha512）」
-//    与「恶意安装包（sha512 自洽）」，校验照样通过。因此镜像**不是**透明通道，而是
-//    完整信任点；这与规则库更新（锚点是内置在应用里的 ed25519 公钥，通道无法伪造）
-//    的信任模型根本不同。当前完整性 = sha512（由通道提供，可被同源伪造）+ 无 Authenticode
-//    签名校验（package.json 未配 publisherName / 代码签名证书）+ 无防降级。
-//    已落地的缓解：版本单调校验（远端 < 当前则拒绝）。
-//    待办（需发布基础设施配合，本批不改）：① 给安装包做 Authenticode 代码签名并设
-//    publisherName；② 对 latest.yml 加 ed25519 签名（复用规则库密钥体系），验签后才
-//    信任其中的 sha512。在这两项落地前，镜像域名应被视为「需要信任」而非「无需白名单」。
+// 5) 完整性锚点说明（v3.6.5 M1-1 重写）：
+//    latest.yml 与安装包同源同前缀，通道被接管时可同时提供「恶意 latest.yml（写恶意包 sha512）」
+//    与「恶意安装包（sha512 自洽）」，故 sha512 绝不能由通道提供，必须由**应用内置公钥**背书。
+//    这与规则库更新（rules-signature.js，锚点是内置 ed25519 公钥）是同一个信任模型。
+//
+//    【已落地】latest.yml 的 ed25519 验签：
+//      发布侧产出旁路签名 latest.yml.sig（scripts/sign-update.js sign 生成并上传）。
+//      本模块在**检查阶段**先验签，再从已验签的原文抽出 version/sha512/path 作为可信锚点，
+//      并把通道给的值与锚点逐字比对；**下载前再复验一次**（用户可能隔几分钟才点下载，关掉 TOCTOU 窗口）。
+//      三态判定：verified 放行；unsigned（漏签/发布事故）与 mismatch（疑似篡改）一律拒绝该线路；
+//      仅 unreachable（网络失败）才沿用既有的「回退下一条线路」逻辑——绝不因拿不到签名就降级放行。
+//
+//    【Phase B 预留，本次不启用】Authenticode 代码签名校验：
+//      实测本机 v3.6.2 两个产物 Get-AuthenticodeSignature 均为 Status:2（未进行数字签名）。
+//      此时若配置 publisherName，electron-updater 会因 Status !== 0 拒绝**所有**更新
+//      （包括我们自己发布的正式版），等于把全部用户锁死在无法更新的状态。
+//      启用前置条件：① 受信任 CA 签发的代码签名证书（OV/EV，自签名证书会自锁）；
+//      ② 两个 win 产物均已签名；③ 在 build.publish[0].publisherName 填**完整 DN**（只给 CN 等于弱匹配）。
+//      条件满足后无需改代码即可生效，故此处不留任何开关代码。
+//
+//    锁死风险的四条对策（详见设计文档 §2.1.3）：S1 postrelease 钩子自动签名 + 回读自验；
+//      S2 签完立即用内置公钥自验；S3 签名与 yml 同源、逐线路成对拉取；
+//      S4 内置公钥设计为数组以支持轮换（顺序硬约束：先 [旧,新] → 稳定后再收敛为 [新]）。
+//    在以上两项都完备前，镜像域名应被视为「需要信任」而非「无需白名单」。
 const { autoUpdater, CancellationToken } = require('electron-updater');
 const { app } = require('electron');
 const fs = require('fs');
 const path = require('path');
+// v3.6.5 M1-1：更新信息的可信锚点验签（纯 Node 模块，不含 electron，可被 test-features.js 直接单测）
+const UPDATE_SIG = require('./update-signature');
 
 // —— 线路定义（P2-8）——
 // 默认线路：GitHub Releases（来自 app-update.yml）；镜像线路：gh-proxy 系对
@@ -35,6 +50,12 @@ const MIRRORS = [
 const MIRROR_IDS = ['auto', 'github', ...MIRRORS.map(m => m.id)];
 const MIRROR_FILE = 'update-mirror.json'; // 数据目录下的用户镜像偏好
 const CHECK_TIMEOUT_MS = 20000;           // 单线路检查超时（竞速另一条前不再等太久）
+// v3.6.5 M1-1：GitHub 直连的下载基址，与 MIRRORS[].base 同构，用于取 latest.yml 与 latest.yml.sig。
+// 为什么要单独一个常量：验签要自己拉一次 yml+sig，而 electron-updater 的 generic provider 只把
+// 结果加工成对象，无法把「通道传来的 sha512」变成「内置公钥背书的 sha512」。
+const GITHUB_DOWNLOAD_BASE = 'https://github.com/xiaoxu1642/Trim/releases/latest/download/';
+const ANCHOR_MAX_BYTES = 64 * 1024;       // latest.yml 体积上限（正常约 1KB），超限即断，防异常响应撑爆内存
+const SIG_MAX_BYTES = 4 * 1024;           // latest.yml.sig 体积上限（ed25519 base64 约 88 字节）
 
 // 版本单调比较（审查 H-1 防降级，2026-09-14）：按点分段逐段比较数字，任一段远端 < 当前即降级。
 // 预发布标签（-beta 等）截取主体版本再比；任一段无法解析为有限数字或比较过程异常一律拒绝安装
@@ -54,6 +75,44 @@ function isVersionNewerOrEqual(remote, current) {
   } catch { return false; }
 }
 
+// —— v3.6.5 M1-1：拉取并验签 latest.yml，得到可信锚点 ——
+// 带体积上限与超时的字节拉取。验签对象是**原始字节**，必须防异常响应把内存撑爆。
+async function fetchBytesLimited(url, maxBytes, timeoutMs) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: ctrl.signal, headers: { 'User-Agent': 'trim-updater' } });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length > maxBytes) throw new Error(`响应过大（${buf.length} > ${maxBytes} 字节）`);
+    return buf;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// 对单条线路取得可信锚点。返回 { ok:true, version, sha512, file } 或 { ok:false, kind, reason }。
+// 三种 kind 语义严格区分（见文件头注释）：
+//   unreachable —— 网络/HTTP 失败，属既有「线路不通」，调用方应回退下一条线路
+//   unsigned    —— 拿到了 yml 但没有合法签名（发布事故），拒绝该线路
+//   mismatch    —— 签名验不过（疑似篡改），拒绝该线路
+async function resolveTrustedAnchor(feed) {
+  const base = feed.id === 'github' ? GITHUB_DOWNLOAD_BASE : (feed.config && feed.config.url) || '';
+  if (!base) return { ok: false, kind: 'unreachable', reason: '线路缺少下载基址' };
+  let raw, sigText;
+  try {
+    raw = await fetchBytesLimited(new URL('latest.yml', base).toString(), ANCHOR_MAX_BYTES, 15000);
+    sigText = (await fetchBytesLimited(new URL('latest.yml.sig', base).toString(), SIG_MAX_BYTES, 15000)).toString('utf8');
+  } catch (e) {
+    return { ok: false, kind: 'unreachable', reason: e.name === 'AbortError' ? '拉取更新信息超时' : e.message };
+  }
+  const v = UPDATE_SIG.verifyUpdateInfoSignature(raw, sigText);
+  if (!v.ok) return { ok: false, kind: v.kind, reason: v.reason };
+  const anchor = UPDATE_SIG.extractUpdateAnchor(raw.toString('utf8'));
+  if (!anchor) return { ok: false, kind: 'unsigned', reason: 'latest.yml 结构不符合预期，已拒绝' };
+  return { ok: true, ...anchor };
+}
+
 let winRef = null;
 let writeLog = () => {};
 let cancelToken = null;
@@ -62,6 +121,11 @@ let checking = false;
 let dataDir = null;        // 由 main.js 注入（镜像偏好持久化位置）
 let mirrorPref = 'auto';   // auto = GitHub 优先失败自动回退；指定镜像 = 镜像优先
 let activeMirror = 'github'; // 最近一次成功线路（回报渲染层）
+// v3.6.5 M1-1：本次检查得到的「已验签锚点」与「待下载的锚点」
+// verifiedAnchor —— safeCheck 阶段由内置公钥验签通过得出的可信锚点
+// pendingAnchor  —— update-available 时锁定，供 startDownload 复验（关掉 TOCTOU 窗口）
+let verifiedAnchor = null;
+let pendingAnchor = null;
 
 // 统一向主窗口渲染层推送状态（phase: idle/checking/available/latest/downloading/ready/error）
 function push(state) {
@@ -142,6 +206,9 @@ function initUpdater(mainWindow, logger, opts = {}) {
 
   autoUpdater.autoDownload = false;       // 发现新版先问用户，不偷跑流量
   autoUpdater.autoInstallOnAppQuit = true; // 已下载完时，退出应用顺手安装
+  // v3.6.5 M1-1：上游 electron-updater 明确建议关闭 web installer（该分支的签名校验更弱）。
+  // 本项目 nsis target 未使用 web installer，故本行无副作用，仅作纵深防御。
+  autoUpdater.disableWebInstaller = true;
   autoUpdater.logger = {
     info: m => writeLog('info', `[updater] ${m}`),
     warn: m => writeLog('warn', `[updater] ${m}`),
@@ -158,6 +225,14 @@ function initUpdater(mainWindow, logger, opts = {}) {
       push({ phase: 'latest', currentVersion: cur, via: activeMirror, downgradeBlocked: true });
       return;
     }
+    // v3.6.5 M1-1：通道给的 version/sha512 必须与「已被内置公钥验签」的锚点逐字一致。
+    // 为什么两个字段都比：version 决定我们下载哪个发布，sha512 决定校验哪个产物，缺一即可被替换。
+    if (!verifiedAnchor || verifiedAnchor.version !== remote || String(info.sha512 || '') !== verifiedAnchor.sha512) {
+      writeLog('error', `[updater] 更新信息与已验签锚点不一致，已拒绝（锚点版本 ${verifiedAnchor ? verifiedAnchor.version : '无'} / 通道版本 ${remote}）`);
+      push({ phase: 'error', sigFailed: true, message: '更新信息与发布签名不一致，已阻止。请前往官方 Releases 页面手动下载安装包。' });
+      return;
+    }
+    pendingAnchor = verifiedAnchor; // 交给 startDownload 在下载前复验
     writeLog('info', `[updater] 发现新版本 ${remote}（当前 ${cur}）`);
     push({
       phase: 'available',
@@ -219,9 +294,22 @@ async function safeCheck(silent = false) {
   checking = true;
   push({ phase: 'checking' });
   let lastError = '';
+  let sigFailure = null; // v3.6.5 M1-1：签名类失败（与网络失败严格区分）
   try {
     const feeds = orderedFeeds();
     for (const feed of feeds) {
+      // v3.6.5 M1-1：先验签，再让 electron-updater 检查。
+      // 为什么逐线路独立验签而不是整轮拒绝：三条线路各自受同一把内置公钥约束，回退本身
+      // 不放大风险，同时保留既有「镜像被污染时自动回落 GitHub 直连」的容灾能力（P2-8 的设计意图）。
+      const anchor = await resolveTrustedAnchor(feed);
+      if (!anchor.ok) {
+        writeLog(anchor.kind === 'unreachable' ? 'warn' : 'error',
+          `[updater] 线路 ${feed.label} 锚点校验未通过（${anchor.kind}）: ${anchor.reason}`);
+        if (anchor.kind !== 'unreachable') sigFailure = anchor; // unsigned / mismatch
+        lastError = anchor.reason;
+        continue;                                               // 换下一条线路
+      }
+      verifiedAnchor = anchor;
       const r = await checkOnce(feed, CHECK_TIMEOUT_MS);
       if (r.ok) {
         activeMirror = feed.id;
@@ -232,7 +320,12 @@ async function safeCheck(silent = false) {
       writeLog('warn', `[updater] 线路 ${feed.label} 检查失败: ${lastError}`);
     }
     writeLog('error', `[updater] 检查失败（全部线路）: ${lastError}`);
-    if (!silent) push({ phase: 'error', message: lastError });
+    // 签名类失败必须显性告知并给出手动出口——没有出口的安全策略会变成功能故障
+    if (sigFailure) {
+      if (!silent) push({ phase: 'error', sigFailed: true, message: sigFailure.kind === 'unsigned'
+        ? '未取得发布签名，已阻止自动更新。请前往官方 Releases 页面手动下载安装包。'
+        : '更新信息签名校验失败，可能被篡改，已阻止。请前往官方 Releases 页面手动下载安装包。' });
+    } else if (!silent) push({ phase: 'error', message: lastError });
     return { ok: false, error: lastError };
   } finally {
     checking = false;
@@ -241,6 +334,20 @@ async function safeCheck(silent = false) {
 
 async function startDownload() {
   if (cancelToken) return { ok: false, error: 'already-downloading' };
+  // v3.6.5 M1-1：下载前复验。用户可能隔几分钟才点下载，期间发布侧内容可能已变化——
+  // 若直接用检查阶段的锚点，就留出了一个 TOCTOU 窗口。这里重取一次并与锁定值比对。
+  if (!pendingAnchor) {
+    writeLog('warn', '[updater] 未取得已验签锚点，已拒绝下载（fail-closed）');
+    push({ phase: 'error', sigFailed: true, message: '未取得发布签名，已阻止下载。请重新检查更新。' });
+    return { ok: false, error: 'unsigned-or-unverified' };
+  }
+  const feed = orderedFeeds().find(f => f.id === activeMirror) || orderedFeeds()[0];
+  const anchor = await resolveTrustedAnchor(feed);
+  if (!anchor.ok || anchor.version !== pendingAnchor.version || anchor.sha512 !== pendingAnchor.sha512) {
+    writeLog('warn', '[updater] 下载前复验失败，已拒绝下载');
+    push({ phase: 'error', sigFailed: true, message: '发布签名在本次会话内发生变化，已阻止下载。请重新检查更新。' });
+    return { ok: false, error: 'anchor-changed' };
+  }
   cancelToken = new CancellationToken();
   try {
     await autoUpdater.downloadUpdate(cancelToken);

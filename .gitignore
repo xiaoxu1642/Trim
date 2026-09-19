@@ -36,3 +36,13 @@ docs规范/
 
 # 更新历史（本地资料，不入库）
 update history/
+
+# 本地 AI 工具产物与个人档案（v3.6.5 新增）
+# USER.md / IDENTITY.md 含开发者个人信息与协作偏好，公开仓库不得入库
+# AGENTS.md 含本机绝对路径与智能体归档布局，属环境强绑定文档，同样不入库、不 pull、不构建
+# 说明见 AGENTS.md 第 8 节「智能体工作目录归档」
+.opencode/
+config/
+IDENTITY.md
+USER.md
+AGENTS.md

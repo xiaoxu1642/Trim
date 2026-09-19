@@ -178,7 +178,9 @@
 
   --fg-primary: #292536;
   --fg-secondary: #5C5770;
-  --fg-tertiary: #767191;
+  /* L4（2026-09-19）：原 #767191 于 --bg-app #F6F4FB 上仅 4.24:1，低于 WCAG AA 正文 4.5:1；
+     同色相加深至 #6B657F 达 5.08:1，仍与 --fg-secondary 保持三级层次，不改任何引用点。 */
+  --fg-tertiary: #6B657F;
   --fg-disabled: rgba(41, 37, 54, 0.34);
 
   --border-default: rgba(41, 37, 54, 0.09);

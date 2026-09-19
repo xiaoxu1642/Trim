@@ -43,28 +43,56 @@
     return `<div class="xtable-head${opts.compact ? ' xtable-head-compact' : ''}">${cells}</div>`;
   }
 
-  // 绑定表头交互：点击排序 + 拖拽列宽
+  // M2（v3.6.5）M2-4：表头交互改为幂等绑定。
+  // 原实现每次调用都无条件 addEventListener：同一批 DOM 被重复绑定时，click 排序会被
+  // 连续执行 N 次（方向反复翻转，表现为「点了没反应」），resizer 的 mousedown 也会并发
+  // 挂上 N 组 document 级 move/up 监听（拖拽结束后只有最后一组被摘除）。
+  // 现在每个节点只绑一次；state/onChange 由「容器注册表」在事件触发时动态取最新值，
+  // 避免节点复用场景下闭包指向陈旧的排序状态。当前唯一调用方（cleanup.js）每次重渲染
+  // 都用 innerHTML='' 重建节点，本改动不影响其行为，仅消除「调用方不清 DOM 时」的隐患。
+  const headerContexts = new WeakMap();   // container -> { state, onChange }
+  const headerBound = new WeakSet();      // 已挂过监听的表头/手柄节点
+
+  // 自节点向上找最近的已注册容器（表头节点在 container 的子树内）
+  function headerContextOf(node) {
+    let el = node;
+    while (el) {
+      const ctx = headerContexts.get(el);
+      if (ctx) return ctx;
+      el = el.parentElement;
+    }
+    return null;
+  }
+
+  // 绑定表头交互：点击排序 + 拖拽列宽（幂等：重复调用不会重复绑定）
   function bindHeader(container, state, onChange) {
     if (!container) return;
+    headerContexts.set(container, { state, onChange });
 
     container.querySelectorAll('.xtable-th.sortable').forEach(th => {
+      if (headerBound.has(th)) return;
+      headerBound.add(th);
       th.addEventListener('click', e => {
         if (e.target.closest('.xtable-resizer')) return;
         // 文字被选中时不触发排序（避免与复制操作冲突）
         const sel = window.getSelection ? window.getSelection().toString() : '';
         if (sel) return;
+        const ctx = headerContextOf(th);
+        if (!ctx || !ctx.state || typeof ctx.onChange !== 'function') return;
         const key = th.dataset.col;
-        if (state.key === key) {
-          state.dir = state.dir === 'asc' ? 'desc' : 'asc';
+        if (ctx.state.key === key) {
+          ctx.state.dir = ctx.state.dir === 'asc' ? 'desc' : 'asc';
         } else {
-          state.key = key;
-          state.dir = 'asc';
+          ctx.state.key = key;
+          ctx.state.dir = 'asc';
         }
-        onChange();
+        ctx.onChange();
       });
     });
 
     container.querySelectorAll('.xtable-resizer').forEach(rz => {
+      if (headerBound.has(rz)) return;
+      headerBound.add(rz);
       rz.addEventListener('mousedown', e => {
         e.preventDefault();
         e.stopPropagation();

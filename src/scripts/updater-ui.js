@@ -9,6 +9,9 @@
   'use strict';
 
   const MODAL_ID = 'updaterModal';
+  // v3.6.5 M1-1：签名校验失败时引导用户手动下载的唯一出口。走既有 app:open-external
+  // 通道（主进程强制 https-only，见 main.js:1041-1048），故此处不会出现非 https 目标。
+  const RELEASES_URL = 'https://github.com/xiaoxu1642/Trim/releases/latest';
 
   // 主进程推送的状态负载：phase/idle/checking/available/latest/downloading/ready/error
   const state = {
@@ -271,7 +274,9 @@
         '<p class="upd-ready-desc"></p></div>';
     }
     if (kind === 'error') {
-      return '<div class="upd-error"><div class="upd-error-msg"></div></div>';
+      // v3.6.5 M1-1：签名类失败时额外展示一段说明（默认隐藏，由 fillModal 按 state.sigFailed 控制）
+      return '<div class="upd-error"><div class="upd-error-msg"></div>' +
+        '<p class="upd-error-sig" hidden></p></div>';
     }
     return '';
   }
@@ -295,8 +300,11 @@
         '<button class="btn btn-primary" type="button" data-upd="install">立即重启</button>';
     }
     if (kind === 'error') {
+      // v3.6.5 M1-1：签名类失败时多给一个「前往下载页」出口（默认隐藏）。
+      // 为什么必须给：fail-closed 之后用户会「什么都点不动」，没有手动出口的安全策略就等于功能故障。
       return right +
         '<button class="btn btn-secondary" type="button" data-upd="close">关闭</button>' +
+        '<button class="btn btn-secondary" type="button" data-upd="releases" hidden>前往下载页</button>' +
         '<button class="btn btn-primary" type="button" data-upd="retry">重试</button>';
     }
     return '';
@@ -357,6 +365,10 @@
         else if (act === 'cancel') window.api.updater.cancelDownload();
         else if (act === 'install') window.api.updater.install();
         else if (act === 'retry') manualCheck();
+        else if (act === 'releases') {
+          // v3.6.5 M1-1：手动下载出口（复用既有 open-external，主进程侧已强制 https）
+          try { window.api.openExternal(RELEASES_URL); } catch (_) {}
+        }
         else if (act === 'later' || act === 'close') closeModal();
       } catch (err) { /* IPC 异常走 error 状态回流，不在按钮回调里抛 */ }
     });
@@ -381,6 +393,16 @@
         '新版本 v' + (state.version || '') + ' 已下载并校验完成，重启 Trim 后即可生效。';
     } else if (kind === 'error') {
       $('.upd-error-msg', root).textContent = state.message || '检查更新失败，请稍后重试。';
+      // v3.6.5 M1-1：签名类失败额外展示说明并露出手动下载出口
+      const sigEl = $('.upd-error-sig', root);
+      const relBtn = root.querySelector('[data-upd="releases"]');
+      if (sigEl) {
+        sigEl.textContent = state.sigFailed
+          ? '自动更新已被安全策略阻止：未通过发布签名校验的安装包不会被执行。你可以到官方发布页面手动下载安装包。'
+          : '';
+        sigEl.hidden = !state.sigFailed;
+      }
+      if (relBtn) relBtn.hidden = !state.sigFailed;
     }
   }
 
@@ -440,7 +462,9 @@
         setRow('检查更新', false, '当前已是最新版本' + (cur ? '（' + cur + '）' : ''));
         break;
       case 'error':
-        setRow('检查更新', false, '更新失败，点击按钮重试');
+        // v3.6.5 M1-1：签名类失败要写明「已阻止」而不是泛化的「更新失败」——
+        // 否则用户会当成网络问题反复重试，而重试永远不会有结果。
+        setRow('检查更新', false, state.sigFailed ? '已阻止（签名校验未通过）' : '更新失败，点击按钮重试');
         break;
       default:
         setRow('检查更新', false, cur ? '当前版本 ' + cur : '检查 Trim 是否有新版本');

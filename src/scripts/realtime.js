@@ -8,14 +8,33 @@
   const POLL_INTERVAL = 1500;                // 流量采样轮询间隔(ms)，可调
   const LOSS_INTERVAL = 5000;                // 丢包检测轮询间隔(ms)，可调
   const MAX_POINTS = 60;                     // 图表保留最大数据点数（时间窗口）
+  // M2（v3.6.5）M2-2：记录模式采样数组的截断上限（保留最新 N 点，丢弃最老）。
+  // 原实现只 push 不裁剪：长时间挂机记录时 recordSamples 会无上限增长（每点一个
+  // {t,up,down} 对象，1.5s 一点，挂机一天即数万点常驻内存），且停止记录时对整数组做
+  // Math.max(...samples.map(...)) 展开，点数过多会直接抛「Maximum call stack size exceeded」。
+  // 7200 点 ≈ 3 小时 @1.5s，覆盖任何真实测速/观测场景，同时把展开量压在调用栈安全区内。
+  const MAX_RECORD_POINTS = 7200;
 
   const $ = id => document.getElementById(id);
 
-  // 复核 N3（测速，2026-09-16）：resize 监听改为具名函数 + 模块级只绑一次。
+  // 复核 N3（测速，2026-09-16）：resize 监听改为具名函数。
   // 原匿名监听在 init 注册后永不解绑，页面多次切入/切出会堆叠监听器（每个闭包持有
-  // canvas/state，内存泄漏 + 重复绘制）。具名化后 init 重复执行也不再新增。
+  // canvas/state，内存泄漏 + 重复绘制）。
   function onWindowResize() { if (state.running) draw(); }
+  // M2（v3.6.5）M2-1：绑定/解绑成对。resize 只在采集运行期间有意义（onWindowResize 内部
+  // 也以 state.running 为门），故与 start/stop 同生命周期——离开网络测速页即解绑，
+  // 不再常驻整个窗口生命周期。
   let resizeBound = false;
+  function bindResize() {
+    if (resizeBound) return;
+    resizeBound = true;
+    window.addEventListener('resize', onWindowResize);
+  }
+  function unbindResize() {
+    if (!resizeBound) return;
+    resizeBound = false;
+    window.removeEventListener('resize', onWindowResize);
+  }
 
   const state = {
     adapter: '',          // 选中网卡名（空 = 所有活动网卡聚合）
@@ -33,7 +52,7 @@
     elevationAsked: false, // 是否已提示过提权
     recording: false,     // 是否正在记录网速数据
     recordStart: 0,       // 本次记录开始时间戳
-    recordSamples: []     // 本次记录的全部采样 [{ t, up, down }]
+    recordSamples: []     // 本次记录采样 [{ t, up, down }]（上限 MAX_RECORD_POINTS，超出丢最老）
   };
 
   // ===== 持久化 =====
@@ -257,8 +276,13 @@
   function pushPoint(up, down) {
     state.history.push({ t: Date.now(), up, down });
     if (state.history.length > MAX_POINTS) state.history.splice(0, state.history.length - MAX_POINTS);
-    // 记录模式：同步累积全量采样
-    if (state.recording) state.recordSamples.push({ t: Date.now(), up, down });
+    // 记录模式：同步累积原始全量采样（M2 起受 MAX_RECORD_POINTS 截断，避免长时间记录内存膨胀）
+    if (state.recording) {
+      state.recordSamples.push({ t: Date.now(), up, down });
+      if (state.recordSamples.length > MAX_RECORD_POINTS) {
+        state.recordSamples.splice(0, state.recordSamples.length - MAX_RECORD_POINTS);
+      }
+    }
   }
 
   // ===== 图表 =====
@@ -453,6 +477,8 @@
     tickLoss();
     state.sampleTimer = setInterval(tick, POLL_INTERVAL);
     state.lossTimer = setInterval(tickLoss, LOSS_INTERVAL);
+    // M2（v3.6.5）M2-1：采集运行期间才需要 resize 重绘，随启动绑定
+    bindResize();
     updatePauseBtn();
     // 页面刚切入可见时容器尺寸才就绪，下一帧先画空图占位（避免「图表空白」观感）
     requestAnimationFrame(draw);
@@ -465,6 +491,8 @@
     state.running = false;
     if (state.sampleTimer) { clearInterval(state.sampleTimer); state.sampleTimer = null; }
     if (state.lossTimer) { clearInterval(state.lossTimer); state.lossTimer = null; }
+    // M2（v3.6.5）M2-1：与 start() 的 bindResize 对称解绑，避免监听器随页面切换累积
+    unbindResize();
     hideTooltip();
     // 离开页面时若正在记录，自动结束并保存报告，避免数据丢失
     if (state.recording) toggleRecord();
@@ -798,10 +826,8 @@
     const canvas = $('realtimeChart');
     canvas?.addEventListener('mousemove', onChartMove);
     canvas?.addEventListener('mouseleave', hideTooltip);
-    if (!resizeBound) {
-      resizeBound = true;
-      window.addEventListener('resize', onWindowResize);
-    }
+    // M2（v3.6.5）M2-1：resize 监听改由 start()/stop() 成对开关（原先在 init 里绑定后
+    // 永久常驻）。init 只负责首绘，页面未进入时不需响应窗口尺寸变化。
 
     // 初次绘制空状态
     draw();
@@ -809,5 +835,13 @@
     updateRecordBtn();
   }
 
-  window.realtime = { init, start, stop };
+  // M2（v3.6.5）M2-6：统一销毁契约（模块退出语义）。
+  // 与 stop() 的区别：stop 只停采集（页面切走即调用），destroy 额外解绑残留的 resize
+  // 监听，供窗口/应用级回收时调用；重复调用安全（内部均为幂等判断）。
+  function destroy() {
+    stop();
+    unbindResize();
+  }
+
+  window.realtime = { init, start, stop, destroy };
 })();
