@@ -2841,6 +2841,9 @@ select.field-input { cursor: pointer; appearance: auto; }
   flex-direction: column;
   gap: 8px;
   pointer-events: none;
+  /* v3.7.0 议题一：条数异常时（渲染层 FIFO 护栏之外的极端情况）不得溢出视口下沿 */
+  max-height: calc(100vh - 80px);
+  overflow: hidden;
 }
 
 .toast {
@@ -5126,6 +5129,28 @@ body.mw-window #pmBody .pm-virtual .xtable-body {
 }
 .startup-badge.on { background: color-mix(in srgb, var(--success) 14%, transparent); color: var(--success); }
 .startup-badge.off { background: color-mix(in srgb, var(--warning) 14%, transparent); color: var(--warning); }
+.startup-badge.ghost { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
+
+/* v3.7.0 议题二 P0：缓存年龄横幅（数据来自 N 分钟前的扫描 · 立即重新扫描） */
+.startup-cache-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 8px 14px;
+  border: 1px solid color-mix(in srgb, var(--warning) 34%, transparent);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  border-radius: var(--radius-medium);
+  color: var(--fg-secondary);
+  font-size: var(--fs-secondary);
+}
+.startup-cache-banner > svg { flex-shrink: 0; color: var(--warning); }
+.startup-cache-banner > span { flex: 1; min-width: 0; }
+.startup-cache-banner[hidden] { display: none; }
+
+/* 幽灵项：缓存里还在、系统里已消失（本次重扫后不再出现） */
+.startup-item.ghost { opacity: 0.62; }
+.startup-item.ghost .startup-item-title { color: var(--fg-tertiary); }
 .startup-item-cmd {
   font-size: var(--fs-meta);
   color: var(--fg-tertiary);
@@ -8280,94 +8305,7 @@ body.lg-mode-frost .filter-tab.active .maint-tab-count {
   }
 }
 
-/* ==================== v3.0.0 批次样式（默认应用接管 / 网络检测） ==================== */
-
-/* ---------- 默认应用接管（.da- 域前缀） ---------- */
-.da-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 12px 16px;
-  margin-bottom: 14px;
-  border: 1px solid var(--border-accent);
-  border-radius: var(--radius-btn);
-  background: var(--accent-soft);
-}
-.da-banner-muted { border-color: var(--border-default); background: transparent; }
-.da-banner-copy strong { display: block; font-size: var(--fs-body); color: var(--fg-primary); margin-bottom: 2px; }
-.da-banner-copy p { font-size: var(--fs-secondary); color: var(--fg-secondary); margin: 0; }
-.da-banner-actions { display: flex; gap: 8px; flex: none; }
-
-.da-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-  margin-bottom: 14px;
-}
-.da-card { padding: 16px; }
-.da-card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12px;
-}
-.da-card-head h3 { margin: 0; font-size: var(--fs-section); color: var(--fg-primary); }
-
-/* 双模式切换（按文件类型 / 按程序指定） */
-.da-mode-tabs {
-  display: inline-flex;
-  gap: 4px;
-  padding: 3px;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-btn);
-  background: var(--bg-input);
-}
-.da-mode-tab {
-  border: none;
-  background: transparent;
-  padding: 5px 12px;
-  border-radius: var(--radius-small);
-  font-size: var(--fs-secondary);
-  font-family: inherit;
-  color: var(--fg-secondary);
-  cursor: pointer;
-  transition: background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
-}
-.da-mode-tab.active { background: var(--bg-card-hover); color: var(--fg-primary); }
-.da-mode-tab:focus-visible { outline: 2px solid var(--accent-hover); outline-offset: 2px; }
-.da-program-types { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 10px; }
-.da-program-type {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--fs-secondary);
-  color: var(--fg-primary);
-  cursor: pointer;
-}
-
-.da-status-row, .da-pick-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 9px 0;
-  border-bottom: 1px solid var(--border-subtle);
-}
-.da-status-row:last-child, .da-pick-row:last-child { border-bottom: none; }
-.da-status-copy { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.da-status-copy strong { font-size: var(--fs-body); color: var(--fg-primary); font-weight: calc(600 * var(--font-weight-scale, 1)); }
-.da-status-copy span { font-size: var(--fs-meta); color: var(--fg-tertiary); }
-.da-status-value { font-size: var(--fs-secondary); color: var(--fg-secondary); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 55%; }
-.da-status-value.muted { color: var(--fg-tertiary); }
-.da-pick-select { min-width: 0; max-width: 55%; }
-
-.da-ucpd-row { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-subtle); }
-.da-ucpd-line, .da-policy-row { display: flex; align-items: center; gap: 10px; }
-.da-ucpd-hint { font-size: var(--fs-meta); color: var(--fg-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.da-policy-row { margin-top: 8px; }
-.da-hint { font-size: var(--fs-meta); color: var(--fg-tertiary); margin: 6px 0 0; }
-.da-expert-actions { display: flex; gap: 10px; margin-top: 10px; }
+/* ==================== v3.0.0 批次样式（网络检测） ==================== */
 
 /* ---------- 网络检测（netcheck- 域前缀） ---------- */
 .netcheck-list { display: flex; flex-direction: column; gap: 10px; }
@@ -8422,6 +8360,10 @@ body.lg-mode-frost .filter-tab.active .maint-tab-count {
 .netcheck-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 .netcheck-links { border-top: 1px solid var(--border-subtle); padding-top: 10px; }
 .netcheck-links-label { font-size: var(--fs-meta); color: var(--fg-tertiary); }
+/* v3.7.0 议题六 P1：网卡高级属性只读区（三级缩进区分「网卡 / 状态行 / 属性行」） */
+.nic-prop-head { color: var(--fg); font-weight: 600; margin-top: 6px; }
+.nic-prop-sub { color: var(--fg-tertiary); }
+.nic-prop-item { padding-left: 14px; }
 
 /* 全局白容器统一参数（v3.0，docs规范/系统维护任务卡参数.md）：
    46% 白玻璃底（--bg-card，各类既有定义）+ --border-default 描边（既有）+
@@ -8437,7 +8379,6 @@ body.lg-mode-frost .filter-tab.active .maint-tab-count {
 .appearance-card,
 .empty-state,
 .maint-card,
-.da-card,
 .startup-item,
 .checkup-row,
 .mem-region-row,

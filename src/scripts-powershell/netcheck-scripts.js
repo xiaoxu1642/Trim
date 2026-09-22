@@ -311,9 +311,67 @@ if ($gwOk -and $netOk) {
   $netItem.detail = '网关不可达（本地链路问题）'
 }
 
+# ---------- 7. 网卡高级属性（v3.7.0 议题六 P1：只读枚举）----------
+# 设计约束（方案 §7.5 第一阶段）：
+#   - 只枚举、不写入；本段不出现任何 Set- 开头的网卡命令。
+#   - Get-NetAdapter -Physical 只拿物理网卡，按 有线 / 无线 / 其他 分组。
+#   - 虚拟网卡（VPN、虚拟交换机、Hyper-V 等）单独列出并标 writable=$false，
+#     Trim 第一版不对其开放任何写入入口（RAINZ 的 -Name '*' 一刀切不能照抄）。
+#   - 属性表按驱动真实枚举生成（ValidDisplayValues 来自驱动），不硬编码「所有网卡都支持 X」。
+$nicProps = @{ physical = @(); virtual = @(); writableOnly = $true }
+
+function Get-NicKind($a) {
+  $pmt = [string]$a.PhysicalMediaType
+  $mt = [string]$a.MediaType
+  if ($pmt -match '802\.11|Wireless|Wi-?Fi' -or $mt -match 'Native 802\.11') { return 'wlan' }
+  if ($pmt -match '802\.3|Ethernet' -or $mt -match '802\.3') { return 'ethernet' }
+  return 'other'
+}
+
+foreach ($a in @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue)) {
+  $props = @()
+  foreach ($p in @(Get-NetAdapterAdvancedProperty -Name $a.Name -ErrorAction SilentlyContinue |
+      Where-Object { $_.DisplayName -and $_.DisplayValue })) {
+    $props += @([pscustomobject]@{
+      name = [string]$p.DisplayName
+      key = [string]$p.RegistryKeyword
+      value = [string]$p.DisplayValue
+      # 驱动支持的取值集合（第一版只用于展示；写入阶段才做目标值校验）
+      valid = @(@($p.ValidDisplayValues) | Where-Object { $_ })
+    })
+  }
+  # RSS / 校验和卸载 / 电源管理：单独三条只读状态，不与高级属性表混成一条命令
+  $rss = Get-NetAdapterRss -Name $a.Name -ErrorAction SilentlyContinue
+  $csum = Get-NetAdapterChecksumOffload -Name $a.Name -ErrorAction SilentlyContinue
+  $pmg = Get-NetAdapterPowerManagement -Name $a.Name -ErrorAction SilentlyContinue
+  $nicProps.physical += @([pscustomobject]@{
+    name = [string]$a.Name
+    desc = [string]$a.InterfaceDescription
+    status = [string]$a.Status
+    speed = [string]$a.LinkSpeed
+    kind = (Get-NicKind $a)
+    writable = $true
+    props = @($props)
+    rss = $(if ($rss) { [bool]$rss.Enabled } else { $null })
+    csum = $(if ($csum) { (@([string]$csum.Ipv4TransmitChecksum, [string]$csum.Ipv4ReceiveChecksum) -join '/') } else { '' })
+    pmOff = $(if ($pmg) { [bool]$pmg.AllowComputerToTurnOffDevice } else { $null })
+    wolMagic = $(if ($pmg) { [bool]$pmg.WakeOnMagicPacket } else { $null })
+  })
+}
+
+foreach ($a in @(Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object { $_.Virtual -eq $true })) {
+  $nicProps.virtual += @([pscustomobject]@{
+    name = [string]$a.Name
+    desc = [string]$a.InterfaceDescription
+    status = [string]$a.Status
+    # 红线：虚拟网卡不进入写入候选，渲染层据此隐藏所有写操作入口
+    writable = $false
+  })
+}
+
 $items = @($adapterItem, $ipItem, $dhcpItem, $dnsItem, $proxyItem, $netItem)
-$out = @{ items = $items; collectedAt = (Get-Date -Format 'o') }
-Write-Output ($out | ConvertTo-Json -Compress -Depth 6)
+$out = @{ items = $items; nicProps = $nicProps; collectedAt = (Get-Date -Format 'o') }
+Write-Output ($out | ConvertTo-Json -Compress -Depth 8)
 `;
 }
 

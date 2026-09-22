@@ -248,10 +248,8 @@ contextBridge.exposeInMainWorld('api', {
     importBg: () => ipcRenderer.invoke('appearance:bg-import'),
     deleteBg: (file) => ipcRenderer.invoke('appearance:bg-delete', { file }),
     listBg: () => ipcRenderer.invoke('appearance:bg-list'),
-    openBgDir: () => ipcRenderer.invoke('appearance:bg-open-dir'),
-    // 专家模式（v3.0 默认应用接管）：appearance.json 主进程真源，默认关闭
-    getExpert: () => ipcRenderer.invoke('appearance:get-expert'),
-    setExpert: (expertMode) => ipcRenderer.invoke('appearance:set-expert', { expertMode })
+    openBgDir: () => ipcRenderer.invoke('appearance:bg-open-dir')
+    // v3.7.0：专家模式（getExpert / setExpert）随「默认应用接管」一并退役，已移除
   },
 
   // AI 简介获取（按模块隔离：电脑优化中心 / 启动项管理 / 右键管理 各自使用所选模型）
@@ -345,22 +343,7 @@ contextBridge.exposeInMainWorld('api', {
     }
   },
 
-  // 默认应用接管（v3.0）：渲染层只传受支持的 key/progId，命令原文在主进程数据文件
-  defaultapps: {
-    status: () => ipcRenderer.invoke('defaultapps:status'),
-    listPrograms: () => ipcRenderer.invoke('defaultapps:list-programs'),
-    // v3.2.1：聚合加载（status+programs 持久缓存，refresh=true 强制重新采集）
-    loadAll: (refresh = false) => ipcRenderer.invoke('defaultapps:load-all', { refresh }),
-    applyXml: (entries) => ipcRenderer.invoke('defaultapps:apply-xml', { entries }),
-    removeXmlPolicy: () => ipcRenderer.invoke('defaultapps:remove-xml-policy'),
-    setUcpd: (disable, entries, originalStart) => ipcRenderer.invoke('defaultapps:set-ucpd', { disable, entries, originalStart }),
-    writeClass: (entries) => ipcRenderer.invoke('defaultapps:write-class', { entries }),
-    getState: () => ipcRenderer.invoke('defaultapps:get-state'),
-    // v3.6.5 M1-3：回执必须由调用方显式传入（主进程门禁的前提；不传即被拒）。
-    // 该通道当前无渲染层调用方，此处先把契约固定下来，将来接入时按注释的样例调用。
-    clearState: (confirmed) => ipcRenderer.invoke('defaultapps:clear-state', { confirmed }),
-    openSettings: () => ipcRenderer.invoke('defaultapps:open-settings')
-  },
+  // v3.7.0：「默认应用接管」整块退役（含 9 条 IPC 通道与专家模式），此处同步移除转发。
 
   // 网络检测（v3.0）：只读采集 + 白名单化一键修复（渲染层只传动作 id）
   netcheck: {

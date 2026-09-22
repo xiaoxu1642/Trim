@@ -163,6 +163,8 @@ if (-not (Get-ChildItem -LiteralPath $tempDir -ErrorAction SilentlyContinue)) {
   iops = $iops
   latency = [math]::Round($latencyAvg, 3)
   blockSize = $block
+  # v3.7.0 议题四：以下两项仅作结果标签回写，不参与 I/O —— 四个测试循环均为同步单流读写，
+  # 主进程传入的是常量 1/1。真实 QD 与线程数调节尚未实现。
   queueDepth = [int]$options.queueDepth
   threads = [int]$options.threads
   measured = $true

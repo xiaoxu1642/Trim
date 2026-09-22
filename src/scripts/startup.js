@@ -6,6 +6,13 @@
   let items = [];
   let filter = 'all';
   let loading = false;
+  // v3.7.0 议题二 P0：缓存来源与年龄（主进程 startup:scan 已回传 cached / cachedAt，
+  // 此前渲染层完全没用这两个字段，导致 6 天前的缓存被当成实时数据显示）。
+  let cacheInfo = { cached: false, cachedAt: 0 };
+  // 幽灵项：上一次展示过的条目在本次真实重扫后不再出现（Run 值/计划任务已被外部删除）
+  let ghosts = [];
+  // 静默后台重扫在途标记，避免重复触发
+  let silentScanning = false;
 
   const SOURCE_META = {
     registry: { label: '注册表', cls: 'reg', color: 'var(--accent)' },
@@ -26,9 +33,13 @@
   }
 
   function getFiltered() {
-    if (filter === 'all') return items;
-    if (filter === 'disabled') return items.filter(i => !i.enabled);
-    return items.filter(i => i.source === filter);
+    let base;
+    if (filter === 'all') base = items;
+    else if (filter === 'disabled') base = items.filter(i => !i.enabled);
+    else base = items.filter(i => i.source === filter);
+    // 幽灵项只在「全部」筛选下置底展示：它已不在当前系统里，不应污染分类/禁用筛选视图，
+    // 也不参与顶部计数（计数仍以真实存在的 items 为准）。
+    return (filter === 'all' && ghosts.length) ? base.concat(ghosts) : base;
   }
 
   // ==================== 防恢复机制 ====================
@@ -149,41 +160,98 @@
 
   // v3.2.1：refresh=false 优先读持久缓存（首启扫描一次落盘，之后一直读文件）；
   // true 强制重新扫描并覆盖缓存。启停/删除/添加后走 true 保证拿到最新状态。
-  async function scan(refresh = false) {
+  // CACHE_STALE_MS：缓存被视为"陈旧"的阈值。低于此值不打扰用户（也不触发后台重扫），
+  // 高于此值展示年龄横幅并静默后台重扫。
+  const CACHE_STALE_MS = 60 * 1000;
+
+  function formatAge(ms) {
+    if (!ms || ms < 0) return '未知时间';
+    const min = Math.floor(ms / 60000);
+    if (min < 1) return '刚刚';
+    if (min < 60) return `${min} 分钟`;
+    const hour = Math.floor(min / 60);
+    if (hour < 24) return `${hour} 小时`;
+    const day = Math.floor(hour / 24);
+    return day < 30 ? `${day} 天` : `${Math.floor(day / 30)} 个月`;
+  }
+
+  function renderCacheBanner() {
+    const banner = el('startupCacheBanner');
+    if (!banner) return;
+    // 仅当"当前屏幕上这批数据来自缓存且已陈旧"时提示；真实扫描后 cached=false 自动隐藏
+    const stale = cacheInfo.cached && (Date.now() - (cacheInfo.cachedAt || 0)) >= CACHE_STALE_MS;
+    banner.hidden = !stale;
+    if (!stale) return;
+    const text = el('startupCacheBannerText');
+    const btn = el('btnStartupRescanNow');
+    const busy = loading || silentScanning;
+    if (text) text.textContent = `当前列表数据来自 ${formatAge(Date.now() - (cacheInfo.cachedAt || 0))}前的扫描，可能与系统现状不一致`;
+    if (btn) { btn.disabled = busy; btn.textContent = busy ? '正在后台重新扫描…' : '立即重新扫描'; }
+  }
+
+  // silent=true：后台静默重扫（无骨架屏、无"扫描完成"Toast），用于消除缓存误导而不打断用户
+  async function scan(refresh = false, silent = false) {
     if (loading) return;
     if (!window.api?.startup?.scan) {
       renderError('启动项管理仅在 Electron 环境中可用');
       return;
     }
     loading = true;
-    setScanBusy(true);
+    if (silent) silentScanning = true;
+    setScanBusy(!silent);
+    renderCacheBanner();
     // 阶段二：扫描期间以骨架屏占位（ds.skeletonRows），完成后由 render()/renderError() 替换
     // 缓存命中时主进程立即返回，骨架屏一闪而过不影响体验
     const skeletonList = el('startupList');
-    if (skeletonList && window.ds && refresh) skeletonList.innerHTML = window.ds.skeletonRows(6);
+    if (skeletonList && window.ds && refresh && !silent) skeletonList.innerHTML = window.ds.skeletonRows(6);
     try {
       const resp = await window.api.startup.scan(refresh);
       if (!resp || !resp.success) {
+        // 静默重扫失败不覆盖屏幕上已有的（哪怕是缓存的）数据，只记日志
+        if (silent) { window.app?.log?.('warn', `启动项后台重扫失败: ${(resp && resp.message) || '未知原因'}`); return; }
         renderError((resp && resp.message) || '扫描启动项失败');
         return;
       }
-      items = Array.isArray(resp.data) ? resp.data : [];
+      const prevIds = new Set(items.map(i => i.id));
+      const next = Array.isArray(resp.data) ? resp.data : [];
       // 按 启用状态 -> 来源 -> 名称 排序，禁用项置底
-      items.sort((a, b) => {
+      next.sort((a, b) => {
         if (!!a.enabled !== !!b.enabled) return a.enabled ? -1 : 1;
         const src = (a.source || '').localeCompare(b.source || '');
         if (src) return src;
         return (a.name || '').localeCompare(b.name || '', 'zh');
       });
-      window.app?.toast('success', `扫描完成，共发现 ${items.length} 项启动项`);
+      // 幽灵项：本次为真实扫描（非缓存命中）且此前有数据时，凡旧列表有而新列表没有的，
+      // 说明它在系统里已不存在（应用卸载 / 任务被删）。此前这类项会照常显示为「启用」，
+      // 让用户去禁用一个不存在的目标（实测 YKLauncher、Google/Edge 更新任务即属此列）。
+      if ((!resp.cached) && prevIds.size) {
+        ghosts = items.filter(i => !next.some(n => n.id === i.id)).map(i => ({ ...i, _ghost: true }));
+      } else if (!resp.cached) {
+        ghosts = [];
+      }
+      items = next;
+      cacheInfo = { cached: !!resp.cached, cachedAt: resp.cachedAt || (resp.cached ? Date.now() : 0) };
       // 防恢复机制：黑名单拦截 + 顽固恢复计数（可能自动删除并刷新列表）
       await enforceStartupDefend();
       render();
+      if (!silent) window.app?.toast('success', `扫描完成，共发现 ${items.length} 项启动项`);
     } catch (e) {
+      if (silent) { window.app?.log?.('warn', `启动项后台重扫异常: ${e.message}`); return; }
       renderError(`扫描启动项失败: ${e.message}`);
     } finally {
       loading = false;
+      silentScanning = false;
       setScanBusy(false);
+      renderCacheBanner();
+    }
+  }
+
+  // v3.7.0 议题二 P0：进场先拿到缓存（瞬时），若缓存已陈旧则静默后台重扫覆盖。
+  // 政策本身未变（仍是"首启扫描一次后读缓存"），只是不再让缓存冒充实时数据。
+  async function load() {
+    await scan(false);
+    if (cacheInfo.cached && (Date.now() - (cacheInfo.cachedAt || 0)) >= CACHE_STALE_MS && !loading) {
+      void scan(true, true);
     }
   }
 
@@ -210,7 +278,8 @@
 
     const listEl = el('startupList');
     const filtered = getFiltered();
-    if (!items.length) {
+    // 真实项为空但仍有幽灵项时，也要把幽灵项渲染出来（否则用户看不到"它们已消失"这条信息）
+    if (!items.length && !ghosts.length) {
       listEl.innerHTML = window.emptyState
         ? window.emptyState({ icon: 'search', title: '尚未扫描启动项', desc: '扫描将检测启动文件夹、注册表 Run 键与计划任务中的开机自启项目', cta: { text: '立即扫描', target: 'btnScanStartup' } })
         : '<div class="empty-state"><p>点击右上角「扫描启动项」开始检测</p></div>';
@@ -225,10 +294,39 @@
 
     listEl.innerHTML = filtered.map(i => {
       const meta = SOURCE_META[i.source] || SOURCE_META.registry;
-      // 阶段三：徽章统一 design-system（ds-badge sm）；ds 缺席时回退旧标记
-      const badge = i.enabled
-        ? (window.ds ? window.ds.badgeHtml('ok', '启用', { small: true }) : '<span class="startup-badge on">启用</span>')
-        : (window.ds ? window.ds.badgeHtml('warn', '已禁用', { small: true }) : '<span class="startup-badge off">已禁用</span>');
+      // v3.7.0 议题二 P0：幽灵项（缓存里还在、本次真实重扫后系统中已消失）单独着色，
+      // 且不再给「禁用/启用/删除」按钮——目标已不存在，操作必然失败或误导。
+      if (i._ghost) {
+        const ghostBadge = window.ds
+          ? window.ds.badgeHtml('danger', '已从系统消失', { small: true })
+          : '<span class="startup-badge ghost">已从系统消失</span>';
+        const gLoc = i.location || (SOURCE_META[i.source] || SOURCE_META.registry).label;
+        return `
+        <div class="startup-item ghost" data-id="${escapeHtml(i.id)}" data-ghost="1">
+          <span class="startup-check" aria-hidden="true"></span>
+          <div class="startup-item-icon ${meta.cls}">
+            <svg class="startup-item-glyph" viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
+          </div>
+          <div class="startup-item-info">
+            <div class="startup-item-title">${escapeHtml(i.name || '未命名')} ${ghostBadge}</div>
+            <div class="startup-item-meta">${escapeHtml(gLoc)} · 本次扫描已不再出现该项，可能已被卸载或删除</div>
+          </div>
+          <div class="startup-item-ops"></div>
+        </div>`;
+      }
+      // v3.7.0 议题二 P2：徽章从两态扩到四态——让「谁禁的」可见。
+      // 此前只有「启用 / 已禁用」，被任务管理器禁用的项与被 Trim 禁用的项长得一样，
+      // 用户无法判断该去哪里改回来。
+      let badge;
+      if (i.enabled) {
+        badge = window.ds ? window.ds.badgeHtml('ok', '启用', { small: true }) : '<span class="startup-badge on">启用</span>';
+      } else if (i.disabledBy === 'trim') {
+        badge = window.ds ? window.ds.badgeHtml('warn', '已由 Trim 禁用', { small: true }) : '<span class="startup-badge off">已由 Trim 禁用</span>';
+      } else if (i.disabledBy === 'system') {
+        badge = window.ds ? window.ds.badgeHtml('warn', '已由系统禁用', { small: true }) : '<span class="startup-badge off">已由系统禁用</span>';
+      } else {
+        badge = window.ds ? window.ds.badgeHtml('warn', '已禁用', { small: true }) : '<span class="startup-badge off">已禁用</span>';
+      }
       const cmd = i.command || '';
       const loc = i.location || meta.label;
       const pub = i.publisher ? `<span class="startup-item-pub" data-tip="发布者">${escapeHtml(i.publisher)}</span>` : '';
@@ -479,6 +577,8 @@
     updateDefendToggleUI();
     // 「重新扫描」= 强制真实扫描并覆盖缓存（v3.2.1 缓存政策）
     el('btnScanStartup')?.addEventListener('click', () => scan(true));
+    // v3.7.0 议题二 P0：缓存年龄横幅上的一键重扫入口（与右上角按钮同一条真实扫描路径）
+    el('btnStartupRescanNow')?.addEventListener('click', () => scan(true));
     el('btnAddStartup')?.addEventListener('click', () => addItem());
     el('startupSelectAll')?.addEventListener('change', (e) => {
       el('startupList').querySelectorAll('.startup-item-check').forEach(c => {
@@ -541,5 +641,6 @@
     });
   }
 
-  window.startup = { init, load: scan };
+  // load：进场读缓存 → 缓存陈旧则静默后台重扫（v3.7.0 议题二 P0）
+  window.startup = { init, load };
 })();

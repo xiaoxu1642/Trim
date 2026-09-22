@@ -40,13 +40,13 @@ const SYNTAX_FILES = [
   'src/scripts-powershell/cleanup-scripts.js',
   'src/scripts-powershell/maintenance-scripts.js',
   'src/scripts-powershell/sysdisk-scripts.js',
-  'src/scripts-powershell/defaultapps-scripts.js',
+  // v3.7.0：defaultapps-scripts.js 随「默认应用接管」退役
   'src/scripts-powershell/netcheck-scripts.js',
   'src/scripts/app.js',
   'src/scripts/cleanup.js',
   'src/scripts/cleanup-fallback.generated.js',
   'src/scripts/ds.js',
-  'src/scripts/defaultapps.js',
+  // v3.7.0：defaultapps.js 随「默认应用接管」退役
   'src/scripts/netcheck.js',
   'src/scripts/optimizer.js',
   'src/scripts/overview.js',
@@ -1216,18 +1216,54 @@ check('D10：渲染层 risk 分级确认 + modal warning 层级 + confirmWarning
 
 // ==================== 5. 页面挂载检查 ====================
 console.log('[5/5] index.html 挂载检查');
-check('index.html 包含 maintenance 页面与脚本引用', () => {
+check('index.html 包含 maintenance 页面挂载', () => {
   const html = fs.readFileSync(abs('src/index.html'), 'utf8');
-  for (const needle of [
-    'id="page-maintenance"',
-    'scripts/maintenance.js',
-    'scripts/netspeed-detector.js'
-  ]) {
-    if (!html.includes(needle)) throw new Error('缺少 ' + needle);
+  if (!html.includes('id="page-maintenance"')) throw new Error('缺少 id="page-maintenance"');
+  // v3.7.0 议题五：maintenance.js / netspeed-detector.js 已改为按需加载，
+  // 不再出现在 index.html 的 <script> 列表里，改由 app.js 的 PAGE_SCRIPTS 按页注入。
+  const app = fs.readFileSync(abs('src/scripts/app.js'), 'utf8');
+  for (const needle of ['scripts/maintenance.js', 'scripts/netspeed-detector.js']) {
+    if (!app.includes(needle)) throw new Error('app.js 按需加载映射缺少 ' + needle);
   }
   for (const gone of ['page-bigfile', 'scripts/bigfile.js', 'disk-health', 'diskHealth']) {
     if (html.includes(gone)) throw new Error('已删除功能仍残留 ' + gone);
   }
+});
+
+// v3.7.0 议题五：渲染脚本按需加载的回归锚
+check('v3.7.0 渲染脚本按需加载：首屏裁剪 + 页面映射完整', () => {
+  const html = fs.readFileSync(abs('src/index.html'), 'utf8');
+  const app = fs.readFileSync(abs('src/scripts/app.js'), 'utf8');
+  // A 类：首屏必需，必须仍在 index.html
+  const FIRST_SCREEN = [
+    'scripts/theme-boot.js', 'scripts/splash.js', 'scripts/ds.js', 'scripts/theme.js',
+    'scripts/modal.js', 'scripts/xtable.js', 'scripts/icon-fallback.js', 'scripts/liquid-glass.js',
+    'scripts/cleanup-fallback.generated.js', 'scripts/cleanup.js', 'scripts/overview.js',
+    'scripts/deviceinfo.js', 'scripts/fontmanager.js', 'scripts/logger.js', 'scripts/app.js'
+  ];
+  for (const s of FIRST_SCREEN) {
+    if (!html.includes(`<script src="${s}"></script>`)) throw new Error('首屏脚本被误移除: ' + s);
+  }
+  // B 类：按需加载，必须已从 index.html 摘出，且必须在 app.js 的映射里出现
+  const LAZY = [
+    'scripts/finder.js', 'scripts/intro.js', 'scripts/modelpicker.js', 'scripts/pathbinding.js',
+    'scripts/contextmenu.js', 'scripts/netspeed-detector.js', 'scripts/netspeed.js', 'scripts/realtime.js',
+    'scripts/diskbench.js', 'scripts/sysrestore.js', 'scripts/optimizer.js', 'scripts/memoryclean.js',
+    'scripts/quickcmds-data.js', 'scripts/quickcmds.js', 'scripts/startup.js', 'scripts/maintenance.js',
+    'scripts/netcheck.js', 'scripts/runtimes.js', 'scripts/updater-ui.js',
+    'scripts/mouse-trail.js', 'scripts/tilt.js', 'scripts/spotlight.js'
+  ];
+  for (const s of LAZY) {
+    if (html.includes(`<script src="${s}"></script>`)) throw new Error('按需加载脚本仍留在 index.html: ' + s);
+    if (!app.includes(s)) throw new Error('app.js 缺少按需加载映射: ' + s);
+  }
+  // 加载器三件套与去重语义
+  for (const needle of ['function loadScript(', 'async function ensurePageScripts(', 'function initModuleOf(', 'function scheduleIdleLoads(']) {
+    if (!app.includes(needle)) throw new Error('app.js 缺少按需加载设施 ' + needle);
+  }
+  // 首屏脚本数上限：超过 16 个说明又有人把脚本塞回 index.html
+  const count = (html.match(/<script src="scripts\//g) || []).length;
+  if (count > 16) throw new Error('首屏 <script> 数量回涨到 ' + count + '（按需加载收益被吃掉）');
 });
 
 // ==================== 6. v2.6.0 批次（优化中心安全增强 / 系统体检 / 多线路更新 / 便携模式） ====================
@@ -1442,43 +1478,10 @@ check('M1-1: 未引入免验签应急开关（用户已否决）', () => {
   }
 });
 
-check('M1-2: apply-xml 已消除冗余 needAdmin 分支', () => {
-  const mainSrc = fs.readFileSync(abs('main.js'), 'utf8');
-  const from = mainSrc.indexOf('defaultapps:apply-xml');
-  const to = mainSrc.indexOf('defaultapps:remove-xml-policy');
-  if (from < 0 || to < 0 || to < from) throw new Error('apply-xml 段定位失败');
-  const seg = mainSrc.slice(from, to);
-  // 必须先剥掉整行注释：合并分支的说明注释里就含有 needAdmin: true 字面量，直接全文正则会把注释算成一处
-  const code = seg.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
-  if (code.includes('/管理员|administrator|denied|拒绝/i')) throw new Error('自相矛盾的双分支判据仍在');
-  const n = (code.match(/needAdmin: true/g) || []).length;
-  if (n !== 2) throw new Error('apply-xml 段 needAdmin 应为 2 处（合并分支 + catch），实际 ' + n);
-});
-
-check('M1-3: clear-state 具备服务端确认回执门禁', () => {
-  const mainSrc = fs.readFileSync(abs('main.js'), 'utf8');
-  const from = mainSrc.indexOf('defaultapps:clear-state');
-  const to = mainSrc.indexOf('defaultapps:open-settings');
-  if (from < 0 || to < 0 || to < from) throw new Error('clear-state 段定位失败');
-  const seg = mainSrc.slice(from, to);
-  if (!seg.includes('confirmed !== true')) throw new Error('clear-state 缺少回执门禁');
-  if (!seg.includes('needConfirm: true')) throw new Error('clear-state 拒绝时未回传 needConfirm');
-  if (!seg.includes('flushLogSync')) throw new Error('危险操作前未刷盘');
-});
-
-check('M1-3: preload clearState 已传回执参数', () => {
-  const preloadSrc = fs.readFileSync(abs('preload.js'), 'utf8');
-  if (!/clearState:\s*\(confirmed\)\s*=>\s*ipcRenderer\.invoke\('defaultapps:clear-state',\s*\{\s*confirmed\s*\}\)/.test(preloadSrc)) {
-    throw new Error('preload.clearState 未传递 confirmed（门禁会永久拒绝该通道）');
-  }
-});
-
-check('M1-3: 回归防护——clear-state 不得混入只读白名单', () => {
-  const mainSrc = fs.readFileSync(abs('main.js'), 'utf8');
-  const m = mainSrc.match(/const SIDE_EFFECT_FREE = new Set\(\[([\s\S]*?)\]\);/);
-  if (!m) throw new Error('未找到 SIDE_EFFECT_FREE 白名单');
-  if (m[1].includes("'defaultapps:clear-state'")) throw new Error('clear-state 混入 SIDE_EFFECT_FREE');
-});
+// v3.7.0：「默认应用接管」整体退役，原 M1-2 / M1-3 四条 check（apply-xml needAdmin 归并、
+// clear-state 回执门禁、preload 传参、SIDE_EFFECT_FREE 回归防护）随通道一并删除。
+// 这些 check 用 indexOf('通道A') → indexOf('通道B') 取段，端点字符串消失即会抛
+// 「段定位失败」，故必须与 main.js / preload.js 的通道删除同批消失（不可先删一端）。
 
 check('火眼眼审查修复：settings:save 全 URL 字段 SSRF 校验', () => {
   const mainSrc = fs.readFileSync(abs('main.js'), 'utf8');
@@ -1863,9 +1866,16 @@ check('启动页结构与脚本引用（任务3）', () => {
   for (const id of ['id="splash"', 'id="splash-trim"', 'id="splash-canvas"', 'id="splash-enter"']) {
     if (!html.includes(id)) throw new Error('index.html 缺少启动页结构 ' + id);
   }
-  const splashIdx = html.indexOf('<script src="scripts/splash.js"></script>');
-  const trailIdx = html.indexOf('<script src="scripts/mouse-trail.js"></script>');
-  if (splashIdx === -1 || trailIdx === -1 || splashIdx > trailIdx) throw new Error('splash.js 必须在 body 末尾脚本中最先加载');
+  // v3.7.0 议题五：mouse-trail.js 已移出 index.html（首帧空闲加载），
+  // 这里改为断言它落在 app.js 的 IDLE_SCRIPTS 里，且 splash.js 仍是 body 末尾脚本的第一个。
+  const app = fs.readFileSync(abs('src/scripts/app.js'), 'utf8');
+  if (html.indexOf('<script src="scripts/splash.js"></script>') === -1) throw new Error('缺少 splash.js 脚本引用');
+  if (!app.includes('scripts/mouse-trail.js')) throw new Error('mouse-trail.js 应改由 app.js 空闲加载');
+  const bodyTail = html.slice(html.lastIndexOf('<div class="usage-modal"'));
+  const firstScript = bodyTail.indexOf('<script src="scripts/');
+  if (firstScript === -1 || !bodyTail.slice(firstScript).startsWith('<script src="scripts/splash.js">')) {
+    throw new Error('splash.js 必须在 body 末尾脚本中最先加载');
+  }
   const js = fs.readFileSync(abs('src/scripts/splash.js'), 'utf8');
   for (const needle of ['.titlebar-title', 'trim_splash_seen', 'prefers-reduced-motion', 'webgl2', 'transitionend']) {
     if (!js.includes(needle)) throw new Error('splash.js 缺少 ' + needle);
@@ -2081,67 +2091,243 @@ check('v3.0 启动页进入编排：淡出前解除 fill:both 动画占用', () 
   if (!seg.includes("trimEl.style.animation = 'none'")) throw new Error('trimEl 的 animation 解除被动到');
 });
 
-check('v3.0 默认应用接管 / 网络检测：页面挂载与 IPC 双侧对齐', () => {
+check('v3.0 网络检测：页面挂载与 IPC 双侧对齐', () => {
   const html = fs.readFileSync(abs('src/index.html'), 'utf8');
   // 导航项与页面容器成对
-  for (const p of ['defaultapps', 'netcheck']) {
-    if (!html.includes(`data-page="${p}"`)) throw new Error('index.html 缺少导航项 data-page=' + p);
-    if (!html.includes(`id="page-${p}"`)) throw new Error('index.html 缺少页面容器 page-' + p);
-  }
+  if (!html.includes('data-page="netcheck"')) throw new Error('index.html 缺少导航项 data-page=netcheck');
+  if (!html.includes('id="page-netcheck"')) throw new Error('index.html 缺少页面容器 page-netcheck');
   // netcheck 必须挂在测速父项的子菜单里
   const submenu = html.slice(html.indexOf('data-nav-submenu="speed"'), html.indexOf('</div>', html.indexOf('data-nav-submenu="speed"')));
   if (!submenu.includes('data-page="netcheck"')) throw new Error('网络检测未挂进测速父项子菜单');
-  // script 标签（ds.js 之后、app.js 之前）
-  for (const s of ['scripts/defaultapps.js', 'scripts/netcheck.js']) {
-    if (!html.includes(`<script src="${s}"></script>`)) throw new Error('index.html 缺少 script 引用 ' + s);
-  }
-  const appIdx = html.indexOf('<script src="scripts/app.js"></script>');
-  for (const s of ['scripts/defaultapps.js', 'scripts/netcheck.js']) {
-    if (html.indexOf(`<script src="${s}"></script>`) > appIdx) throw new Error(s + ' 必须在 app.js 之前加载');
-  }
+  // v3.7.0：netcheck.js 改为按需加载，不再出现在 index.html，改由 app.js 的 PAGE_SCRIPTS 注入
+  const app = fs.readFileSync(abs('src/scripts/app.js'), 'utf8');
+  if (!app.includes('scripts/netcheck.js')) throw new Error('app.js 按需加载映射缺少 scripts/netcheck.js');
   // preload 命名空间白名单
   const preloadSrc = fs.readFileSync(abs('preload.js'), 'utf8');
-  for (const ch of ['defaultapps:status', 'defaultapps:list-programs', 'defaultapps:apply-xml',
-    'defaultapps:remove-xml-policy', 'defaultapps:set-ucpd', 'defaultapps:write-class',
-    'defaultapps:get-state', 'defaultapps:open-settings', 'netcheck:collect', 'netcheck:repair',
-    'appearance:get-expert', 'appearance:set-expert']) {
+  for (const ch of ['netcheck:collect', 'netcheck:repair']) {
     if (!preloadSrc.includes(`'${ch}'`)) throw new Error('preload.js 缺少通道 ' + ch);
   }
   // main.js 注册对齐 + 只读白名单收口
   const mainSrc = fs.readFileSync(abs('main.js'), 'utf8');
-  for (const ch of ['defaultapps:status', 'defaultapps:list-programs', 'defaultapps:apply-xml',
-    'defaultapps:remove-xml-policy', 'defaultapps:set-ucpd', 'defaultapps:write-class',
-    'defaultapps:get-state', 'defaultapps:open-settings', 'netcheck:collect', 'netcheck:repair',
-    'appearance:get-expert', 'appearance:set-expert']) {
+  for (const ch of ['netcheck:collect', 'netcheck:repair']) {
     if (!mainSrc.includes(`'${ch}'`)) throw new Error('main.js 缺少通道 ' + ch);
   }
   // 写类通道绝不能混入只读白名单
   const roMatch = mainSrc.match(/const SIDE_EFFECT_FREE = new Set\(\[([\s\S]*?)\]\);/);
   if (!roMatch) throw new Error('SIDE_EFFECT_FREE 白名单缺失');
-  for (const ch of ['defaultapps:apply-xml', 'defaultapps:set-ucpd', 'defaultapps:write-class',
-    'defaultapps:remove-xml-policy', 'netcheck:repair', 'appearance:set-expert']) {
-    if (roMatch[1].includes(`'${ch}'`)) throw new Error('写通道混入 SIDE_EFFECT_FREE: ' + ch);
-  }
-  // C 路径必须零哈希：类级关联写入，不允许再出现 UserChoice 哈希计算
-  const daSrc = fs.readFileSync(abs('src/scripts-powershell/defaultapps-scripts.js'), 'utf8');
-  if (/Get-UserChoiceHash|MD5CryptoServiceProvider|ToBase64String/.test(daSrc)) {
-    throw new Error('defaultapps-scripts 不应再包含哈希计算（v3.0 已改为类级关联写入）');
-  }
-  if (!daSrc.includes('function writeClass')) throw new Error('defaultapps-scripts 缺少类级关联写入 writeClass');
-  // 渲染层双模式（按文件类型 / 按程序指定）
-  const html2 = html;
-  if (!html2.includes('data-da-mode="program"') || !html2.includes('id="daProgramSelect"')) {
-    throw new Error('默认应用页缺少「按程序指定」模式结构');
-  }
-  // UCPD 不再随批量服务优化项禁用（与「默认应用接管」统一管理）
-  const optSrc = fs.readFileSync(abs('src/scripts-powershell/optimizer-scripts.js'), 'utf8');
-  const svcBlock = optSrc.slice(optSrc.indexOf("id: 'tf_svc_extra5'"), optSrc.indexOf("id: 'tf_ctx_copymove'"));
-  if (/["']UCPD["']/.test(svcBlock)) throw new Error('tf_svc_extra5 仍包含 UCPD（应已剔出）');
-  // 渲染层只传动作 id / 白名单 key：netcheck 修复不得接受渲染层传命令或网卡名
+  if (roMatch[1].includes("'netcheck:repair'")) throw new Error('写通道混入 SIDE_EFFECT_FREE: netcheck:repair');
+  // 渲染层只传动作 id：netcheck 修复不得接受渲染层传命令或网卡名
   const ncMain = mainSrc.slice(mainSrc.indexOf('netcheck:repair'), mainSrc.indexOf('netcheck:repair') + 1600);
   if (!ncMain.includes('netcheckSnapshot.find') || !ncMain.includes('NETCHECK_SCRIPT.repair')) {
     throw new Error('netcheck:repair 未走检测快照白名单链路');
   }
+});
+
+// 原挂在「默认应用接管」check 里的两条无关保护，功能退役后单独成锚（不可随删）：
+// UCPD 属系统防篡改保护层，本产品不禁用——这条裁定与默认应用页面无关，必须保留。
+check('UCPD 裁定守卫：批量服务优化项不得禁用 UCPD', () => {
+  const optSrc = fs.readFileSync(abs('src/scripts-powershell/optimizer-scripts.js'), 'utf8');
+  const svcBlock = optSrc.slice(optSrc.indexOf("id: 'tf_svc_extra5'"), optSrc.indexOf("id: 'tf_ctx_copymove'"));
+  if (/["']UCPD["']/.test(svcBlock)) throw new Error('tf_svc_extra5 仍包含 UCPD（应已剔出）');
+});
+
+// v3.7.0 议题六 P0：还原方向也要回读（成功 ≠ 已恢复）
+check('v3.7.0 优化项还原后逐项回读（partial 不得销账）', () => {
+  const main = fs.readFileSync(abs('main.js'), 'utf8');
+  for (const needle of ['async function verifyOptionRestored(', 'async function readRegValuesForVerify(']) {
+    if (!main.includes(needle)) throw new Error('main.js 缺少 ' + needle);
+  }
+  // 定位还原分支：verify === 'partial' 时必须先返回，不能走到 OPT_STATE.remove
+  const from = main.indexOf('if (isRestoreRun) {');
+  if (from < 0) throw new Error('未找到 isRestoreRun 分支');
+  const seg = main.slice(from, from + 1600);
+  if (!seg.includes("rverify === 'partial'")) throw new Error('还原分支未做回读判定');
+  const partialIdx = seg.indexOf("rverify === 'partial'");
+  const removeIdx = seg.indexOf('OPT_STATE.remove(optionId)');
+  if (removeIdx < 0) throw new Error('还原分支缺少销账调用');
+  if (removeIdx < partialIdx) throw new Error('partial 分支未拦截销账（还原未生效却清掉了备份记录）');
+  // partial 要保留备份 + 如实告知
+  if (!seg.includes('还原已执行但未完全生效')) throw new Error('partial 未给出可重试提示');
+  // 三态齐全：pass / partial / unknown
+  if (!seg.includes("rverify === 'unknown'")) throw new Error('缺少 unknown 分支（无检测手段时应照实说明，不得伪造 pass）');
+  // 渲染层：还原方向同样要把 partial 摆到用户面前（复用既有的 verify 提示）
+  const rnd = fs.readFileSync(abs('src/scripts/optimizer.js'), 'utf8');
+  if (!rnd.includes("resp.verify === 'partial'")) throw new Error('optimizer.js 未展示回读不符');
+});
+
+// v3.7.0 议题二：启动项 StartupApproved 同轨 + 缓存年龄横幅 + 幽灵项标记
+check('v3.7.0 启动项：StartupApproved 读判定（不得再硬编码 enabled）', () => {
+  const src = fs.readFileSync(abs('src/scripts-powershell/startup-scripts.js'), 'utf8');
+  // 扫描侧必须读 StartupApproved，并按首字节 bit0 定 enabled（无 blob 回落启用）
+  for (const needle of ['StartupApproved', 'Get-ApprovedDisabled', '-band 1']) {
+    if (!src.includes(needle)) throw new Error('startup-scripts.js 缺少 StartupApproved 判定要素: ' + needle);
+  }
+  // 注册表项与启动文件夹项此前是 `enabled = $true` 硬编码，必须消失
+  const scanSeg = src.slice(0, src.indexOf('// ---------- 启停脚本 ----------'));
+  if (/enabled\s*=\s*\$true/.test(scanSeg)) throw new Error('扫描侧仍存在 enabled = $true 硬编码');
+  // 折叠的 disabledBy 三态：system（系统/任务管理器）/ trim（Trim 自己）/ ''
+  if (!src.includes("disabledBy = 'trim'")) throw new Error('缺少 Trim 禁用标记');
+  if (!/disabledBy = \$\(if .*'system'/.test(src)) throw new Error('缺少系统禁用标记（disabledBy = system 分支）');
+  if ((src.match(/disabledBy = /g) || []).length < 4) throw new Error('disabledBy 覆盖不全（registry/folder/task/记录 四处）');
+  // 写入侧：禁保留 Run 值 + 写 blob；启清 bit0
+  for (const needle of ['function Set-ApprovedBit', 'function Get-ApprovedKeyPath', '-bor 1', '-band 0xFE']) {
+    if (!src.includes(needle)) throw new Error('启停侧缺少 StartupApproved 同轨要素: ' + needle);
+  }
+  // 禁用成功分支不得再走 Remove-ItemProperty 删值（只在 blob 写入失败的回退里允许）
+  const disableOk = src.indexOf("message = '已禁用（注册表值保留，可随时还原）'");
+  if (disableOk < 0) throw new Error('缺少「保留注册表值」的禁用成功分支');
+  // 启用失败回退到记录回写：值已被旧版删除时仍需能恢复
+  if (!src.includes('缺少启用记录，且注册表中已无该项')) throw new Error('缺少旧版删值条目的启用回退');
+});
+
+check('v3.7.0 回归锚：PS 脚本布尔占位必须写成 $true/$false', () => {
+  // 实测：PowerShell 没有裸 true/false 字面量。`$enable = true` 在 SilentlyContinue 下
+  // 静默失败并留下 $null → if ($enable) 恒为假 → 启用分支从未执行（启动项「启用」一直是失效的）。
+  // 该坑极易复发，故全仓扫描拦截。
+  const dir = abs('src/scripts-powershell');
+  for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.js'))) {
+    const c = fs.readFileSync(path.join(dir, f), 'utf8');
+    const m = c.match(/\.replace\('__([A-Z_]+)__',\s*([^)]*?)\)/g) || [];
+    for (const call of m) {
+      if (/\?\s*'(true|false)'\s*:\s*'(true|false)'/.test(call)) {
+        throw new Error(f + ' 的布尔占位替换用了裸 true/false（PowerShell 会静默吞掉）: ' + call);
+      }
+    }
+  }
+});
+
+check('v3.7.0 议题六 P1：Windows Update 三态（启用/暂停到日期/彻底禁用）', () => {
+  const opt = fs.readFileSync(abs('src/scripts-powershell/optimizer-scripts.js'), 'utf8');
+  const main = fs.readFileSync(abs('main.js'), 'utf8');
+  // 三态必须同时存在：暂停为主路径（动态档位）、启用为清理、彻底禁用为高危
+  for (const needle of ["id: 'perf_wu_pause'", "id: 'perf_wu_enable'", "id: 'perf_windows_update_off'"]) {
+    if (!opt.includes(needle)) throw new Error('优化项清单缺少 ' + needle);
+  }
+  // 彻底禁用必须是 high 且带红色确认（不得还停留在 medium）
+  const offSeg = opt.slice(opt.indexOf("id: 'perf_windows_update_off'"), opt.indexOf("id: 'perf_wu_pause'"));
+  if (!/risk:\s*'high'/.test(offSeg)) throw new Error('perf_windows_update_off 未升级为 high 风险');
+  if (!offSeg.includes('restore:')) throw new Error('perf_windows_update_off 缺少还原步骤');
+  // 暂停：动态生成 + 服务端校验天数，渲染层不得透传任意 key/value
+  if (!opt.includes('function windowsUpdatePauseSteps')) throw new Error('缺少 windowsUpdatePauseSteps');
+  if (!opt.includes('WU_PAUSE_MAX_DAYS')) throw new Error('缺少 WU_PAUSE_MAX_DAYS');
+  if (!/windowsUpdatePauseSteps,\s*WU_PAUSE_KEYS,\s*WU_PAUSE_MAX_DAYS/.test(opt)) throw new Error('暂停相关导出未挂到 module.exports');
+  if (!main.includes('OPTIMIZER.WU_PAUSE_MAX_DAYS')) throw new Error('main.js 未对暂停天数做服务端校验');
+  if (!main.includes('OPTIMIZER.windowsUpdatePauseSteps(days)')) throw new Error('main.js 未接入动态暂停步骤');
+  // 高危门禁：彻底禁用要进双侧名单，否则红色确认会被架空
+  if (!/OPTIMIZER_HAZARD_IDS = new Set\(\[[\s\S]{0,400}?'perf_windows_update_off'/.test(main)) {
+    throw new Error('main.js 的高危名单未包含 perf_windows_update_off');
+  }
+  const rnd = fs.readFileSync(abs('src/scripts/optimizer.js'), 'utf8');
+  const hazSeg = rnd.slice(rnd.indexOf('HAZARD_OPTION_IDS = new Set'), rnd.indexOf(']);', rnd.indexOf('HAZARD_OPTION_IDS = new Set')));
+  if (!hazSeg.includes("'perf_windows_update_off'")) throw new Error('渲染层高危名单未包含 perf_windows_update_off');
+  // 暂停不停 wuauserv / UsoSvc / BITS（这三个被商店与 Defender 更新复用，不是暂停的必要条件）
+  // 取到下一个分节注释为止：再往后就是 tf_svc_bulk 商店分支，它合法地含 wuauserv
+  const pauseFrom = opt.indexOf('function windowsUpdatePauseSteps');
+  const pauseTo = opt.indexOf('\n// =====', pauseFrom);
+  const pauseRaw = opt.slice(pauseFrom, pauseTo < 0 ? pauseFrom + 2000 : pauseTo);
+  const pauseSeg = pauseRaw.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+  if (/wuauserv|UsoSvc|Set-Service/.test(pauseSeg)) throw new Error('暂停步骤不应停用更新相关服务');
+});
+
+check('v3.7.0 议题六 P1：Defender 低风险拆项且不共用注册表键', () => {
+  const opt = fs.readFileSync(abs('src/scripts-powershell/optimizer-scripts.js'), 'utf8');
+  // 高危总项不得再写样本提交键（否则与新的低风险项互相覆盖）
+  // 先剥整行注释：拆项说明注释里会提到键名，直接全文匹配会把注释算成违规
+  const defRaw = opt.slice(opt.indexOf("id: 'tf_defender'"), opt.indexOf('v3.7.0 议题六 P1：Defender 低风险分项'));
+  const defSeg = defRaw.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+  if (defSeg.includes('SubmitSamplesConsent')) throw new Error('tf_defender 仍写 SubmitSamplesConsent（会与低风险项冲突）');
+  // 注意按「键名」判定而非子串：tf_defender 的 LocalSettingOverrideSpynetReporting
+  // 是另一个键，含 SpynetReporting 子串但并非 MAPS 报告级别键，不能误报。
+  if (/'SpynetReporting'/.test(defSeg)) throw new Error('tf_defender 仍写 SpynetReporting（会与 MAPS 项冲突）');
+  // 两个低风险项必须存在且可独立还原
+  for (const id of ['privacy_defender_cloud', 'privacy_defender_sample']) {
+    const i = opt.indexOf("id: '" + id + "'");
+    if (i < 0) throw new Error('缺少低风险拆项 ' + id);
+    const seg = opt.slice(i, i + 1400);
+    if (!/risk:\s*'low'/.test(seg)) throw new Error(id + ' 不是 low 风险');
+    if (!seg.includes('restore:')) throw new Error(id + ' 缺少还原步骤');
+  }
+  // 实时保护 / 行为监控 / SmartScreen 不得被拆进低风险项（把它们做成"顺手一点"的开关是危险的）
+  const splitSeg = opt.slice(opt.indexOf('v3.7.0 议题六 P1：Defender 低风险分项'), opt.indexOf('v3.7.0 议题六 P1：Defender 低风险分项') + 3200);
+  for (const risky of ['DisableRealtimeMonitoring', 'DisableBehaviorMonitoring', 'EnableSmartScreen', 'DisableAntiSpyware']) {
+    if (splitSeg.includes(risky)) throw new Error('低风险拆项里出现了防护能力开关: ' + risky);
+  }
+});
+
+check('v3.7.0 议题六 P1：网卡高级属性只读枚举（虚拟网卡禁写）', () => {
+  const nc = fs.readFileSync(abs('src/scripts-powershell/netcheck-scripts.js'), 'utf8');
+  const html = fs.readFileSync(abs('src/index.html'), 'utf8');
+  const rnd = fs.readFileSync(abs('src/scripts/netcheck.js'), 'utf8');
+  // 只读枚举：只拿物理网卡，虚拟网卡单独列出
+  for (const needle of ['Get-NetAdapter -Physical', 'Get-NetAdapterAdvancedProperty', 'ValidDisplayValues', 'nicProps']) {
+    if (!nc.includes(needle)) throw new Error('netcheck-scripts.js 缺少网卡枚举要素: ' + needle);
+  }
+  // RSS / 校验卸载 / 电源管理分开三条只读命令，不与高级属性表混成一条
+  for (const needle of ['Get-NetAdapterRss', 'Get-NetAdapterChecksumOffload', 'Get-NetAdapterPowerManagement']) {
+    if (!nc.includes(needle)) throw new Error('缺少只读状态区命令: ' + needle);
+  }
+  // 红线：本段不得出现任何写入型网卡命令
+  const seg = nc.slice(nc.indexOf('网卡高级属性（v3.7.0'), nc.indexOf('$items = @('));
+  if (/Set-NetAdapter|Enable-NetAdapter|Disable-NetAdapter|Restart-NetAdapter/.test(seg)) {
+    throw new Error('只读枚举段出现了写入型网卡命令');
+  }
+  if (!/writable\s*=\s*\$false/.test(seg)) throw new Error('虚拟网卡未标记 writable = $false');
+  // 渲染层：容器 + 只读渲染函数 + 不提供写入入口
+  if (!html.includes('id="netcheckNicProps"')) throw new Error('index.html 缺少网卡只读区容器');
+  for (const needle of ['renderNicProps', 'nicProps =', '只读']) {
+    if (!rnd.includes(needle)) throw new Error('netcheck.js 缺少网卡只读渲染接线: ' + needle);
+  }
+});
+
+check('v3.7.0 启动项：缓存年龄横幅 + 幽灵项标记已接线', () => {
+  const rnd = fs.readFileSync(abs('src/scripts/startup.js'), 'utf8');
+  const html = fs.readFileSync(abs('src/index.html'), 'utf8');
+  const css = fs.readFileSync(abs('src/styles/main.css'), 'utf8');
+  // 主进程早就回传 cached / cachedAt，此前渲染层完全没用 → 缓存被当成实时数据
+  for (const needle of ['cacheInfo', 'cachedAt', 'formatAge', 'renderCacheBanner', 'scan(true, true)']) {
+    if (!rnd.includes(needle)) throw new Error('startup.js 缺少缓存年龄要素: ' + needle);
+  }
+  // 幽灵项：真实重扫后不再出现的旧条目要标出来，而不是照常列出让人去禁用不存在的目标
+  for (const needle of ['_ghost', '已从系统消失', 'ghosts =']) {
+    if (!rnd.includes(needle)) throw new Error('startup.js 缺少幽灵项要素: ' + needle);
+  }
+  for (const needle of ['id="startupCacheBanner"', 'id="btnStartupRescanNow"']) {
+    if (!html.includes(needle)) throw new Error('index.html 缺少 ' + needle);
+  }
+  if (!css.includes('.startup-cache-banner')) throw new Error('main.css 缺少 .startup-cache-banner 样式');
+  // 徽章四态：启用 / 已由 Trim 禁用 / 已由系统禁用 / 已从系统消失
+  for (const needle of ['已由 Trim 禁用', '已由系统禁用', '已从系统消失']) {
+    if (!rnd.includes(needle)) throw new Error('startup.js 缺少徽章态: ' + needle);
+  }
+});
+
+// v3.7.0：「默认应用接管」退役回归锚——页面 / 脚本 / IPC / 专家模式都不得再出现
+check('v3.7.0 默认应用接管已彻底退役（页面 / 脚本 / IPC / 专家模式）', () => {
+  const html = fs.readFileSync(abs('src/index.html'), 'utf8');
+  const mainSrc = fs.readFileSync(abs('main.js'), 'utf8');
+  const preloadSrc = fs.readFileSync(abs('preload.js'), 'utf8');
+  const css = fs.readFileSync(abs('src/styles/main.css'), 'utf8');
+  const app = fs.readFileSync(abs('src/scripts/app.js'), 'utf8');
+  for (const gone of ['page-defaultapps', 'data-page="defaultapps"', 'scripts/defaultapps.js', 'expertModeToggle']) {
+    if (html.includes(gone)) throw new Error('index.html 仍残留 ' + gone);
+  }
+  // 先剥掉整行注释：退役说明里会提到被删通道的名字，直接全文匹配会把注释算成残留
+  const mainCode = mainSrc.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+  for (const gone of ['defaultapps:', 'appearance:get-expert', 'appearance:set-expert', 'expertMode']) {
+    if (mainCode.includes(gone)) throw new Error('main.js 仍残留 ' + gone);
+  }
+  const preloadCode = preloadSrc.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+  for (const gone of ['defaultapps:', 'getExpert', 'setExpert']) {
+    if (preloadCode.includes(gone)) throw new Error('preload.js 仍残留 ' + gone);
+  }
+  // 红线 2：全局白容器组选择器里的 .da-card 必须已剔除，但同组的 .card / .startup-item 不能被动到
+  if (/\.da-/.test(css)) throw new Error('main.css 仍残留 .da- 样式');
+  for (const keep of ['.startup-item,', '.checkup-row,', '.summary-card,']) {
+    if (!css.includes(keep)) throw new Error('main.css 全局白容器组被误删: ' + keep);
+  }
+  if (/\bdefaultapps\b/.test(app)) throw new Error('app.js 仍残留 defaultapps 引用');
+  if (fs.existsSync(abs('src/scripts/defaultapps.js'))) throw new Error('src/scripts/defaultapps.js 未删除');
+  if (fs.existsSync(abs('src/scripts-powershell/defaultapps-scripts.js'))) throw new Error('defaultapps-scripts.js 未删除');
 });
 
 // ==================== 9. 注册表键归属校验（M4/M5，2026-09-14 重复点审查） ====================
@@ -2231,11 +2417,10 @@ check('S4：特权操作服务端 isAdmin + needAdmin 门禁统一（OPT/PE/MA/S
   }
 });
 
-check('S6：外设写前备份 + 默认应用记录原 ProgId + 还原点补记账备份', () => {
+// v3.7.0：删掉「默认应用记录原 ProgId」两行（该段随功能退役），check 名同步改为只覆盖外设与还原点。
+check('S6：外设写前备份 + 还原点补记账备份', () => {
   const pv = fs.readFileSync(abs('src/scripts-powershell/peripheral-scripts.js'), 'utf8');
   if (!pv.includes('peripheral-backup')) throw new Error('外设 APPLY 未写前备份（PE-5）');
-  const da = fs.readFileSync(abs('src/scripts-powershell/defaultapps-scripts.js'), 'utf8');
-  if (!da.includes('原 ProgId')) throw new Error('write-class 未记录原 ProgId（DA-3）');
   const main = fs.readFileSync(abs('main.js'), 'utf8');
   if (!/SR-3|OPT_STATE/.test(main)) throw new Error('create-restore 未补记账/备份（SR-3）');
 });

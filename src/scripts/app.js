@@ -114,6 +114,93 @@
     return expanded;
   }
 
+  // ==================== 渲染脚本按需加载（v3.7.0 议题五） ====================
+  // 改造前：38 个 <script> 全部同步加载、全部在启动时 init()，首屏解析 ~813 KB，
+  // 其中磁盘测速、网络检测、运行库修复、快捷指令等页面用户可能永远不进。
+  // 改造后：非首屏脚本从 index.html 摘出，进入对应页面（或首帧空闲）时动态注入。
+  // 选型说明：动态 <script> 注入与现有 CSP（script-src 'self'）完全兼容，
+  // 无需把 25 个 IIFE 改成 ESM、无需构建步骤、零新增依赖（AGENTS.md §5 红线）。
+  // 数组内按依赖顺序排列，先加载的先执行（如 modelpicker ← intro ← contextmenu）。
+  const PAGE_SCRIPTS = {
+    // 磁盘清理的首屏脚本（cleanup.js / fallback）已在 index.html 内；
+    // 查找器子视图（重复/大文件/空文件/AppData）才需要 finder.js
+    'cleanup-finder': ['scripts/finder.js'],
+    // sysrestore.js 的入口按钮（btnSysRestore）挂在「系统优化」页内，故随 optimizer 一并加载
+    optimizer: ['scripts/optimizer.js', 'scripts/sysrestore.js'],
+    contextmenu: ['scripts/modelpicker.js', 'scripts/intro.js', 'scripts/contextmenu.js'],
+    startup: ['scripts/modelpicker.js', 'scripts/intro.js', 'scripts/startup.js'],
+    maintenance: ['scripts/maintenance.js'],
+    memoryclean: ['scripts/modelpicker.js', 'scripts/intro.js', 'scripts/memoryclean.js'],
+    diskbench: ['scripts/diskbench.js'],
+    netspeed: ['scripts/netspeed-detector.js', 'scripts/realtime.js', 'scripts/netspeed.js'],
+    netcheck: ['scripts/netcheck.js'],
+    runtimes: ['scripts/runtimes.js'],
+    quickcmds: ['scripts/quickcmds-data.js', 'scripts/quickcmds.js'],
+    settings: ['scripts/pathbinding.js']
+  };
+  // 需要显式调用 init() 的模块：这些文件加载时不会自执行 init。
+  // 未列入的是自初始化件（DOMContentLoaded 自执行或纯数据/工具）——再调一次会重复绑定监听器。
+  const MODULES_NEEDING_INIT = new Set([
+    'cleanup', 'contextmenu', 'deviceinfo', 'diskbench', 'fontmanager', 'intro',
+    'maintenance', 'memoryclean', 'netcheck', 'netspeed', 'optimizer', 'overview',
+    'pathbinding', 'quickcmds', 'realtime', 'runtimes', 'startup', 'sysrestore'
+  ]);
+  // 首帧后空闲加载：视觉增强 + 自动更新 UI（不阻塞首帧）。
+  // pathbinding 也放这里——cleanup.js 的 QQ/微信文件清理会读它的路径配置，
+  // 空闲期预取可避免用户点扫描时配置还没就位。
+  const IDLE_SCRIPTS = [
+    'scripts/mouse-trail.js',
+    'scripts/tilt.js',
+    'scripts/spotlight.js',
+    'scripts/updater-ui.js',
+    'scripts/pathbinding.js'
+  ];
+  const _scriptLoaded = new Set();
+  const _scriptLoading = new Map();
+
+  function loadScript(src) {
+    if (_scriptLoaded.has(src)) return Promise.resolve();
+    if (_scriptLoading.has(src)) return _scriptLoading.get(src); // 快速连点去重：同一 src 只注入一次
+    const p = new Promise((resolve) => {
+      const s = document.createElement('script');
+      s.src = src;
+      s.onload = () => { _scriptLoaded.add(src); _scriptLoading.delete(src); resolve(); };
+      // 注入失败不能让 switchPage 永久挂起：标记失败并放行，页面自身会优雅降级
+      s.onerror = () => {
+        _scriptLoading.delete(src);
+        console.warn('[Trim] 脚本加载失败: ' + src);
+        resolve();
+      };
+      document.body.appendChild(s);
+    });
+    _scriptLoading.set(src, p);
+    return p;
+  }
+
+  async function ensurePageScripts(page) {
+    const list = PAGE_SCRIPTS[page];
+    if (!list || !list.length) return;
+    for (const src of list) {
+      await loadScript(src); // 顺序加载，保证依赖序
+      initModuleOf(src);
+    }
+  }
+
+  // 脚本加载完成后补一次 init（此前由 app.js 启动时的 safeInit 统一调用，
+  // 改成按需加载后必须在这里补，否则模块只挂了 window.X 却没绑任何事件）
+  function initModuleOf(src) {
+    const name = String(src).split('/').pop().replace(/\.js$/, '');
+    if (!MODULES_NEEDING_INIT.has(name)) return;
+    try { window[name]?.init?.(); } catch (e) { console.warn(`[Trim] 模块 ${name} 初始化失败:`, e); }
+  }
+
+  // 首帧空闲后预取的非关键脚本：视觉增强 + 自动更新 UI + 路径绑定。
+  // pathbinding 放这里是因为 cleanup.js 的 QQ/微信文件清理要读它的路径配置。
+  function scheduleIdleLoads() {
+    const idle = window.requestIdleCallback || ((cb) => setTimeout(cb, 1000));
+    idle(() => { IDLE_SCRIPTS.forEach((src) => loadScript(src).then(() => initModuleOf(src))); });
+  }
+
   // 路由
   const ACTIVE_PAGE_KEY = 'winclean-active-page';
 
@@ -157,11 +244,25 @@
     window.liquidBar?.refreshAll?.(true);
   }
 
+  // v3.7.0：switchPage 改 async（需先 await 本页脚本加载）。外层吞掉异常，
+  // 避免导航点击处未 await 的 Promise 变成 unhandledrejection。
   function switchPage(pageName) {
+    return switchPageInner(pageName).catch((e) => { console.warn('[Trim] 切换页面失败:', e); });
+  }
+
+  async function switchPageInner(pageName) {
     // 磁盘清理五合一：旧子页地址（cleanup-dups 等）统一映射到主页并恢复对应分段
+    let cleanupView = 'cleanup';
     if (CLEANUP_VIEWS.indexOf(pageName) > -1) {
-      setCleanupView(pageName === 'cleanup' ? getCleanupView() : pageName, false);
+      cleanupView = pageName === 'cleanup' ? getCleanupView() : pageName;
+      setCleanupView(cleanupView, false);
       pageName = 'cleanup';
+    }
+    // v3.7.0 议题五：先补齐本页脚本，再执行页面进入逻辑（否则 load()/onEnter() 是空操作）
+    await ensurePageScripts(pageName);
+    if (cleanupView !== 'cleanup') {
+      await ensurePageScripts('cleanup-finder');
+      window.finder?.ensureInit?.();
     }
     // 持久化活跃页（窗口状态记忆：启动恢复上次页面）
     try { localStorage.setItem(ACTIVE_PAGE_KEY, pageName); } catch (e) {}
@@ -180,27 +281,28 @@
     if (speedParent) speedParent.classList.toggle('active', pageName === 'netspeed' || pageName === 'diskbench' || pageName === 'netcheck');
 
     // 页面进入逻辑
-    if (pageName === 'logs') logger.load();
-    if (pageName === 'startup') startup.load();
+    // v3.7.0 议题五第 0 步：此处原本是裸变量（logger.load() / startup.load()），
+    // 脚本未加载即 ReferenceError 并中断整个 app.js。改 window.xxx?. 后模块才可被移出首屏。
+    if (pageName === 'logs') window.logger?.load?.();
+    if (pageName === 'startup') window.startup?.load?.();
     if (pageName === 'quickcmds') window.quickcmds?.init?.();
     // v3.2.1：首次进入磁盘清理页自动检测规则库云端版本（右上角 toast 提示更新）
     if (pageName === 'cleanup') window.cleanup?.onPageEnter?.();
     if (pageName === 'memoryclean') {
       window.memoryclean?.loadInfo?.();
     }
-    if (pageName === 'settings') { pathbinding.init(); }
-    // 默认应用接管（v3.0）：进入页面刷新关联与状态机
-    if (pageName === 'defaultapps') window.defaultapps?.load?.();
+    if (pageName === 'settings') { window.pathbinding?.init?.(); }
+    // v3.7.0：「默认应用接管」页面与模块已整块删除（含专家模式），进页钩子随之移除
     // 运行库修复（v3.3.0）：首次进入自动扫描一次（只读）
     if (pageName === 'runtimes') window.runtimes?.onEnter?.();
     // 网络检测（v3.0）：进入页面展示上次结果（不自动重跑）
     if (pageName === 'netcheck') window.netcheck?.onEnter?.();
     // 实时网速（已并入网络测速页）：进入网络测速页启动采集，离开停止，避免后台空耗 CPU
-    if (pageName === 'netspeed') realtime.start();
-    else realtime.stop();
+    if (pageName === 'netspeed') window.realtime?.start?.();
+    else window.realtime?.stop?.();
     // 系统概览：进入启动实时指标轮询，离开停止
-    if (pageName === 'overview') overview.start();
-    else overview.stop();
+    if (pageName === 'overview') window.overview?.start?.();
+    else window.overview?.stop?.();
     // 网络测速：仅点击"开始测速"按钮后才加载网页；离开本页回收 iframe 与采样定时器
     if (pageName !== 'netspeed') window.netspeed?.stop?.();
     // 液态玻璃滑块：页面重新显示后重新对齐（隐藏页内的滑块尺寸此前为 0）
@@ -290,6 +392,9 @@
   // Toast 通知
   // 活动中的 Toast 注册表（用于点击空白区域时关闭最顶层 Toast）
   const activeToasts = [];
+  // v3.7.0 议题一：同屏最大可见数。容器无滚动、无 max-height 时，批量任务的 Toast
+  // 会一路堆到视口下沿并遮挡内容（实测 8~10 条铺满右缘）。超出上限按 FIFO 挤出最旧的。
+  const MAX_VISIBLE_TOASTS = 4;
 
   function toast(type, message, duration = 3000, options = {}) {
     const container = document.getElementById('toastContainer');
@@ -329,7 +434,41 @@
     activeToasts.push(entry);
     el.querySelector('.toast-close')?.addEventListener('click', entry.remove);
     removeTimer = setTimeout(entry.remove, duration);
+    // v3.7.0：悬停暂停计时、移出后续 1.5s —— 用户正在读的提示不该被计时器抽走
+    el.addEventListener('pointerenter', () => clearTimeout(removeTimer));
+    el.addEventListener('pointerleave', () => {
+      clearTimeout(removeTimer);
+      removeTimer = setTimeout(entry.remove, 1500);
+    });
+    trimToasts();
     return entry;
+  }
+
+  // v3.7.0 议题一：FIFO 挤出最旧的 Toast，保证同屏不超过 MAX_VISIBLE_TOASTS。
+  // 跳过 toast-shutdown（关闭流程提示不可手动关闭，也不参与挤出）。
+  function trimToasts() {
+    let guard = activeToasts.length + 1;
+    while (activeToasts.length > MAX_VISIBLE_TOASTS && guard-- > 0) {
+      const idx = activeToasts.findIndex((t) => t && t.el && !t.el.classList.contains('toast-shutdown'));
+      if (idx < 0) return;
+      const oldest = activeToasts[idx];
+      if (typeof oldest.remove === 'function') oldest.remove();
+      else { activeToasts.splice(idx, 1); try { oldest.el.remove(); } catch (_) { /* 已脱离文档 */ } }
+    }
+  }
+
+  // v3.7.0：外部自管 Toast（如 optimizer 的进度 Toast）挂进同一注册表，
+  // 让「点击空白关最顶层」够得到它，也让条数护栏能统一计数。
+  function registerToast(entry) {
+    if (!entry || !entry.el) return entry;
+    activeToasts.push(entry);
+    trimToasts();
+    return entry;
+  }
+  function unregisterToast(entry) {
+    if (!entry) return;
+    const i = activeToasts.indexOf(entry);
+    if (i > -1) activeToasts.splice(i, 1);
   }
 
   // 点击窗口内空白区域关闭最顶层 Toast（超时自动关闭逻辑保留，此为额外手动关闭方式）
@@ -448,7 +587,7 @@
 
   // 日志（暴露给其它模块）
   function log(level, message) {
-    return logger.write(level, message);
+    return window.logger?.write?.(level, message);
   }
 
   // 加载应用信息
@@ -501,7 +640,7 @@
   // shutdown:complete（通道保留作扩展点，preload 白名单未动）。
 
   // 初始化
-  function init() {
+  async function init() {
     setupButtonMotion();
     // 恢复侧边栏折叠状态
     applySidebarState(getSidebarCollapsed());
@@ -635,9 +774,9 @@
     });
 
     // 日志页面
-    document.getElementById('btnRefreshLog')?.addEventListener('click', () => logger.load());
-    document.getElementById('btnExportLog')?.addEventListener('click', () => logger.export());
-    document.getElementById('btnClearLog')?.addEventListener('click', () => logger.clear());
+    document.getElementById('btnRefreshLog')?.addEventListener('click', () => window.logger?.load?.());
+    document.getElementById('btnExportLog')?.addEventListener('click', () => window.logger?.export?.());
+    document.getElementById('btnClearLog')?.addEventListener('click', () => window.logger?.clear?.());
     document.getElementById('btnUsageGuide')?.addEventListener('click', showUsageGuide);
     document.getElementById('btnUsageClose')?.addEventListener('click', closeUsageGuide);
     // 批次：外部链接（GitHub 主页）—— 走受控 IPC，主进程校验 https
@@ -675,26 +814,24 @@
     // LG-7（2026-09-15）：页面模块 init 逐个 try/catch——此前裸调用，任一模块抛错会
     // 让 window.app 未及时挂载、所有 window.app?.toast?.() 静默变空操作，比卡死更难诊断。
     const safeInit = (mod, name) => { try { mod?.init?.(); } catch (e) { console.warn(`[Trim] 模块 ${name} 初始化失败:`, e); } };
-    safeInit(cleanup, 'cleanup');
-    safeInit(contextmenu, 'contextmenu');
-    safeInit(optimizer, 'optimizer');
-    safeInit(netspeed, 'netspeed');
-    safeInit(realtime, 'realtime');
-    safeInit(diskbench, 'diskbench');
-    safeInit(deviceinfo, 'deviceinfo');
-    safeInit(overview, 'overview');
-    safeInit(sysrestore, 'sysrestore');
-    safeInit(memoryclean, 'memoryclean');
-    safeInit(startup, 'startup');
-    safeInit(window.maintenance, 'maintenance');
-    safeInit(window.defaultapps, 'defaultapps');
-    safeInit(window.netcheck, 'netcheck');
+    // v3.7.0 议题五：只初始化首屏已加载的模块；其余改到 ensurePageScripts 加载后按需 init。
+    // 裸变量已在第 0 步统一改为 window.xxx?.，脚本缺席时只是空操作而不会中断 app.js。
+    safeInit(window.cleanup, 'cleanup');
+    safeInit(window.overview, 'overview');
+    safeInit(window.deviceinfo, 'deviceinfo');
+    safeInit(window.fontmanager, 'fontmanager');
 
     // 磁盘清理分段视图：分段栏点击切换（液态滑块由 liquid-glass.js 统一监听跟随）
-    document.getElementById('cleanupTabs')?.addEventListener('click', (e) => {
+    document.getElementById('cleanupTabs')?.addEventListener('click', async (e) => {
       const tab = e.target.closest('.filter-tab');
       if (!tab || tab.classList.contains('active')) return;
-      setCleanupView(tab.dataset.cleanupView);
+      const view = tab.dataset.cleanupView;
+      // v3.7.0 议题五：查找器子视图需要 finder.js，进入视图前补齐（脚本内部 ensureInit 幂等）
+      if (view && view !== 'cleanup') {
+        await ensurePageScripts('cleanup-finder');
+        window.finder?.ensureInit?.();
+      }
+      setCleanupView(view);
     });
 
     // 设置 - 切换动效：全局液态玻璃强度（完整 / 标准 / 磨砂 / 关闭，旧值 refract 自动迁移为 standard）
@@ -710,7 +847,7 @@
     window.fontmanager?.restore?.();
 
     // 暴露给其它模块（须在页面模块启动逻辑之前，保证其可调用 app 能力）
-    window.app = { toast, confirm, confirmDanger, confirmWarning, showPreviewModeBanner, log, switchPage, loadAppInfo, requestElevation, getState: () => appState };
+    window.app = { toast, confirm, confirmDanger, confirmWarning, showPreviewModeBanner, log, switchPage, loadAppInfo, requestElevation, registerToast, unregisterToast, getState: () => appState };
 
     // 监听内置 pwsh 运行时状态：准备中→就绪/失败的一次性反馈（已就绪不弹）。
     // 解压期间主进程每 ~800ms 广播一次进度，晚订阅的渲染层仍能接到在途广播。
@@ -749,9 +886,12 @@
     // 磁盘清理五合一：旧子页地址（cleanup-dups 等）对应 page 已不存在，先归一化到主页
     const targetPage = lastPage && CLEANUP_VIEWS.indexOf(lastPage) > -1 ? 'cleanup' : lastPage;
     if (targetPage && targetPage !== 'overview' && document.getElementById('page-' + targetPage)) {
-      switchPage(targetPage); // 审查 7-4：统一用归一化后的变量；switchPage 内部自会处理五合一旧地址
+      // 审查 7-4：统一用归一化后的变量；switchPage 内部自会处理五合一旧地址。
+      // v3.7.0：switchPage 已改 async（要先补齐本页脚本），此处必须 await——
+      // 否则恢复的页面是 optimizer 时，下面的 overview.start() 会先跑起来。
+      await switchPage(targetPage);
     } else if (document.getElementById('page-overview')?.classList.contains('active')) {
-      overview.start();
+      window.overview?.start?.();
     }
 
     // 初始化日志
@@ -793,6 +933,9 @@
         if (text) text.textContent = '检测到第三方窗口美化工具，旧版本可能导致窗口预览异常，建议更新到最新版本';
       }).catch(() => {});
     }
+
+    // v3.7.0 议题五：首帧之后空闲预取非关键脚本（视觉增强 / 自动更新 UI / 路径绑定）
+    scheduleIdleLoads();
 
     // v2.7.1：真实初始化完成——启动页（splash.js）监听此事件收尾进度并进入主界面，
     // 替代纯假进度等待；预览模式无监听方，派发无副作用

@@ -594,7 +594,10 @@ const OPTIONS = [
     steps: [
       { label: 'Defender 策略与服务', reg: regBlock({
         'HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows Defender\\Reporting': { 'DisableGenericRePorts': 'dword:00000001', 'DisableEnhancedNotifications': 'dword:00000001' },
-        'HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows Defender\\Spynet': { 'DisableBlockAtFirstSeen': 'dword:00000001', 'LocalSettingOverrideSpynetReporting': 'dword:00000000', 'SubmitSamplesConsent': 'dword:00000002' },
+        // v3.7.0 议题六 P1：SubmitSamplesConsent 已从此项移出，归新的低风险项
+        // privacy_defender_sample（同一键被两个普通优化项写会互相覆盖，必须先拆键再开放 UI）。
+        // 本高危总项继续独占实时保护 / 行为监控 / SmartScreen / 服务停用。
+        'HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows Defender\\Spynet': { 'DisableBlockAtFirstSeen': 'dword:00000001', 'LocalSettingOverrideSpynetReporting': 'dword:00000000' },
         'HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows Defender\\SmartScreen': { 'ConfigureAppInstallControlEnabled': 'dword:00000000' },
         'HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows Defender\\Threats': { 'Threats_ThreatSeverityDefaultAction': 'dword:00000001' },
         'HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows Defender\\UX Configuration': { 'Notification_Suppress': 'dword:00000001' },
@@ -615,6 +618,51 @@ const OPTIONS = [
         'New-Item -Path $base -Force | Out-Null',
         'foreach ($k in @("1","2","4","5")) { New-ItemProperty -Path $base -Name $k -Value "6" -PropertyType String -Force | Out-Null }'
       ].join('\n') }
+    ]
+  },
+  // ==================== v3.7.0 议题六 P1：Defender 低风险分项 ====================
+  // 只拆两类隐私向、可逆、不影响防护能力的开关：云保护(MAPS) 与 样本自动提交。
+  // 实时保护 / 行为监控 / SmartScreen / 篡改保护继续留在 tf_defender 高危总项，
+  // 不新增普通开关——把它们做成"顺手一点"的选项是危险的。
+  // 篡改保护只做只读状态与指引，Trim 不提供脚本关闭，也不做降级写入链。
+  {
+    id: 'privacy_defender_cloud', group: '安全与隐私', title: '关闭 Defender 云保护（MAPS）', risk: 'low',
+    desc: '把 MAPS 云保护报告级别设为 0（不参与云端信誉查询）。只影响「可疑文件是否送微软云端比对」这一条参与度，实时扫描与本地特征库仍然工作；代价是新威胁的云端判定速度会下降。与「关闭 Defender 与 SmartScreen」不共用任何注册表键，可独立开关。',
+    steps: [
+      { label: 'MAPS 云保护报告级别 = 0', reg: regBlock({
+        'HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows Defender\\Spynet': {
+          'SpynetReporting': 'dword:00000000'
+        }
+      }) }
+    ],
+    restore: [
+      { label: '还原：移除 MAPS 报告级别策略（回到系统默认）', reg: regBlock({
+        'HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows Defender\\Spynet': {
+          'SpynetReporting': '-'
+        }
+      }) }
+    ]
+  },
+  {
+    id: 'privacy_defender_sample', group: '安全与隐私', title: '关闭可疑样本自动提交', risk: 'low',
+    desc: '把自动样本提交设为「永不发送」。只影响可疑文件是否自动上传微软分析，不影响本地查杀能力；代价是微软对新样本的响应速度会变慢。',
+    steps: [
+      // 映射说明：策略 SubmitSamplesConsent 的取值 0=每次询问 / 1=自动发送安全样本 /
+      // 2=永不发送 / 3=自动发送全部样本。此处取 2（永不发送）。
+      // 待受控验证：本机 Defender 策略区为空且 Get-MpPreference 相关字段返回空值，
+      // 无法在本机做写入回读比对，故按微软文档映射落地，后续需在 Defender 正常启用的机器上复核。
+      { label: '样本自动提交 = 永不发送', reg: regBlock({
+        'HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows Defender\\Spynet': {
+          'SubmitSamplesConsent': 'dword:00000002'
+        }
+      }) }
+    ],
+    restore: [
+      { label: '还原：移除样本提交策略（回到系统默认）', reg: regBlock({
+        'HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows Defender\\Spynet': {
+          'SubmitSamplesConsent': '-'
+        }
+      }) }
     ]
   },
   {
@@ -1589,15 +1637,52 @@ const OPTIONS = [
       }) }
     ]
   },
+  // ==================== v3.7.0 议题六 P1：Windows Update 三态 ====================
+  // 此前只有「关」一个开关（NoAutoUpdate=1），没有「暂停到日期」这条主推荐路径。
+  // 三态分工：
+  //   perf_wu_pause  —— 暂停到日期（主路径，普通风险，1~35 天档位）
+  //   perf_wu_enable —— 启用（清 Trim 自己写入的暂停值与 NoAutoUpdate 策略）
+  //   perf_windows_update_off —— 彻底禁用（高危，红色二次确认，第一版只写策略不动服务）
+  // 注意：暂停不停 wuauserv / UsoSvc / BITS —— 这三个服务被商店、组件安装、
+  // Defender 更新复用，停服不是暂停更新的必要条件（实测本机 Start=3/3/2）。
   {
-    id: 'perf_windows_update_off', group: '性能调优', title: 'Windows 自动更新策略排查', risk: 'medium',
-    desc: 'NoAutoUpdate=1，请求改为手动控制补丁检查；需确认安全更新维护、下载触发和重启提醒影响。',
+    id: 'perf_windows_update_off', group: '性能调优', title: 'Windows 更新：彻底禁用（高危）', risk: 'high',
+    desc: 'NoAutoUpdate=1，彻底停止自动检查与安装更新；安全更新将不再自动送达，仅建议在明确知晓风险并使用其它补丁维护方式时选择。第一版只写策略层，不直接停用 wuauserv / UsoSvc / BITS。若只是想推迟一段时间，请用「Windows 更新：暂停到日期」。',
     steps: [
       { label: 'WindowsUpdate NoAutoUpdate=1', reg: regBlock({
         'HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate\\AU': {
           'NoAutoUpdate': 'dword:00000001'
         }
       }) }
+    ],
+    restore: [
+      { label: '还原：移除 NoAutoUpdate 策略（恢复系统默认更新行为）', reg: regBlock({
+        'HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate\\AU': {
+          'NoAutoUpdate': '-'
+        }
+      }) }
+    ]
+  },
+  {
+    id: 'perf_wu_pause', group: '性能调优', title: 'Windows 更新：暂停到日期', risk: 'medium',
+    desc: '写入 Windows 官方的功能更新 / 质量更新暂停键（起止时间 + 过期时间均为 FILETIME），把更新推迟到指定天数之后。这是推迟更新的主推荐方式：服务照常运行、到期自动恢复，不需要禁用任何组件。支持 1~35 天档位；不宣称绕过系统自身的暂停上限。',
+    dynamic: true,
+    steps: [] // 由 windowsUpdatePauseSteps(days) 动态生成
+  },
+  {
+    id: 'perf_wu_enable', group: '性能调优', title: 'Windows 更新：恢复自动更新', risk: 'low',
+    desc: '清除 Trim 自己写入的暂停键与 NoAutoUpdate 策略，让 Windows 恢复默认的自动检查与安装。只删 Trim 写过的键，不改动你没有让 Trim 动过的设置。',
+    steps: [
+      { label: '清除暂停键与 NoAutoUpdate 策略', pwsh: [
+        '$base = "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate"',
+        'if (Test-Path -LiteralPath $base) {',
+        '  foreach ($n in @("PauseFeatureUpdatesStartTime","PauseFeatureUpdatesEndTime","PauseQualityUpdatesStartTime","PauseQualityUpdatesEndTime","PauseUpdatesStartTime","PauseUpdatesExpiryTime")) {',
+        '    Remove-ItemProperty -Path $base -Name $n -Force -ErrorAction SilentlyContinue',
+        '  }',
+        '}',
+        '$au = Join-Path $base "AU"',
+        'if (Test-Path -LiteralPath $au) { Remove-ItemProperty -Path $au -Name "NoAutoUpdate" -Force -ErrorAction SilentlyContinue }'
+      ].join('\n') }
     ]
   },
   {
@@ -1850,11 +1935,13 @@ const OPTIONS = [
   },
 
   // 服务精简补漏（总表 90/92/93/94/95，5 项）
-  // v3.0：UCPD 已从此项剔除——该驱动是默认应用的防篡改保护层，统一由「默认应用接管」
-  // 页面按专家模式流程管理（临时禁用/恢复），不再随服务批量优化项被永久禁用。
+  // v3.0：UCPD 已从此项剔除——该驱动是系统对默认应用选择的防篡改保护层，
+  // 不随服务批量优化项被永久禁用。
+  // v3.7.0：「默认应用接管」功能已整体移除，Trim 不再提供任何禁用该驱动的入口；
+  // 该裁定本身不变（批量服务优化项仍不得禁用 UCPD），故此处只改指向文案，行为不动。
   {
     id: 'tf_svc_extra5', group: '系统服务', title: '传感器与存储感知等服务精简', risk: 'medium',
-    desc: '禁用传感器服务（SensrSvc/SensorDataService）、存储感知（StorSvc，改用手动清理更可控）、应用兼容性助手（PcaSvc）、性能改进建议（WDI 诊断场景）。打印机/扫码仪等外设依赖传感器服务时请勿禁用。UCPD 用户选择保护驱动不再随本项禁用（由「默认应用接管」管理）。',
+    desc: '禁用传感器服务（SensrSvc/SensorDataService）、存储感知（StorSvc，改用手动清理更可控）、应用兼容性助手（PcaSvc）、性能改进建议（WDI 诊断场景）。打印机/扫码仪等外设依赖传感器服务时请勿禁用。UCPD 用户选择保护驱动属系统防篡改保护层，本产品不禁用。',
     steps: [
       { label: '禁用传感器 / 存储感知 / PCA 服务', pwsh: [
         'foreach ($n in @("SensrSvc","SensorDataService","StorSvc","PcaSvc")) { Stop-Service -Name $n -Force -ErrorAction SilentlyContinue; sc.exe config $n start= disabled 2>$null | Out-Null }'
@@ -1955,6 +2042,34 @@ function memorySteps(gb) {
   return [{
     label: `SVCHost 拆分阈值 ${gbName}`,
     cmd: `reg add "HKLM\\SYSTEM\\ControlSet001\\Control" /v SvcHostSplitThresholdInKB /t REG_DWORD /d ${kb} /f`
+  }];
+}
+
+// ==================== v3.7.0：Windows Update 暂停到日期（动态步骤） ====================
+// 渲染层只传天数档位（1~35），FILETIME 全部在 PowerShell 内生成——
+// 不接受渲染层拼好的注册表值，避免 64 位整数在 JS 侧精度丢失或格式错误。
+// 键位与 Windows 官方一致：功能更新与质量更新各有起止，另有过期的 PauseUpdates*。
+const WU_PAUSE_KEYS = [
+  'PauseFeatureUpdatesStartTime', 'PauseFeatureUpdatesEndTime',
+  'PauseQualityUpdatesStartTime', 'PauseQualityUpdatesEndTime',
+  'PauseUpdatesStartTime', 'PauseUpdatesExpiryTime'
+];
+const WU_PAUSE_MAX_DAYS = 35;
+function windowsUpdatePauseSteps(days) {
+  const n = Number(days);
+  const d = Number.isFinite(n) ? Math.min(Math.max(Math.trunc(n), 1), WU_PAUSE_MAX_DAYS) : 7;
+  return [{
+    label: `暂停 Windows 更新 ${d} 天`,
+    pwsh: [
+      `$days = ${d}`,
+      '$base = "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate"',
+      'New-Item -Path $base -Force -ErrorAction SilentlyContinue | Out-Null',
+      // FILETIME = 自 1601-01-01 起的 100ns 计数，写入 REG_QWORD
+      '$ft = [DateTime]::UtcNow.AddDays($days).ToFileTimeUtc()',
+      '$nowFt = [DateTime]::UtcNow.ToFileTimeUtc()',
+      'foreach ($n in @("PauseFeatureUpdatesStartTime","PauseQualityUpdatesStartTime","PauseUpdatesStartTime")) { New-ItemProperty -Path $base -Name $n -Value $nowFt -PropertyType QWord -Force | Out-Null }',
+      'foreach ($n in @("PauseFeatureUpdatesEndTime","PauseQualityUpdatesEndTime","PauseUpdatesExpiryTime")) { New-ItemProperty -Path $base -Name $n -Value $ft -PropertyType QWord -Force | Out-Null }'
+    ].join('\n')
   }];
 }
 
@@ -2291,4 +2406,8 @@ const EFFECT_MAP = {
 // 注入预期效果；未登记的项（未来新增）默认「未验证」——诚实兜底，宁可不标好话
 OPTIONS.forEach(o => { o.effect = EFFECT_MAP[o.id] || '未验证'; });
 
-module.exports = { OPTIONS, MEMORY_KB, memorySteps, svcBulkAppendStoreSteps, STORE_TOGGLE_SERVICES, buildScript };
+module.exports = {
+  OPTIONS, MEMORY_KB, memorySteps, svcBulkAppendStoreSteps, STORE_TOGGLE_SERVICES, buildScript,
+  // v3.7.0 议题六 P1
+  windowsUpdatePauseSteps, WU_PAUSE_KEYS, WU_PAUSE_MAX_DAYS
+};

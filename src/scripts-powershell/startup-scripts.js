@@ -23,6 +23,40 @@ $disabledFile = Join-Path $backupDir 'disabled.json'
 
 $results = @()
 
+# ---- v3.7.0 议题二 P1：StartupApproved 判定（与任务管理器同轨） ----
+# 背景：任务管理器禁用启动项时并不删除 Run 值，只往 StartupApproved 写 12 字节 blob
+# （4 字节状态 + 8 字节 FILETIME）。此前 Trim 把注册表/文件夹项的 enabled 硬编码为 $true，
+# 且全仓从未读过 StartupApproved → 结构上不可能显示「被任务管理器禁用的启动项」。
+# 语义（2026-09-23 本机受控写读往返已验证 + 5 个真实样本交叉验证）：
+#   首字节 bit0 = 1 → 禁用（0x01 / 0x03）；bit0 = 0 → 启用（0x02 / 0x06）
+#   无对应 blob → 回落为「启用」（Windows 语义：无记录即默认放行）
+$approvedBase = @{
+  HKCU = 'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved'
+  HKLM = 'HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved'
+}
+# tag -> @{ 值名(小写) = 是否禁用 }
+$approvedMap = @{}
+foreach ($hv in @('HKCU', 'HKLM')) {
+  foreach ($sub in @('Run', 'StartupFolder')) {
+    $p = 'Registry::' + $approvedBase[$hv] + '\\' + $sub
+    if (-not (Test-Path -LiteralPath $p)) { continue }
+    $k = Get-Item -LiteralPath $p
+    foreach ($n in $k.GetValueNames()) {
+      if ([string]::IsNullOrWhiteSpace($n)) { continue }
+      $b = $k.GetValue($n)
+      $disabled = $false
+      if ($b -and @($b).Count -ge 1) { $disabled = (([byte[]]$b)[0] -band 1) -eq 1 }
+      $approvedMap[$hv + '|' + $sub + '|' + $n.ToLower()] = $disabled
+    }
+  }
+}
+function Get-ApprovedDisabled([string]$tag, [string]$valueName) {
+  if ([string]::IsNullOrWhiteSpace($valueName)) { return $null }
+  $k = $tag + '|' + $valueName.ToLower()
+  if ($approvedMap.ContainsKey($k)) { return [bool]$approvedMap[$k] }
+  return $null   # 无记录：调用方按「启用」回落
+}
+
 # ---- 辅助：从命令行提取可执行路径（支持引号包裹与参数）----
 function Get-CmdPath([string]$cmd) {
   if ([string]::IsNullOrWhiteSpace($cmd)) { return '' }
@@ -88,12 +122,20 @@ foreach ($rp in $runPaths) {
     if ($kind -eq 'String' -or $kind -eq 'ExpandString') {
       $cmdPath = Get-CmdPath ([Environment]::ExpandEnvironmentVariables([string]$data))
     }
+    # v3.7.0：Registry 项的启用状态按 StartupApproved blob 判定，不再硬编码 $true。
+    # 32 位视图（WOW6432Node）没有独立的 StartupApproved，按 hive 归属到 HKCU / HKLM 主键。
+    $saTag = if ($rp.hive -like 'HKLM*') { 'HKLM|Run' } else { 'HKCU|Run' }
+    $saDisabled = Get-ApprovedDisabled $saTag $vp
+    $en = $true
+    if ($null -ne $saDisabled) { $en = -not $saDisabled }
     $results += [pscustomobject]@{
       id = $id; name = $vp; command = [string]$data; source = 'registry';
       hive = $rp.hive; regPath = $rp.path; valueName = $vp; valueType = $kind.ToString();
       valueData = $vData; valueDataB64 = $vDataB64; valueDataArray = @($vDataArr);
       filePath = ''; taskPath = ''; taskName = '';
-      enabled = $true; location = $rp.label; scope = $rp.hive;
+      enabled = $en; location = $rp.label; scope = $rp.hive;
+      # disabledBy：'system' = 被任务管理器/系统禁用（blob bit0=1）；'' = 启用或 Trim 自行禁用
+      disabledBy = $(if ((-not $en) -and ($null -ne $saDisabled)) { 'system' } else { '' });
       publisher = (Get-Publisher $cmdPath); resolvedPath = $cmdPath
     }
   }
@@ -113,12 +155,20 @@ foreach ($f in $folders) {
     $lnkTarget = ''
     if ($_.Extension -ieq '.lnk') { $lnkTarget = Resolve-Lnk $_.FullName }
     $pubPath = if ($lnkTarget) { $lnkTarget } else { $_.FullName }
+    # v3.7.0：启动文件夹项同样读 StartupApproved\StartupFolder（值名为快捷方式文件名；
+    # 驱动/系统写法不统一，先按带扩展名找，再按不带扩展名找，都找不到才回落「启用」）
+    $saTag = if ($f.scope -eq 'HKLM') { 'HKLM|StartupFolder' } else { 'HKCU|StartupFolder' }
+    $saDisabled = Get-ApprovedDisabled $saTag $_.Name
+    if ($null -eq $saDisabled) { $saDisabled = Get-ApprovedDisabled $saTag ([IO.Path]::GetFileNameWithoutExtension($_.Name)) }
+    $en = $true
+    if ($null -ne $saDisabled) { $en = -not $saDisabled }
     $results += [pscustomobject]@{
       id = $id; name = [IO.Path]::GetFileNameWithoutExtension($_.Name); command = $_.FullName; source = 'folder';
       hive = $f.scope; regPath = ''; valueName = ''; valueType = '';
       valueData = ''; valueDataB64 = ''; valueDataArray = @();
       filePath = $_.FullName; taskPath = ''; taskName = '';
-      enabled = $true; location = $f.label; scope = $f.scope;
+      enabled = $en; location = $f.label; scope = $f.scope;
+      disabledBy = $(if ((-not $en) -and ($null -ne $saDisabled)) { 'system' } else { '' });
       publisher = (Get-Publisher $pubPath); resolvedPath = $(if ($lnkTarget) { $lnkTarget } else { $_.FullName })
     }
   }
@@ -142,6 +192,8 @@ foreach ($t in $allTasks) {
     valueData = ''; valueDataB64 = ''; valueDataArray = @();
     filePath = ''; taskPath = $taskPath; taskName = $taskName;
     enabled = $enabled; location = '计划任务' + $taskPath.TrimEnd('\\'); scope = 'HKLM';
+    # 计划任务的禁用语义由任务自身状态决定，与 StartupApproved 无关
+    disabledBy = $(if (-not $enabled) { 'system' } else { '' });
     publisher = ''; resolvedPath = ''
   }
 }
@@ -159,6 +211,8 @@ if (Test-Path -LiteralPath $disabledFile) {
       valueData = $r.valueData; valueDataB64 = $r.valueDataB64; valueDataArray = @($r.valueDataArray);
       filePath = $r.filePath; taskPath = $r.taskPath; taskName = $r.taskName;
       enabled = $false; location = $r.location; scope = $r.scope;
+      # 这条来自 Trim 自己的禁用记录（旧版删值式禁用 / 文件夹移出），标记为 trim
+      disabledBy = 'trim';
       publisher = $r.publisher; resolvedPath = $r.resolvedPath
     }
   }
@@ -204,6 +258,43 @@ function Save-Records {
   }
 }
 
+# ---- v3.7.0 议题二 P1：StartupApproved 读写（与任务管理器同轨）----
+# 旧行为：禁用 = Remove-ItemProperty 删掉 Run 值 + 备份进 disabled.json。
+# 问题：Windows 自己禁用启动项时保留 Run 值、只写 StartupApproved blob，两边互不可见；
+# 且删值属于破坏性动作，卸载重装或 Trim 自身异常时就没有还原依据。
+# 新行为：禁用 = 保留 Run 值 + 写 blob 置 bit0；启用 = 清掉 bit0。
+# disabled.json 退化为「Trim 自己动过手」的记账（兼容旧版已删值的条目），不再是唯一真相。
+function Get-ApprovedKeyPath([string]$hive, [string]$sub) {
+  $base = if ($hive -like 'HKLM*') { 'HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved' }
+          else { 'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved' }
+  return ('Registry::' + $base + '\\' + $sub)
+}
+# 返回 @{ ok = bool; message = string }
+function Set-ApprovedBit([string]$keyPath, [string]$valueName, [bool]$disable) {
+  try {
+    if (-not (Test-Path -LiteralPath $keyPath)) { New-Item -Path $keyPath -Force -ErrorAction Stop | Out-Null }
+    $k = Get-Item -LiteralPath $keyPath -ErrorAction Stop
+    $cur = $k.GetValue($valueName)
+    if ($null -eq $cur -or @($cur).Count -lt 12) {
+      $bytes = [byte[]]::new(12)
+      if ($null -ne $cur -and @($cur).Count -ge 1) { $bytes[0] = ([byte[]]$cur)[0] }
+      else { $bytes[0] = 2 }   # 无记录时按「启用」起手（0x02），再按目标翻转 bit0
+    } else {
+      $bytes = [byte[]]$cur
+    }
+    if ($disable) { $bytes[0] = $bytes[0] -bor 1 } else { $bytes[0] = $bytes[0] -band 0xFE }
+    New-ItemProperty -LiteralPath $keyPath -Name $valueName -PropertyType Binary -Value $bytes -Force -ErrorAction Stop | Out-Null
+    # 写后回读：成功不等于生效（语义同正向执行的回读校验）
+    $k2 = Get-Item -LiteralPath $keyPath -ErrorAction Stop
+    $back = [byte[]]$k2.GetValue($valueName)
+    $got = (($back[0] -band 1) -eq 1)
+    if ($got -ne $disable) { return @{ ok = $false; message = 'StartupApproved 回读不符（可能被策略或安全软件覆盖）' } }
+    return @{ ok = $true; message = '' }
+  } catch {
+    return @{ ok = $false; message = '写 StartupApproved 失败：' + $_.Exception.Message }
+  }
+}
+
 foreach ($item in @($items)) {
   $id = [string]$item.id
   $name = [string]$item.name
@@ -213,15 +304,25 @@ foreach ($item in @($items)) {
       $regPath = 'Registry::' + [string]$item.regPath
       $vp = [string]$item.valueName
       if ($enable) {
-        # 启用：查找记录回写
+        # v3.7.0：Run 值还在 → 走 StartupApproved 清 bit0（与任务管理器同轨），不再删值
+        $saPath = Get-ApprovedKeyPath ([string]$item.hive) 'Run'
+        $runKey = Get-Item -LiteralPath $regPath -ErrorAction SilentlyContinue
+        if ($runKey -and ($null -ne $runKey.GetValue($vp))) {
+          $r = Set-ApprovedBit $saPath $vp $false
+          if ($r.ok) {
+            # 值仍在，无需保留旧的删值式记录
+            $records = @($records | Where-Object { $_.id -ne $id })
+            Save-Records
+            $success++; $results += @{ id = $id; name = $name; status = 'ok'; message = '已启用' }
+          } else {
+            $failed++; $results += @{ id = $id; name = $name; status = 'error'; message = $r.message }
+          }
+          continue
+        }
+        # 值已被删除（旧版 Trim 的删值式禁用 / 应用自行卸载）：回退到记录回写
         $rec = @($records | Where-Object { $_.id -eq $id }) | Select-Object -First 1
         if (-not $rec) {
-          # 无记录：若值已存在则视为已启用
-          if ((Test-Path -LiteralPath $regPath) -and ($null -ne (Get-Item -LiteralPath $regPath).GetValue($vp))) {
-            $success++; $results += @{ id = $id; name = $name; status = 'ok'; message = '已处于启用状态' }
-          } else {
-            $failed++; $results += @{ id = $id; name = $name; status = 'error'; message = '缺少启用记录' }
-          }
+          $failed++; $results += @{ id = $id; name = $name; status = 'error'; message = '缺少启用记录，且注册表中已无该项' }
           continue
         }
         if (-not (Test-Path -LiteralPath $regPath)) { New-Item -ItemType Directory -Path $regPath -Force | Out-Null }
@@ -277,31 +378,40 @@ foreach ($item in @($items)) {
           $failed++; $results += @{ id = $id; name = $name; status = 'error'; message = '回写未生效或类型/内容失真（可能需要管理员权限）' }
         }
       } else {
-        # 禁用：备份值到记录后删除
+        # v3.7.0：禁用改为「保留 Run 值 + 写 StartupApproved blob」，不再删除注册表值。
+        # 与任务管理器同一条轨道：值还在系统里，随时可一键还原，也不再与 Windows 互相不可见。
         if (-not (Test-Path -LiteralPath $regPath)) { $failed++; $results += @{ id = $id; name = $name; status = 'error'; message = '注册表路径不存在' }; continue }
         $key = Get-Item -LiteralPath $regPath
         if ($null -eq $key.GetValue($vp)) { $failed++; $results += @{ id = $id; name = $name; status = 'error'; message = '值不存在' }; continue }
-        $kind = $key.GetValueKind($vp)
-        $data = $key.GetValue($vp)
-        $vData = ''; $vDataB64 = ''; $vDataArr = @()
-        if ($kind -eq 'Binary') { $vDataB64 = [Convert]::ToBase64String([byte[]]$data) }
-        elseif ($kind -eq 'MultiString') { $vDataArr = @([string[]]$data) }
-        else { $vData = [string]$data }
-        $rec = [pscustomobject]@{
-          id = $id; name = $name; command = [string]$data; source = 'registry';
-          hive = $item.hive; regPath = $item.regPath; valueName = $vp; valueType = $kind.ToString();
-          valueData = $vData; valueDataB64 = $vDataB64; valueDataArray = @($vDataArr);
-          filePath = ''; taskPath = ''; taskName = '';
-          location = $item.location; scope = $item.scope;
-          publisher = $item.publisher; resolvedPath = $item.resolvedPath
-        }
-        Remove-ItemProperty -LiteralPath $regPath -Name $vp -ErrorAction Stop
-        if ($null -eq (Get-Item -LiteralPath $regPath).GetValue($vp)) {
-          $records = @($records | Where-Object { $_.id -ne $id }) + @($rec)
-          Save-Records
-          $success++; $results += @{ id = $id; name = $name; status = 'ok'; message = '已禁用' }
+        $saPath = Get-ApprovedKeyPath ([string]$item.hive) 'Run'
+        $r = Set-ApprovedBit $saPath $vp $true
+        if ($r.ok) {
+          # 值仍在，且不写 disabled.json——否则它会被当成「已删值」在扫描里回显成幽灵项
+          $success++; $results += @{ id = $id; name = $name; status = 'ok'; message = '已禁用（注册表值保留，可随时还原）' }
         } else {
-          $failed++; $results += @{ id = $id; name = $name; status = 'error'; message = '删除未生效（可能需要管理员权限）' }
+          # 写 blob 失败（多为 HKLM 未提权）→ 回退旧行为：删值 + 落记录，保证禁用仍然生效
+          $kind = $key.GetValueKind($vp)
+          $data = $key.GetValue($vp)
+          $vData = ''; $vDataB64 = ''; $vDataArr = @()
+          if ($kind -eq 'Binary') { $vDataB64 = [Convert]::ToBase64String([byte[]]$data) }
+          elseif ($kind -eq 'MultiString') { $vDataArr = @([string[]]$data) }
+          else { $vData = [string]$data }
+          $rec = [pscustomobject]@{
+            id = $id; name = $name; command = [string]$data; source = 'registry';
+            hive = $item.hive; regPath = $item.regPath; valueName = $vp; valueType = $kind.ToString();
+            valueData = $vData; valueDataB64 = $vDataB64; valueDataArray = @($vDataArr);
+            filePath = ''; taskPath = ''; taskName = '';
+            location = $item.location; scope = $item.scope;
+            publisher = $item.publisher; resolvedPath = $item.resolvedPath
+          }
+          Remove-ItemProperty -LiteralPath $regPath -Name $vp -ErrorAction Stop
+          if ($null -eq (Get-Item -LiteralPath $regPath).GetValue($vp)) {
+            $records = @($records | Where-Object { $_.id -ne $id }) + @($rec)
+            Save-Records
+            $success++; $results += @{ id = $id; name = $name; status = 'ok'; message = '已禁用（回退为删除值方式：' + $r.message + '）' }
+          } else {
+            $failed++; $results += @{ id = $id; name = $name; status = 'error'; message = $r.message }
+          }
         }
       }
       continue
@@ -524,7 +634,11 @@ module.exports = {
   toggle(items, enable) {
     const json = JSON.stringify(Array.isArray(items) ? items : []).replace(/'/g, "''");
     return TOGGLE_SCRIPT
-      .replace('__ENABLE__', enable ? 'true' : 'false')
+      // v3.7.0 修复（议题二 P1 受控往返时实测发现）：PowerShell 没有裸写的 true/false 字面量，
+      // `$enable = true` 会被当成未识别命令、在 SilentlyContinue 下静默失败并留下 $null
+      // → if ($enable) 恒为假 → 启用分支从未被执行过（「启用启动项」一直是失效的）。
+      // 必须写成 $true / $false。
+      .replace('__ENABLE__', enable ? '$true' : '$false')
       .replace('__ITEMS_JSON__', json);
   },
   remove(items) {

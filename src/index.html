@@ -120,12 +120,6 @@
           </svg>
           <span>右键管理</span>
         </button>
-        <button class="nav-item" data-page="defaultapps" data-tip="批量设置浏览器、PDF 等文件的默认打开方式">
-          <svg class="nav-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-            <path d="M17 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm0 16H7V5h10v14zm-5-2.5l4-4-1.4-1.4L12 13.7l-2.6-2.6L8 12.5l4 4z"/>
-          </svg>
-          <span>默认应用接管</span>
-        </button>
         <button class="nav-item nav-parent" data-page="netspeed" data-nav-toggle="speed" data-tip="测速工具">
           <svg class="nav-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
             <path d="M12 3.77L11.25 4.61C11.25 4.61 9.97 6.06 8.68 7.94C7.39 9.82 6 12.07 6 14.23A6 6 0 0 0 12 20.23A6 6 0 0 0 18 14.23C18 12.07 16.61 9.82 15.32 7.94C14.03 6.06 12.75 4.61 12.75 4.61L12 3.77M12 6.9C12.44 7.42 12.84 7.85 13.68 9.07C14.89 10.83 16 13.07 16 14.23C16 16.45 14.22 18.23 12 18.23S8 16.45 8 14.23C8 13.07 9.11 10.83 10.32 9.07C11.16 7.85 11.56 7.42 12 6.9Z"/>
@@ -535,70 +529,6 @@
         </div>
       </div>
 
-      <!-- 默认应用接管页面（v3.0）：A 引导 + B 策略 XML 主路径 + C 专家模式兜底 -->
-      <div class="page" id="page-defaultapps">
-        <div class="page-header">
-          <div>
-            <h1 class="page-title">默认应用接管</h1>
-            <p class="page-subtitle">批量设置浏览器、PDF 等文件的默认打开方式 · 策略接管免重启，专家模式可精确接管</p>
-          </div>
-          <div class="page-actions">
-            <button class="btn btn-accent" id="btnDaApplyXml" data-tip="按下方选择生成官方策略配置（需管理员），下次登录生效">策略接管</button>
-            <button class="btn btn-secondary" id="btnDaRemovePolicy" data-tip="移除策略配置，恢复手动管理">移除策略</button>
-            <button class="btn btn-secondary" id="btnDaOpenSettings" data-tip="打开系统「默认应用」设置页">系统设置</button>
-          </div>
-        </div>
-        <div class="da-banner" id="daStateBanner" style="display:none"><!-- 跨重启状态机提示：由 JS 渲染 --></div>
-        <div class="da-banner da-banner-muted" id="daExpertBanner" style="display:none">
-          <div class="da-banner-copy">
-            <strong>专家模式未开启</strong>
-            <p>普通用户使用「策略接管」即可批量设置默认应用，无需重启。开启专家模式后将显示需管理员权限或重启电脑的高风险操作（如临时禁用系统保护驱动 UCPD）。</p>
-          </div>
-          <!-- v3.1.0：横幅右侧快捷开启，免去跳转设置 → 系统信息 -->
-          <div class="da-banner-actions">
-            <button class="btn btn-secondary btn-small" id="btnDaEnableExpert" data-tip="开启后本页显示「专家模式 · 精确接管」高风险操作；设置 → 系统信息里可随时关闭">开启专家模式</button>
-          </div>
-        </div>
-        <div class="da-grid">
-          <div class="card da-card">
-            <div class="da-card-head">
-              <h3>当前关联</h3>
-              <button class="btn btn-secondary btn-small" id="btnDaRefresh" data-tip="重新读取当前关联与保护驱动状态">刷新</button>
-            </div>
-            <div class="da-status-list" id="daStatusList"><!-- 由 JS 渲染 --></div>
-            <div class="da-ucpd-row" id="daUcpdRow"><!-- UCPD 保护驱动状态：由 JS 渲染 --></div>
-          </div>
-          <div class="card da-card">
-            <div class="da-card-head">
-              <div class="da-mode-tabs" id="daModeTabs" role="tablist">
-                <button class="da-mode-tab active" data-da-mode="type" role="tab" aria-selected="true">按文件类型指定</button>
-                <button class="da-mode-tab" data-da-mode="program" role="tab" aria-selected="false">按程序指定</button>
-              </div>
-            </div>
-            <!-- 按文件类型：每个受支持类型各选一个默认程序 -->
-            <div class="da-pick-list" id="daPickList"><!-- 由 JS 渲染 --></div>
-            <!-- 按程序：选一个程序，把它声明支持的类型批量指定为默认 -->
-            <div class="da-program-panel" id="daProgramPanel" style="display:none">
-              <div class="da-pick-row">
-                <div class="da-status-copy"><strong>选择程序</strong><span>把它声明支持的类型批量指定为默认打开方式</span></div>
-                <select class="field-input da-pick-select" id="daProgramSelect"></select>
-              </div>
-              <div class="da-program-types" id="daProgramTypes"><!-- 覆盖类型复选：由 JS 渲染 --></div>
-              <p class="da-hint" id="daProgramHint"></p>
-            </div>
-            <p class="da-hint">候选列表来自系统注册的程序；「系统设置」可随时改单项目录。</p>
-          </div>
-        </div>
-        <div class="card da-card" id="daExpertPanel" style="display:none">
-          <div class="da-card-head"><h3>专家模式 · 精确接管</h3></div>
-          <p class="da-hint">临时禁用 UCPD 保护驱动并重启后，按上方选择写入<strong>类级关联</strong>（删除 UserChoice + 写类级默认 ProgId，不涉及任何哈希计算）。对 .pdf/.html 等文件类型可靠；http/https 属系统强保护，类级关联可能不生效，此类建议改用「策略接管」。此操作可能被安全软件标记为风险行为，且 Windows 更新可能重新启用驱动使设置回滚。</p>
-          <div class="da-expert-actions">
-            <button class="btn btn-danger" id="btnDaExpertWrite" data-tip="按上方选择执行精确接管（高危，需重启）">执行精确接管</button>
-            <button class="btn btn-secondary" id="btnDaRestoreUcpd" data-tip="重新启用 UCPD 保护驱动（需重启生效）" style="display:none">恢复 UCPD 保护</button>
-          </div>
-        </div>
-      </div>
-
       <!-- 网络检测页面（v3.0）：全程只读采集 + 白名单化一键修复 -->
       <div class="page" id="page-netcheck">
         <div class="page-header">
@@ -611,6 +541,7 @@
           </div>
         </div>
         <div class="netcheck-list" id="netcheckList"><!-- 检查项行：由 JS 渲染 --></div>
+        <div class="netcheck-list" id="netcheckNicProps"><!-- v3.7.0：网卡高级属性只读枚举区，由 JS 渲染 --></div>
       </div>
 
       <!-- 运行库修复页面（v3.3.0 第一期）：只读检测 + 白名单化一键安装 -->
@@ -901,8 +832,10 @@
             <label class="field-label">测试路径<input id="diskBenchPath" class="field-input" value="" placeholder="将自动检测当前用户 Downloads 目录" /></label>
             <div class="benchmark-fields">
               <label class="field-label">块大小<select id="diskBlockSize" class="field-input"><option value="4096">4 KB</option><option value="65536">64 KB</option><option value="1048576" selected>1 MB</option></select></label>
-              <label class="field-label">队列深度<select id="diskQueueDepth" class="field-input" disabled><option selected>1</option></select></label>
-              <label class="field-label">线程数<select id="diskThreads" class="field-input" disabled><option selected>1</option></select></label>
+              <!-- v3.7.0 议题四：队列深度与线程数此前是「禁用下拉 + 单个 1 选项」，看着像可配置；
+                   实际四个测试循环均为同步单流 I/O，这两个值从未被消费。改为只读文本，不再伪装成选项。 -->
+              <label class="field-label" data-tip="当前实现为单队列单线程 I/O 模型，队列深度固定为 1，不可调整">队列深度<input id="diskQueueDepth" class="field-input" value="1（固定）" readonly /></label>
+              <label class="field-label" data-tip="当前实现为单队列单线程 I/O 模型，线程数固定为 1，不可调整">线程数<input id="diskThreads" class="field-input" value="1（固定）" readonly /></label>
               <label class="field-label">时长<select id="diskDuration" class="field-input"><option value="4">4 秒</option><option value="8" selected>8 秒</option><option value="16">16 秒</option></select></label>
             </div>
             <p class="benchmark-note">测试会在目标磁盘创建临时文件，完成后自动删除。当前采用单队列单线程模型，块大小用于模拟不同负载。</p>
@@ -1026,6 +959,14 @@
               联网 AI 简介
             </button>
           </div>
+        </div>
+
+        <!-- v3.7.0 议题二 P0：缓存年龄横幅。政策仍是「首启扫描一次后读缓存」（v3.2.1 用户裁定），
+             但缓存不再"看起来是实时"——展示数据年龄并给出一键重扫入口；进场还会静默后台重扫。 -->
+        <div class="startup-cache-banner" id="startupCacheBanner" hidden>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+          <span id="startupCacheBannerText">数据来自较早的扫描</span>
+          <button class="btn btn-secondary btn-small" id="btnStartupRescanNow">立即重新扫描</button>
         </div>
 
         <!-- 状态卡 -->
@@ -1434,13 +1375,6 @@
               <span class="settings-collapse-chevron" id="systemInfoChevron">▾</span>
             </div>
             <div class="settings-system-body" id="systemInfoBody">
-              <!-- 专家模式（v3.0 默认应用接管）：appearance.json 主进程真源，默认关闭 -->
-              <div class="info-row"><span>专家模式</span>
-                <label class="toggle-switch" for="expertModeToggle" data-tip="开启后「默认应用接管」页显示需管理员权限或重启电脑的高风险操作；普通用户保持关闭即可">
-                  <input type="checkbox" id="expertModeToggle" />
-                  <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                </label>
-              </div>
               <div class="info-row"><span>应用版本</span><span id="infoVersion">--</span></div>
               <div class="info-row"><span>数据目录</span><span id="infoPortable">--</span></div>
               <div class="info-row" id="diagDwmRow" style="display:none"><span>兼容性提示</span><span id="diagDwmText">--</span></div>
@@ -1476,46 +1410,32 @@
     </div>
   </div>
 
+  <!-- v3.7.0 议题五：渲染脚本按需加载。
+       此前 38 个 <script> 全部同步加载并在启动时 init()，首屏解析 ~813 KB，
+       而用户默认只落在「系统体检」页。现在 index.html 只保留首屏必需的 13 个脚本，
+       其余改由 app.js 的 PAGE_SCRIPTS / IDLE_SCRIPTS 在进页或首帧空闲时动态注入。
+       两条硬约束不变：splash.js 必须是 body 末尾脚本的第一个；
+       ds.js 必须先于一切 window.ds 使用方（theme / modal / xtable 等）。 -->
   <!-- 启动页（v2.7.0）：独立无依赖，最先执行，盖住整窗直到 FLIP 落位完成 -->
   <script src="scripts/splash.js"></script>
-  <script src="scripts/mouse-trail.js"></script>
   <!-- 硬约束（审查 2-6）：ds.js（window.ds 设计系统运行时）必须先于一切 window.ds 使用方加载（theme/modal/xtable 等） -->
   <script src="scripts/ds.js"></script>
   <script src="scripts/theme.js"></script>
-  <script src="scripts/tilt.js"></script>
   <script src="scripts/modal.js"></script>
   <script src="scripts/xtable.js"></script>
   <script src="scripts/icon-fallback.js"></script>
   <script src="scripts/liquid-glass.js"></script>
-  <script src="scripts/spotlight.js"></script>
   <!-- 审查 2-2：FALLBACK 原始数据（gen-fallback.js 生成，勿手改），须在 cleanup.js 之前加载 -->
   <script src="scripts/cleanup-fallback.generated.js"></script>
   <script src="scripts/cleanup.js"></script>
-  <script src="scripts/finder.js"></script>
-  <script src="scripts/intro.js"></script>
-  <script src="scripts/pathbinding.js"></script>
-  <script src="scripts/modelpicker.js"></script>
-  <script src="scripts/fontmanager.js"></script>
-  <script src="scripts/contextmenu.js"></script>
-  <script src="scripts/netspeed-detector.js"></script>
-  <script src="scripts/netspeed.js"></script>
-  <script src="scripts/realtime.js"></script>
-  <script src="scripts/diskbench.js"></script>
-  <script src="scripts/deviceinfo.js"></script>
   <script src="scripts/overview.js"></script>
-  <script src="scripts/optimizer.js"></script>
+  <!-- deviceinfo.js：系统体检（默认首页）用它归一化硬件信息，留在首屏避免首屏降级为空 -->
+  <script src="scripts/deviceinfo.js"></script>
+  <!-- fontmanager.js：启动时就要恢复已保存的字体/字重/字号（app.js init 里 restore），
+       放到按需里会出现"先默认字体后跳变"，故留在首屏（14 KB） -->
+  <script src="scripts/fontmanager.js"></script>
+  <!-- logger.js：window.app.log 是全局日志出口（3 KB），留在首屏避免启动日志静默丢失 -->
   <script src="scripts/logger.js"></script>
-  <script src="scripts/sysrestore.js"></script>
-  <script src="scripts/memoryclean.js"></script>
-  <script src="scripts/quickcmds-data.js"></script>
-  <script src="scripts/quickcmds.js"></script>
-  <script src="scripts/startup.js"></script>
-  <script src="scripts/maintenance.js"></script>
-  <script src="scripts/defaultapps.js"></script>
-  <script src="scripts/netcheck.js"></script>
-  <script src="scripts/runtimes.js"></script>
-  <!-- 批次：自动更新接入（依赖 modal.js/ds.js 统一弹窗与进度件，须在 app.js 之前） -->
-  <script src="scripts/updater-ui.js"></script>
   <script src="scripts/app.js"></script>
 </body>
 </html>

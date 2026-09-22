@@ -176,8 +176,7 @@ const SIDE_EFFECT_FREE = new Set([
   'pwsh:status',                                                // 内置 pwsh 运行时状态查询（只读）
   'appearance:get-env', 'diag:dwm-conflict',                   // 环境状态/注入工具检测结果读取（v2.8.0）
   'paths:load', 'realtime:adapters', 'realtime:report-list',   // 路径配置/网络适配器/测速报告列表
-  'defaultapps:status', 'defaultapps:list-programs',           // 默认应用状态/ProgId 枚举（只读采集，v3.0）
-  'defaultapps:get-state',                                     // 默认应用状态机文件读取（v3.0）
+  // v3.7.0：原「默认应用接管」的两条只读通道随功能一并删除（详见 §默认应用接管退役说明）
   'netcheck:collect'                                           // 网络检测只读采集（v3.0）
 ]);
 
@@ -2344,7 +2343,7 @@ handleSafe('finder:open-backup-dir', async (event) => {
 const CONTEXTMENU_SCRIPT = require('./src/scripts-powershell/contextmenu-scripts');
 
 // ==================== 扫描结果持久缓存（v3.2.1，用户裁定） ====================
-// 政策：体检与硬件信息、启动项管理、默认应用接管、右键菜单管理——仅首次扫描一次并
+// 政策：体检与硬件信息、启动项管理、右键菜单管理——仅首次扫描一次并
 // 写入 %APPDATA%\Trim\<name>.json；之后一律只读缓存文件，直到用户点「重新扫描」（refresh=true）
 // 才真正重新扫描并覆盖缓存。与 system-info.json（硬件信息）同一模式。
 function loadScanCache(name) {
@@ -2834,7 +2833,9 @@ function classifyStepKinds(steps) {
 // 回执，主进程见不到回执即拒绝——被攻陷渲染层无法绕过红色确认直接执行高危项。
 const OPTIMIZER_HAZARD_IDS = new Set([
   'disable_uac', 'tf_defender', 'tf_microcode_del', 'spectre_off', 'perf_vbs_off',
-  'perf_exploit_protection_off', 'tf_svc_bulk', 'tf_drv_disable'
+  'perf_exploit_protection_off', 'tf_svc_bulk', 'tf_drv_disable',
+  // v3.7.0 议题六 P1：彻底禁用 Windows 更新（NoAutoUpdate=1）升级为高危，需红色二次确认
+  'perf_windows_update_off'
 ]);
 
 handleSafe('optimizer:run', async (event, { optionId, params = {} } = {}) => {
@@ -2861,6 +2862,18 @@ handleSafe('optimizer:run', async (event, { optionId, params = {} } = {}) => {
   if (opt.dynamic) {
     if (optionId === 'svc_mem_gb') {
       steps = OPTIMIZER.memorySteps(params.gb);
+    } else if (optionId === 'perf_wu_pause') {
+      // v3.7.0 议题六 P1：暂停天数必须在服务端校验（1~35），
+      // 渲染层只给档位，不参与 FILETIME 计算，也不得透传任意 key/value。
+      const d = Number(params.days);
+      if (!Number.isFinite(d)) {
+        return { success: false, message: '缺少暂停天数参数' };
+      }
+      const days = Math.trunc(d);
+      if (days < 1 || days > OPTIMIZER.WU_PAUSE_MAX_DAYS) {
+        return { success: false, message: `暂停天数需在 1~${OPTIMIZER.WU_PAUSE_MAX_DAYS} 天之间` };
+      }
+      steps = OPTIMIZER.windowsUpdatePauseSteps(days);
     } else {
       steps = [];
     }
@@ -2967,11 +2980,24 @@ handleSafe('optimizer:run', async (event, { optionId, params = {} } = {}) => {
     // v2.6.0（P0-1/P0-2）：记账收尾与执行后回读验证
     if (OPT_STATE.ready()) {
       if (isRestoreRun) {
-        // 还原成功才销账；失败保留记录等下次重试（不变式②）
+        // v3.7.0 议题六 P0：还原同样要回读，成功 ≠ 已恢复。
         if (ok) {
+          const rverify = await verifyOptionRestored(optionId, opt);
+          if (rverify === 'partial') {
+            // 脚本成功但真实状态仍不符：保留备份与已应用记录（不销账），
+            // 让用户看到「还原未完全生效，可重试」而不是静默假成功。
+            writeLog('warn', `还原后回读校验不符（可能被组策略/安全软件覆盖）: ${opt && opt.title || optionId}`);
+            OPT_STATE.setDetectedEntry(optionId, true);
+            return { success: true, message: '还原已执行但未完全生效（回读不符），可重试', verify: rverify };
+          }
+          // 还原成功才销账；失败保留记录等下次重试（不变式②）
           OPT_STATE.remove(optionId);
           // v2.7.0：及时回写检测结果（还原成功 = 当前未生效；动态修正交由启动扫描）
           OPT_STATE.setDetectedEntry(optionId, false);
+          if (rverify === 'unknown') {
+            writeLog('info', `还原完成但无可用回读手段（未做验证）: ${opt && opt.title || optionId}`);
+          }
+          return { success: true, message: okMessage, verify: rverify };
         }
       } else if (ok) {
         const verify = await verifyOptionApplied(optionId, opt, params);
@@ -3148,6 +3174,91 @@ async function verifyOptionApplied(optionId, opt, params) {
   } catch (e) {
     writeLog('warn', `回读验证异常（按 unknown 处理）: ${optionId}: ${e.message}`);
     return 'unknown';
+  }
+}
+
+// v3.7.0 议题六 P0：还原方向的回读验证。
+// 背景：正向执行早已回读（verifyOptionApplied），但还原分支只判断脚本 ok ——
+// 「还原脚本执行成功」被直接当成「系统状态已恢复」，且还原后立即销账。
+// 若组策略、安全软件或驱动把值覆盖回去，Trim 会静默假成功，而备份已被清掉、无法重试。
+// 复用既有的值级备份（optimizer-backups.json）做逐项比对，不另造一套系统。
+// 返回值沿用三态：pass = 已恢复 / partial = 脚本成功但真实状态仍不符 / unknown = 无可用检测手段。
+async function verifyOptionRestored(optionId, opt) {
+  try {
+    // 1) 首选：按备份里的原值逐项比对（原值本来不存在时，必须确认当前确实不存在）
+    const map = loadOptBackups();
+    const entry = map && map[optionId];
+    if (entry && Array.isArray(entry.values) && entry.values.length) {
+      const cur = await readRegValuesForVerify(entry.values);
+      if (!cur) return 'unknown';
+      for (let i = 0; i < entry.values.length; i++) {
+        const want = entry.values[i];
+        const got = cur[i];
+        if (!got) return 'unknown';
+        if (!!want.exists !== !!got.exists) return 'partial';
+        if (!want.exists) continue; // 原值不存在 + 当前不存在 = 已恢复
+        if (String(want.type) !== String(got.type)) return 'partial';
+        if (String(want.data) !== String(got.data)) return 'partial';
+      }
+      return 'pass';
+    }
+    // 2) 无值级备份：退回反向判据——「优化态是否已解除」
+    //    checkOptimizedInternal 判的是目标（优化后）值是否仍在生效；
+    //    还原成功后它应当为 false，仍为 true 说明还原没落到实况。
+    const steps = (opt && opt.steps) || [];
+    const checkable = steps.some(s => s && (typeof s.reg === 'string' || (s.service && s.disable)));
+    if (!checkable) return 'unknown'; // 命令类/动态项无检测手段，照实返回 unknown，不伪造 pass
+    const results = await checkOptimizedInternal([optionId]);
+    if (!(optionId in results)) return 'unknown';
+    return results[optionId] === false ? 'pass' : 'partial';
+  } catch (e) {
+    writeLog('warn', `还原后回读异常（按 unknown 处理）: ${optionId}: ${e.message}`);
+    return 'unknown';
+  }
+}
+
+// 只读读取一组注册表键的当前状态（与 backupOptionRegValuesById 的 Read-One 口径一致），
+// 用于还原后逐项比对。返回与入参同序的数组；失败返回 null。
+async function readRegValuesForVerify(values) {
+  const esc = (s) => String(s).replace(/'/g, "''");
+  const L = [
+    '$ErrorActionPreference = "SilentlyContinue"',
+    'function Read-One([string]$hive, [string]$sub, [string]$name) {',
+    '  $r = @{ hive = $hive; sub = $sub; key = $name; exists = $false }',
+    '  try {',
+    '    $rk = [Microsoft.Win32.Registry]::$hive.OpenSubKey($sub, $false)',
+    '    if ($rk) {',
+    '      $v = $rk.GetValue($name)',
+    '      if ($null -ne $v) {',
+    '        $r.exists = $true',
+    '        $kind = $rk.GetValueKind($name)',
+    "        if ($kind -eq 'DWord') { $r.type = 'REG_DWORD'; $r.data = [string]([int]$v) }",
+    "        elseif ($kind -eq 'QWord') { $r.type = 'REG_QWORD'; $r.data = [string]([long]$v) }",
+    "        elseif ($kind -eq 'Binary') { $r.type = 'REG_BINARY'; $r.data = ([byte[]]$v | ForEach-Object { $_.ToString('x2') }) -join '' }",
+    "        else { $r.type = 'REG_SZ'; $r.data = [string]$v }",
+    '      }',
+    '      $rk.Close()',
+    '    }',
+    '  } catch {}',
+    '  return $r',
+    '}'
+  ];
+  for (const v of values) {
+    L.push(`$out += Read-One '${esc(v.hive)}' '${esc(v.sub)}' '${esc(v.key)}'`);
+  }
+  L.push('$out | ConvertTo-Json -Compress -Depth 5');
+  const scriptPath = writeTempScript(L.join('\n'));
+  try {
+    const { stdout, code } = await runPowerShellFile(scriptPath, { timeout: 60000 });
+    if (code !== 0) return null;
+    let parsed;
+    try { parsed = JSON.parse(stdout.trim() || '[]'); } catch (e) { return null; }
+    const arr = Array.isArray(parsed) ? parsed : [parsed];
+    return arr.length === values.length ? arr : null;
+  } catch (e) {
+    return null;
+  } finally {
+    try { fs.unlinkSync(scriptPath); } catch (e) {}
   }
 }
 
@@ -3979,21 +4090,9 @@ handleSafe('appearance:get-material', async () => {
   return { material: ap.material || 'mica-alt', materialEnabled: ap.materialEnabled !== false };
 });
 
-// 专家模式（v3.0 默认应用接管）：appearance.json 主进程真源，默认关闭。
-// 渲染层 localStorage 仅作镜像显示；高危操作（UCPD/策略键）由主进程另行校验权限，
-// 该开关只控制页面上高风险入口的可见性。
-handleSafe('appearance:get-expert', async () => {
-  const ap = loadAppearance();
-  return { expertMode: ap.expertMode === true };
-});
-
-handleSafe('appearance:set-expert', async (event, { expertMode } = {}) => {
-  const ap = loadAppearance();
-  ap.expertMode = expertMode === true;
-  saveAppearance(ap);
-  writeLog('info', `专家模式已${ap.expertMode ? '开启' : '关闭'}`);
-  return { success: true, expertMode: ap.expertMode };
-});
+// v3.7.0：「专家模式」（appearance:get-expert / set-expert）随「默认应用接管」一并退役——
+// 它名义上挂在 appearance 下，实为该功能独占设施（只控制 UCPD/策略键等高危入口的可见性），
+// 功能删除后无任何使用者；appearance.json 的 expertMode 字段随之作废（读到也忽略）。
 
 // 把原生材质应用到全部存活窗口；单窗失败不影响其余窗口与持久化
 //（Win11 27H2 运行中重设可能不生效，重启后由构造参数保证最终一致）
@@ -5264,6 +5363,10 @@ handleSafe('diskbench:run', async (event, options = {}) => {
   const safeOptions = {
     path: resolved,
     blockSize: [4096, 65536, 1048576].includes(Number(options?.blockSize)) ? Number(options.blockSize) : 1048576,
+    // v3.7.0 议题四：这两项是**字面常量**，不是从 options 取值。当前 PowerShell 测速循环
+    // 为同步单流 I/O，QD 与线程数均无法调节；此处保留 pass-through 仅作为结果 JSON 的标签，
+    // 不参与任何 I/O 行为（diskbench-scripts.js 也只是把它们原样回写进结果）。
+    // 若将来真做并发，必须同步放开 main.js 的白名单校验与 PS 侧循环，否则就是 UI 撒谎。
     queueDepth: 1,
     threads: 1,
     duration: [4, 8, 16].includes(Number(options?.duration)) ? Number(options.duration) : 8
@@ -7138,318 +7241,6 @@ handleSafe('maintenance:run', async (event, { taskId } = {}) => {
   }
 });
 
-// ==================== 默认应用接管 IPC（v3.0） ====================
-// 三条路径：A 引导（纯渲染层）/ B 策略 XML（HKLM，需管理员）/ C 专家模式（UCPD + UserChoice 哈希）。
-// 数据即白名单：渲染层只传受支持的 key/progId（defaultapps-scripts.validateEntries 校验），
-// 命令原文全部由 defaultapps-scripts.js 生成。跨重启状态机落 defaultapps-state.json（原子写）。
-const DEFAULTAPPS_SCRIPT = require('./src/scripts-powershell/defaultapps-scripts');
-const DEFAULTAPPS_STATE_FILE = path.join(APP_DATA_DIR, 'defaultapps-state.json');
-const DEFAULTAPPS_XML_DIR = path.join(APP_DATA_DIR, 'defaultapps');
-
-function loadDefaultAppsState() {
-  try {
-    return JSON.parse(fs.readFileSync(DEFAULTAPPS_STATE_FILE, 'utf8')) || {};
-  } catch (e) { return {}; }
-}
-
-function saveDefaultAppsState(state) {
-  try { SECURITY.atomicWriteJson(DEFAULTAPPS_STATE_FILE, state); } catch (e) {
-    writeLog('error', `默认应用状态写入失败: ${e.message}`);
-  }
-}
-
-// UCPD 当前 Start 值（主进程自查，写入前 fail-closed：UCPD 未禁用时拒绝写 UserChoice）
-function readUcpdStart() {
-  try {
-    const out = spawnSync('reg', ['query', 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\UCPD', '/v', 'Start'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
-    if (out.status === 0) {
-      const m = String(out.stdout).match(/Start\s+REG_DWORD\s+0x([0-9a-f]+)/i);
-      if (m) return parseInt(m[1], 16);
-    }
-  } catch (e) {}
-  return null;
-}
-
-// 状态解析：把跨重启的 phase 与系统实况对齐（UCPD 复活检测 / 恢复完成确认）
-function resolveDefaultAppsState() {
-  const st = loadDefaultAppsState();
-  const start = readUcpdStart();
-  if (st.phase === 'AWAIT_REBOOT1' && start === 4) {
-    st.readyToWrite = true; // UCPD 已确认为禁用，可以继续写入
-  }
-  if (st.phase === 'AWAIT_REBOOT1' && start !== 4 && st.disableRequested) {
-    st.ucpdAlive = true;    // Windows 更新可能复活了 UCPD，页面顶部提示重做
-  }
-  if (st.phase === 'AWAIT_REBOOT2' && start !== 4) {
-    st.phase = 'DONE';      // 恢复重启已完成，保护已回归
-    st.doneAt = Date.now();
-    saveDefaultAppsState(st);
-  }
-  st.ucpdStart = start;
-  return st;
-}
-
-handleSafe('defaultapps:status', async () => {
-  const scriptPath = writeTempScript(DEFAULTAPPS_SCRIPT.status());
-  try {
-    const { stdout, code, stderr } = await runPowerShellFile(scriptPath, { timeout: 30000 });
-    if (code !== 0 || !stdout.trim()) return { success: false, message: stderr || '状态查询失败' };
-    const data = JSON.parse(stdout.trim().split('\n').filter(l => l.trim().startsWith('{')).pop());
-    return { success: true, data, state: resolveDefaultAppsState() };
-  } catch (e) {
-    return { success: false, message: e.message };
-  } finally {
-    try { fs.unlinkSync(scriptPath); } catch (e) {}
-  }
-});
-
-handleSafe('defaultapps:list-programs', async () => {
-  const scriptPath = writeTempScript(DEFAULTAPPS_SCRIPT.listPrograms());
-  try {
-    const { stdout, code, stderr } = await runPowerShellFile(scriptPath, { timeout: 45000 });
-    if (code !== 0 || !stdout.trim()) return { success: false, message: stderr || '程序枚举失败' };
-    const data = JSON.parse(stdout.trim().split('\n').filter(l => l.trim().startsWith('{')).pop());
-    return { success: true, data };
-  } catch (e) {
-    return { success: false, message: e.message };
-  } finally {
-    try { fs.unlinkSync(scriptPath); } catch (e) {}
-  }
-});
-
-handleSafe('defaultapps:apply-xml', async (event, { entries } = {}) => {
-  let items;
-  try { items = DEFAULTAPPS_SCRIPT.validateEntries(entries); } catch (e) {
-    return { success: false, message: e.message };
-  }
-  flushLogSync(); // 危险操作前刷盘：写 HKLM 策略键属系统级变更
-  try {
-    fs.mkdirSync(DEFAULTAPPS_XML_DIR, { recursive: true });
-  } catch (e) {}
-  const xmlPath = path.join(DEFAULTAPPS_XML_DIR, 'DefaultAssociations.xml');
-  const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  const xml = '<?xml version="1.0" encoding="UTF-8"?>\r\n<DefaultAssociations>\r\n' +
-    items.map(i => `  <Association Identifier="${esc(i.key)}" ProgId="${esc(i.progId)}" />\r\n`).join('') +
-    '</DefaultAssociations>\r\n';
-  try { fs.writeFileSync(xmlPath, xml, 'utf8'); } catch (e) {
-    return { success: false, message: '策略 XML 写入失败: ' + e.message };
-  }
-  const scriptPath = writeTempScript(DEFAULTAPPS_SCRIPT.applyXml(xmlPath));
-  try {
-    const { stdout, code, stderr } = await runPowerShellFile(scriptPath, { timeout: 30000 });
-    const line = stdout.trim().split('\n').filter(l => l.trim().startsWith('{')).pop();
-    const result = line ? JSON.parse(line) : { ok: false };
-    if (result.ok) {
-      const st = loadDefaultAppsState();
-      st.phase = 'XML_APPLIED';
-      st.xmlPath = xmlPath;
-      st.xmlEntries = items;
-      st.xmlAppliedAt = Date.now();
-      saveDefaultAppsState(st);
-      writeLog('info', `默认应用策略 XML 已应用: ${items.map(i => i.key).join(',')}`);
-      return { success: true, data: { xmlPath } };
-    }
-    // v3.6.5 M1-2：原为双分支，但两分支返回字段完全一致（success/message/needAdmin），
-    // 差异仅在 message 取值优先级；且原第一个分支的判据（stderr 不含权限关键词）与它自己的
-    // needAdmin: true 自相矛盾——会把「策略键写入后校验不一致」这类非权限失败也引导去 UAC 提权，
-    // 而提权对已经失败的动作并没有用。合并为单一形态：
-    // 结构化 message 优先 → 裸 stderr（截断）→ 兜底文案；needAdmin 恒为 true，
-    // 因为本操作写 HKLM 策略键属系统级变更（与下行 set-ucpd 的单分支形态保持一致）。
-    // 行为等价性：result.message 为空时两式同得 stderr.slice(0,200)；stderr 为空时同得兜底文案。
-    // 遗留：「非权限类失败不应提示提权」的语义修正见 v3.6.5 设计文档遗留项 #9，本批不改行为。
-    return {
-      success: false,
-      message: result.message || (stderr ? stderr.slice(0, 200) : '') || '策略键写入失败（可能需要管理员权限）',
-      needAdmin: true
-    };
-  } catch (e) {
-    return { success: false, message: e.message, needAdmin: true };
-  } finally {
-    try { fs.unlinkSync(scriptPath); } catch (e) {}
-  }
-});
-
-handleSafe('defaultapps:remove-xml-policy', async () => {
-  flushLogSync();
-  const scriptPath = writeTempScript(DEFAULTAPPS_SCRIPT.removeXmlPolicy());
-  try {
-    const { code, stderr } = await runPowerShellFile(scriptPath, { timeout: 20000 });
-    if (code !== 0) return { success: false, message: stderr || '策略键移除失败' };
-    const st = loadDefaultAppsState();
-    if (st.phase === 'XML_APPLIED') { st.phase = 'IDLE'; st.xmlPath = null; saveDefaultAppsState(st); }
-    writeLog('info', '默认应用策略 XML 已移除');
-    return { success: true };
-  } catch (e) {
-    return { success: false, message: e.message };
-  } finally {
-    try { fs.unlinkSync(scriptPath); } catch (e) {}
-  }
-});
-
-handleSafe('defaultapps:set-ucpd', async (event, { disable, entries, originalStart } = {}) => {
-  if (typeof disable !== 'boolean') return { success: false, message: '参数不合法' };
-  let items = null;
-  if (disable && entries) {
-    try { items = DEFAULTAPPS_SCRIPT.validateEntries(entries); } catch (e) {
-      return { success: false, message: e.message };
-    }
-  }
-  flushLogSync(); // 危险操作前刷盘：禁用/恢复内核过滤驱动属高风险动作
-  const scriptPath = writeTempScript(DEFAULTAPPS_SCRIPT.setUcpd(disable, originalStart));
-  try {
-    const { stdout, code, stderr } = await runPowerShellFile(scriptPath, { timeout: 30000 });
-    const line = stdout.trim().split('\n').filter(l => l.trim().startsWith('{')).pop();
-    const result = line ? JSON.parse(line) : { ok: false };
-    if (!result.ok) return { success: false, message: result.message || stderr || 'UCPD 配置失败', needAdmin: true };
-    const st = loadDefaultAppsState();
-    if (disable) {
-      if (st.ucpdOriginalStart == null && originalStart != null) st.ucpdOriginalStart = originalStart;
-      st.disableRequested = true;
-      if (items) { st.pendingWrites = items; }
-      st.phase = 'AWAIT_REBOOT1';
-    } else {
-      st.userChoseRestore = true;
-      if (st.phase === 'AWAIT_REBOOT1') st.phase = 'ROLLED_BACK'; // 未写入就恢复：直接回滚
-      else st.phase = 'AWAIT_REBOOT2';
-    }
-    st.updatedAt = Date.now();
-    saveDefaultAppsState(st);
-    writeLog('info', `UCPD 已${disable ? '禁用' : '恢复'}（默认应用接管专家模式）`);
-    return { success: true };
-  } catch (e) {
-    return { success: false, message: e.message, needAdmin: true };
-  } finally {
-    try { fs.unlinkSync(scriptPath); } catch (e) {}
-  }
-});
-
-handleSafe('defaultapps:write-class', async (event, { entries } = {}) => {
-  let items;
-  try { items = DEFAULTAPPS_SCRIPT.validateEntries(entries); } catch (e) {
-    return { success: false, message: e.message };
-  }
-  // fail-closed：UCPD 未禁用时删除 UserChoice 会被内核过滤驱动拦截，直接拒绝
-  const ucpd = readUcpdStart();
-  if (ucpd !== 4) {
-    return { success: false, message: 'UCPD 保护驱动未处于禁用状态，无法删除 UserChoice。请先完成专家模式的禁用与重启流程。', ucpdBlocked: true };
-  }
-  flushLogSync();
-  const scriptPath = writeTempScript(DEFAULTAPPS_SCRIPT.writeClass(items));
-  try {
-    const { stdout, stderr } = await runPowerShellFile(scriptPath, { timeout: 60000 });
-    if (!stdout.trim()) return { success: false, message: stderr || '写入无输出' };
-    const data = JSON.parse(stdout.trim().split('\n').filter(l => l.trim().startsWith('[')).pop());
-    const okAll = Array.isArray(data) && data.length > 0 && data.every(r => r.ok);
-    const st = loadDefaultAppsState();
-    if (okAll) {
-      st.phase = 'WRITE_DONE';
-      st.writtenAt = Date.now();
-      saveDefaultAppsState(st);
-    }
-    // 复核 DA-3/N1（默认应用，2026-09-16）：删除 UserChoice 前采集的原 ProgId 落盘持久化
-    // （origChoices：key → 原值）。此前只在 PS 结果里带回、主进程丢弃，用户在 Trim 之前的
-    // 原选择实际不可追溯。写入成败都记账，供失败提示与人工回退参考（UserChoice 受系统
-    // 哈希保护无法程序化写回，恢复以「原值展示 + 手动重选」为诚实口径）。
-    const origChoices = (st.origChoices && typeof st.origChoices === 'object' && !Array.isArray(st.origChoices)) ? st.origChoices : {};
-    let origChanged = false;
-    for (const r of (Array.isArray(data) ? data : [])) {
-      if (r && r.key && typeof r.origProgId === 'string' && r.origProgId && origChoices[r.key] !== r.origProgId) {
-        origChoices[r.key] = r.origProgId;
-        origChanged = true;
-      }
-    }
-    if (origChanged) { st.origChoices = origChoices; saveDefaultAppsState(st); }
-    writeLog(okAll ? 'info' : 'warn', `类级关联写入${okAll ? '完成' : '部分失败'}: ${items.map(i => i.key).join(',')}`);
-    return { success: okAll, data };
-  } catch (e) {
-    return { success: false, message: e.message };
-  } finally {
-    try { fs.unlinkSync(scriptPath); } catch (e) {}
-  }
-});
-
-// 状态机读取（跨重启续接）：渲染层据此渲染「继续写入 / 恢复 UCPD / 重做」等面板
-handleSafe('defaultapps:get-state', async () => {
-  return { success: true, state: resolveDefaultAppsState() };
-});
-
-// v3.2.1：默认应用接管聚合加载——status/listPrograms 两个 PowerShell 采集打包持久缓存，
-// 首次扫描后一直读文件；refresh=true（页面「刷新」按钮）才重新采集。getState 为轻量文件读实时取。
-handleSafe('defaultapps:load-all', async (event, { refresh = false } = {}) => {
-  if (!refresh) {
-    const cached = loadScanCache('defaultapps-scan.json');
-    if (cached && cached.data) {
-      const { statusResp, progResp } = cached.data;
-      if (statusResp?.success && progResp?.success) {
-        return {
-          success: true, cached: true, cachedAt: cached.timestamp,
-          statusResp, progResp, stateResp: { success: true, state: resolveDefaultAppsState() }
-        };
-      }
-    }
-  }
-  const [statusResp, progResp] = await Promise.all([
-    (async () => {
-      const scriptPath = writeTempScript(DEFAULTAPPS_SCRIPT.status());
-      try {
-        const { stdout, code, stderr } = await runPowerShellFile(scriptPath, { timeout: 30000 });
-        if (code !== 0 || !stdout.trim()) return { success: false, message: stderr || '状态查询失败' };
-        const data = JSON.parse(stdout.trim().split('\n').filter(l => l.trim().startsWith('{')).pop());
-        return { success: true, data, state: resolveDefaultAppsState() };
-      } catch (e) {
-        return { success: false, message: e.message };
-      } finally {
-        try { fs.unlinkSync(scriptPath); } catch (e) {}
-      }
-    })(),
-    (async () => {
-      const scriptPath = writeTempScript(DEFAULTAPPS_SCRIPT.listPrograms());
-      try {
-        const { stdout, code, stderr } = await runPowerShellFile(scriptPath, { timeout: 45000 });
-        if (code !== 0 || !stdout.trim()) return { success: false, message: stderr || '程序枚举失败' };
-        const data = JSON.parse(stdout.trim().split('\n').filter(l => l.trim().startsWith('{')).pop());
-        return { success: true, data };
-      } catch (e) {
-        return { success: false, message: e.message };
-      } finally {
-        try { fs.unlinkSync(scriptPath); } catch (e) {}
-      }
-    })()
-  ]);
-  if (statusResp?.success && progResp?.success) {
-    saveScanCache('defaultapps-scan.json', { statusResp, progResp });
-  }
-  return { success: true, statusResp, progResp, stateResp: { success: true, state: resolveDefaultAppsState() } };
-});
-
-// v3.6.5 M1-3：清空接管状态属**不可逆的状态丢失**操作（会抹掉 pendingWrites 续接清单与
-// ucpdOriginalStart 恢复基线，两者都无法重建）。沿用 OPT-1 的既有先例（main.js:2659-2682）：
-// 渲染层红色确认后携带回执，主进程见不到回执即拒绝——被攻陷的渲染层无法绕过确认直接清空。
-// 严格等值（!== true）对齐 :2679 的写法，防止 { confirmed: 'false' } 这类真值串被当作回执。
-handleSafe('defaultapps:clear-state', async (event, params) => {
-  const confirmed = params && params.confirmed;
-  if (confirmed !== true) {
-    writeLog('warn', '默认应用状态清空缺少确认回执，已拒绝');
-    return { success: false, needConfirm: true, message: '重置接管状态缺少确认回执，请在界面重新确认后执行' };
-  }
-  flushLogSync();               // 危险操作前刷盘（与同模块其它写操作一致）
-  saveDefaultAppsState({});     // 仍走 atomicWriteJson
-  writeLog('warn', '默认应用接管状态已被重置');
-  return { success: true };
-});
-
-// A 路径引导：打开系统「默认应用」设置页（固定 URI，白名单常量，渲染层不可传参）
-handleSafe('defaultapps:open-settings', async () => {
-  try {
-    exec('start "" ms-settings:defaultapps', { windowsHide: true, timeout: 15000 }, (err) => {
-      if (err) writeLog('warn', `打开系统默认应用设置失败: ${err.message}`);
-    });
-    writeLog('info', '已引导打开系统默认应用设置');
-    return { success: true };
-  } catch (e) {
-    return { success: false, message: e.message };
-  }
-});
 
 // ==================== 网络检测 IPC（v3.0） ====================
 // 只读采集单脚本单 JSON；修复动作白名单映射固定命令，唯一可变参数（网卡名/接口索引）

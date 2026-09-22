@@ -26,6 +26,7 @@
   const BADGE_CLASS = { pending: 'pending', scanning: 'scanning', ok: 'ok', warn: 'warn', fail: 'fail', unknown: 'warn' };
 
   const states = {};      // itemId -> { status, evidence, detail, repair }
+  let nicProps = null;    // v3.7.0：网卡高级属性只读快照（独立于 6 项诊断状态）
   let collecting = false;
   let initialized = false;
 
@@ -107,6 +108,58 @@
     });
   }
 
+  // v3.7.0 议题六 P1：网卡高级属性只读枚举（方案 §7.5 第一阶段）
+  // 只呈现真实枚举结果，不提供任何写入入口；虚拟网卡单独列出并标注不可写。
+  const NIC_KIND_TEXT = { ethernet: '有线', wlan: '无线', other: '其他物理网卡' };
+
+  function renderNicProps() {
+    const box = document.getElementById('netcheckNicProps');
+    if (!box) return;
+    const nic = nicProps;
+    if (!nic) { box.innerHTML = ''; return; }
+    const phys = Array.isArray(nic.physical) ? nic.physical : [];
+    const virt = Array.isArray(nic.virtual) ? nic.virtual : [];
+    const valLines = [];
+    for (const a of phys) {
+      const head = `${escapeHtml(a.name)}（${escapeHtml(NIC_KIND_TEXT[a.kind] || '物理网卡')}）` +
+        ` · ${escapeHtml(a.status || '')}` + (a.speed ? ` · ${escapeHtml(a.speed)}` : '');
+      valLines.push('<span class="netcheck-evidence-line nic-prop-head">' + head + '</span>');
+      const st = [];
+      if (a.rss === true || a.rss === false) st.push('RSS ' + (a.rss ? '开' : '关'));
+      if (a.csum) st.push('校验和卸载 ' + escapeHtml(a.csum));
+      if (a.pmOff === true || a.pmOff === false) st.push('允许关闭设备节能 ' + (a.pmOff ? '是' : '否'));
+      if (a.wolMagic === true || a.wolMagic === false) st.push('魔术包唤醒 ' + (a.wolMagic ? '开' : '关'));
+      if (st.length) {
+        valLines.push('<span class="netcheck-evidence-line nic-prop-sub">' + escapeHtml(st.join(' · ')) + '</span>');
+      }
+      const props = Array.isArray(a.props) ? a.props : [];
+      if (!props.length) {
+        valLines.push('<span class="netcheck-evidence-line nic-prop-sub">该网卡驱动未暴露可枚举高级属性</span>');
+      } else {
+        for (const p of props) {
+          const valid = Array.isArray(p.valid) && p.valid.length ? `（可选：${p.valid.join(' / ')}）` : '';
+          valLines.push('<span class="netcheck-evidence-line nic-prop-item">' +
+            escapeHtml(`${p.name}：${p.value}${valid}`) + '</span>');
+        }
+      }
+    }
+    let virtHtml = '';
+    if (virt.length) {
+      virtHtml = '<div class="netcheck-detail">虚拟网卡（VPN / 虚拟交换机等）' + virt.length +
+        ' 张：' + escapeHtml(virt.map(v => v.name).join('、')) + ' —— 第一版只展示，不开放写入。</div>';
+    }
+    box.innerHTML = '<div class="netcheck-item card" data-nic-readonly="1">' +
+      '<div class="netcheck-head">' +
+      '<div class="netcheck-copy"><strong>网卡高级属性（只读）</strong>' +
+      '<span>按驱动真实枚举显示物理网卡的高级属性与 RSS / 校验卸载 / 电源管理状态，第一版不提供写入</span></div>' +
+      '<span class="netcheck-badge ok">只读</span>' +
+      '</div>' +
+      (phys.length ? '<div class="netcheck-evidence">' + valLines.join('') + '</div>'
+        : '<div class="netcheck-detail">未枚举到物理网卡（Get-NetAdapter -Physical）</div>') +
+      virtHtml +
+      '</div>';
+  }
+
   function setAll(status) {
     for (const id of Object.keys(ITEM_META)) {
       states[id] = { status };
@@ -120,7 +173,9 @@
     const btn = document.getElementById('btnNetcheckStart');
     if (btn) { btn.disabled = true; btn.textContent = '检测中…'; }
     setAll('scanning');
+    nicProps = null;
     renderAll();
+    renderNicProps();
     try {
       const resp = await window.api.netcheck.collect();
       const items = resp?.success && Array.isArray(resp.data?.items) ? resp.data.items : null;
@@ -139,6 +194,9 @@
         renderAll();
         if (i < ids.length - 1) await new Promise(r => setTimeout(r, 300));
       }
+      // 网卡只读区在 6 项揭示完成后一次性呈现（不参与逐项扫描节奏）
+      nicProps = resp?.data?.nicProps || null;
+      renderNicProps();
       const bad = items.filter(it => it.status === 'fail').length;
       const warn = items.filter(it => it.status === 'warn').length;
       if (bad || warn) toast('warning', `检测完成：${bad} 项异常，${warn} 项警告`);

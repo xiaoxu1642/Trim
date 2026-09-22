@@ -117,8 +117,18 @@
   };
 
   // ==================== 进度型 Toast ====================
+  // v3.7.0 议题一（单例语义修复）：此前的实现有两个相互叠加的缺陷——
+  //   ① finishProgressToast 先把模块级 progressToast 置空，已完成的那条就此脱离
+  //      单例管理变成孤儿，后续 disposeProgressToast 因 `if (!progressToast) return` 空转；
+  //   ② 移除计时器挂在模块级 progressTimer 上，下一条完成时 clearTimeout 会顺手
+  //      取消掉上一条的计时 → 批量 N 项时前 N-1 条永久驻留（与截图一堆积形态吻合）。
+  // 现在：完成只打 finished 标记不摘引用，计时器归属 Toast 自身（t.removeTimer），
+  // 由下一条 createProgressToast 认领槽位时统一清理上一条。
   let progressToast = null;
-  let progressTimer = null;
+  const PROGRESS_TOAST_DWELL_MS = 2000; // 单条完成后停留 2s（2026-09-23 用户裁定口径）
+  // 批量执行时的序号后缀（「3/12」）。此前循环里先建一条带序号的 Toast，runOptionActive
+  // 内又建一条并立刻销毁前者——每项白建白毁一个节点；现在只建一条，序号走这个后缀传入。
+  let progressToastSuffix = '';
 
   function iconFor(type) {
     if (type === 'success') return '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>';
@@ -135,12 +145,21 @@
     el.innerHTML = `
       <div class="toast-icon">${iconFor('pending')}</div>
       <div class="toast-message">
-        <div class="toast-title">优化电脑</div>
+        <div class="toast-title">优化电脑${progressToastSuffix ? '（' + progressToastSuffix + '）' : ''}</div>
         <div class="toast-tune">正在执行「${title}」…</div>
         <div class="toast-progress"><div class="toast-progress-bar"><div class="toast-progress-fill"></div></div></div>
       </div>`;
     container.appendChild(el);
-    progressToast = { el, title };
+    const entry = {
+      el,
+      title,
+      finished: false,
+      removeTimer: null,
+      // 让「点击空白关最顶层 Toast」也够得到进度 Toast（此前它游离在 activeToasts 之外）
+      remove: () => disposeProgressToast(true)
+    };
+    progressToast = entry;
+    window.app?.registerToast?.(entry);
     return progressToast;
   }
 
@@ -155,7 +174,8 @@
   function finishProgressToast(ok, message) {
     if (!progressToast) return;
     const t = progressToast;
-    progressToast = null;
+    // 不再提前摘引用：保留 finished 标记，由下一条 createProgressToast 或计时器回收
+    t.finished = true;
     const icon = t.el.querySelector('.toast-icon');
     const tune = t.el.querySelector('.toast-tune');
     if (icon) icon.innerHTML = ok ? iconFor('success') : iconFor('error');
@@ -164,20 +184,21 @@
     if (fill) { fill.style.width = '100%'; fill.classList.add(ok ? 'done' : 'failed'); }
     t.el.classList.remove('info');
     t.el.classList.add(ok ? 'success' : 'error');
-    clearTimeout(progressTimer);
-    progressTimer = setTimeout(() => {
-      if (t.el && t.el.parentNode) t.el.classList.add('removing');
-      setTimeout(() => t.el && t.el.parentNode && t.el.remove(), 200);
-    }, 3000);
+    clearTimeout(t.removeTimer);
+    // 计时器归属自身：不再存在"下一条取消上一条计时"的连带取消
+    t.removeTimer = setTimeout(() => disposeProgressToast(false), PROGRESS_TOAST_DWELL_MS);
   }
 
   function disposeProgressToast(instant) {
     if (!progressToast) return;
     const t = progressToast;
     progressToast = null;
+    clearTimeout(t.removeTimer);
+    window.app?.unregisterToast?.(t);
     if (t.el && t.el.parentNode) {
       t.el.classList.add('removing');
-      setTimeout(() => t.el.parentNode && t.el.remove(), instant ? 0 : 200);
+      // v3.5.1 动效审查 H4：出场动画 220ms，200ms 移除会把尾巴硬切，留 260ms 余量
+      setTimeout(() => t.el && t.el.parentNode && t.el.remove(), instant ? 0 : 260);
     }
   }
 
@@ -191,7 +212,8 @@
     'perf_vbs_off',          // 关闭 VBS / 内存完整性
     'perf_exploit_protection_off', // 关闭 Exploit Protection（乱序内存）
     'tf_svc_bulk',           // 禁用 70+ 非必要服务（含安全服务）
-    'tf_drv_disable'         // 禁用高风险驱动服务
+    'tf_drv_disable',        // 禁用高风险驱动服务
+    'perf_windows_update_off' // v3.7.0 P1：彻底禁用 Windows 更新（安全补丁不再送达）
   ]);
 
   // 执行前高危确认：返回 true 继续 / false 取消
@@ -1023,7 +1045,8 @@
     const failedNames = [];
     for (let i = 0; i < batch.length; i++) {
       const opt = batch[i];
-      createProgressToast(`${opt.title}（${i + 1}/${batch.length}）`);
+      // 进度 Toast 由 runOptionActive 内部创建（此前这里先建一条、内部再建一条并销毁前者）
+      progressToastSuffix = `${i + 1}/${batch.length}`;
       try {
         const succeeded = await runOptionActive({}, opt);
         if (succeeded) {
@@ -1033,8 +1056,8 @@
       } catch (e) {
         failCount++; failedNames.push(opt.title);
       }
-      disposeProgressToast(true);
     }
+    progressToastSuffix = '';
     batchRunning = false;
     if (btn) { btn.disabled = false; btn.innerHTML = btn.dataset.orig; delete btn.dataset.orig; }
     clearSelection();
@@ -1110,7 +1133,8 @@
     const failedNames = [];
     for (let i = 0; i < batch.length; i++) {
       const opt = batch[i];
-      createProgressToast(`${opt.title}（${i + 1}/${batch.length}）`);
+      // 进度 Toast 由 runOptionActive 内部创建（同上，消除每项一次白建白毁）
+      progressToastSuffix = `${i + 1}/${batch.length}`;
       try {
         const succeeded = await runOptionActive(opt.id === 'tf_svc_bulk' ? { includeStore: batchIncludeStore } : {}, opt);
         if (succeeded) {
@@ -1120,8 +1144,8 @@
       } catch (e) {
         failCount++; failedNames.push(opt.title);
       }
-      disposeProgressToast(true);
     }
+    progressToastSuffix = '';
     batchRunning = false;
     if (btn) { btn.disabled = false; btn.innerHTML = btn.dataset.orig; delete btn.dataset.orig; }
     setCardsSelected(false);
