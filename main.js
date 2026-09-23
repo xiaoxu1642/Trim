@@ -1985,6 +1985,16 @@ handleSafe('cleanup:check-locked', async (event, { ids } = {}) => {
           if (pf.id) lockedByItem.set(pf.id, (lockedByItem.get(pf.id) || 0) + 1);
           for (const p of Array.isArray(pf.procs) ? pf.procs : []) {
             if (typeof p.pid !== 'number' || typeof p.app !== 'string' || !p.app) continue;
+            // v3.7.3 修复①：RM（Restart Manager）总会把调用方列入占用者名单——Trim 常因自身
+            // 句柄出现在结果里；不剔除的话「立即结束进程」会 process.kill 自杀、清理中断。
+            // 检测侧直接剔除自身 PID，被占文件仍留在 locked 清单走「跳过/残留」路径。
+            if (p.pid === process.pid) continue;
+            // v3.7.3 修复②：explorer.exe 不属于 RM 的 RmCritical（ApplicationType==1000 只覆盖
+            // 会话管理器等），但为清几个垃圾文件 TerminateProcess 整个 shell（任务栏/桌面消失且
+            // 通常不自动重启）代价不成比例——按应用名命中即标记 critical，走「只展示、无结束入口」。
+            // 注意：RM 返回的是 FileDescription 显示名（中文系统为「Windows 资源管理器」，英文为
+            // "Windows Explorer"），不是 exe 名，故用「explorer」与「资源管理器」双模式匹配。
+            if (/explorer/i.test(p.app) || p.app.includes('资源管理器')) p.critical = true;
             byApp.set(p.app, (byApp.get(p.app) || 0) + 1);
             if (!procs.has(p.pid)) procs.set(p.pid, { pid: p.pid, app: p.app, critical: !!p.critical });
           }
@@ -2017,6 +2027,8 @@ handleSafe('cleanup:kill-locked-processes', async () => {
   const killed = [];
   const failed = [];
   for (const p of lastLockCheckProcs) {
+    // v3.7.3 兜底：检测侧已剔除自身 PID，这里再挡一道——任何路径下都不允许 kill 自己
+    if (p.pid === process.pid) continue;
     try {
       process.kill(p.pid);
       killed.push(p);

@@ -1720,6 +1720,29 @@ check('v3.3.4 占用检测链路：IPC 双侧对齐 + kill 通道不入只读白
   if (/ProcessStartTime: u64/.test(cs)) throw new Error('RM_UNIQUE_PROCESS 不得用 u64 FILETIME（4 字节对齐偏差致应用名错位）');
 });
 
+// v3.7.3：占用结束白名单治理——RM 必把调用方列入占用者，不剔除则「立即结束进程」自杀；
+// explorer 非 RmCritical 但杀 shell 代价不成比例，必须按显示名标记 critical 走只展示通道。
+check('v3.7.3 占用结束白名单：自身 PID 剔除 + explorer 不可结束', () => {
+  const mainSrc = fs.readFileSync(abs('main.js'), 'utf8');
+  // 检测侧：解析 @@LOCKED@@ 时剔除自身 PID（byApp/procs 双侧都不再出现 Trim 自己）
+  if (!/if \(p\.pid === process\.pid\) continue;/.test(mainSrc)) {
+    throw new Error('check-locked 解析侧未剔除自身 PID（防「立即结束进程」自杀）');
+  }
+  // kill 通道兜底：即使白名单异常混入自身 PID 也必须跳过
+  if (!/cleanup:kill-locked-processes[\s\S]{0,600}p\.pid === process\.pid\) continue;/.test(mainSrc)) {
+    throw new Error('kill 通道缺少自身 PID 兜底跳过');
+  }
+  // explorer 按显示名标记 critical：RM 返回 FileDescription（「Windows 资源管理器」/"Windows Explorer"），
+  // 双模式匹配缺一不可（中文系统只命中后者，英文系统只命中前者）
+  if (!/\/explorer\/i\.test\(p\.app\) \|\| p\.app\.includes\('资源管理器'\)/.test(mainSrc)) {
+    throw new Error('explorer 未按显示名双模式标记 critical');
+  }
+  // explorer 命中后必须走 critical 通道（白名单只收非 critical）——验证该过滤仍存在
+  if (!/lastLockCheckProcs = \[\.\.\.procs\.values\(\)\]\.filter\(p => !p\.critical\)/.test(mainSrc)) {
+    throw new Error('kill 白名单未按 critical 过滤');
+  }
+});
+
 check('v3.3.4 文案纠偏：partial 不计入 failed + 占用弹窗骨架', () => {
   const mainSrc = fs.readFileSync(abs('main.js'), 'utf8');
   const cjs = fs.readFileSync(abs('src/scripts/cleanup.js'), 'utf8');
