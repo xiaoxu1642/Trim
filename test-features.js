@@ -2131,9 +2131,68 @@ check('UCPD 裁定守卫：批量服务优化项不得禁用 UCPD', () => {
   if (/["']UCPD["']/.test(svcBlock)) throw new Error('tf_svc_extra5 仍包含 UCPD（应已剔出）');
 });
 
-// v3.7.0 议题六 P0：还原方向也要回读（成功 ≠ 已恢复）
-check('v3.7.0 优化项还原后逐项回读（partial 不得销账）', () => {
+// v3.7.1 R1/R2/R3：Rust 原生引擎四子命令契约回归锚（方案 v2：契约优先，渲染层读取字段为准）
+check('v3.7.1 R1：diskbench 原生引擎接线（QD/线程真实生效 + PS 回落）', () => {
   const main = fs.readFileSync(abs('main.js'), 'utf8');
+  if (!main.includes("'diskbench', '--path', resolved")) throw new Error('diskbench:run 未接 finder diskbench 子命令');
+  if (!main.includes('function runFinderDiskbench(')) throw new Error('缺少 finder diskbench 封装');
+  // QD=每线程在途上限拍板：主进程白名单 [1,8,32] / [1,4,8]，回落分支强制 QD1/T1 诚实化
+  if (!/queueDepth: \[1, 8, 32\]\.includes/.test(main)) throw new Error('QD 白名单未放开');
+  if (!/threads: \[1, 4, 8\]\.includes/.test(main)) throw new Error('线程白名单未放开');
+  if (!/safeOptions\.queueDepth = 1;\s*safeOptions\.threads = 1;/.test(main)) throw new Error('PS 回落分支未强制 QD1/T1');
+  if (!main.includes("ioMode: options?.ioMode === 'buf' ? 'buf' : 'nobuf'")) throw new Error('nobuf 默认拍板未落地');
+  if (!main.includes("engine: 'rust'") || !main.includes("engine: 'powershell'")) throw new Error('结果缺少引擎标识');
+  // 渲染层：QD/线程恢复可调下拉 + 引擎标识进状态行与历史
+  const html = fs.readFileSync(abs('src/index.html'), 'utf8');
+  if (!html.includes('<select id="diskQueueDepth"') || !html.includes('<select id="diskThreads"')) {
+    throw new Error('index.html QD/线程仍是只读文本');
+  }
+  const db = fs.readFileSync(abs('src/scripts/diskbench.js'), 'utf8');
+  if (/\|\|\s*'C:\\\\Users\\\\16076/.test(db) && !db.includes("path: ($('diskBenchPath')?.value || '').trim()")) {
+    throw new Error('diskbench.js 仍以硬编码开发机路径作为兜底默认值');
+  }
+  if (!db.includes("engine === 'rust' ? '测试完成（原生 Rust 引擎）'")) throw new Error('状态行缺引擎标识');
+  // 文档：guide 不得再宣称「固定为 QD 1」
+  const guide = fs.readFileSync(abs('src/assets/diskbench-guide.md'), 'utf8');
+  if (/固定为 QD 1|固定为 1 线程/.test(guide)) throw new Error('guide 仍宣称 QD/线程固定');
+});
+
+check('v3.7.1 R2：ov-metrics / net-sample 原生采样接线', () => {
+  const main = fs.readFileSync(abs('main.js'), 'utf8');
+  // R2b：overview:metrics 原生优先 + 主进程 CPU 差分（finder 无状态，首拍 cpu=null）
+  if (!main.includes("runFinderJson(finderExe, ['ov-metrics'], 15000)")) throw new Error('overview:metrics 未接 ov-metrics');
+  if (!main.includes('function cpuPercentFromRaw(')) throw new Error('缺少主进程 CPU 差分');
+  if (!/busyDelta \+ idleDelta <= 0/.test(main)) throw new Error('CPU 差分未防护计数回绕');
+  // R2a：realtime 流式采样器替换为 finder daemon，pwsh 保留为回落
+  if (!main.includes("['net-sample', '--daemon', '--interval', '1000']")) throw new Error('采样器未接 net-sample daemon');
+  if (!main.includes('function spawnPwshRealtimeSampler(')) throw new Error('缺少 pwsh 回落路径');
+  // Rust 端：物理卡过滤（HardwareInterface=1 且 FilterInterface=0）+ 差分留 Rust
+  const perf = fs.readFileSync(abs('native-scanner/src/perf.rs'), 'utf8');
+  if (!perf.includes('InterfaceAndOperStatusFlags._bitfield')) throw new Error('net-sample 未过滤 WFP 伪网卡');
+  if (!perf.includes('prev.get(&row.InterfaceIndex)')) throw new Error('net-sample 差分不在 Rust 侧');
+});
+
+check('v3.7.1 R3：mem-clean 逐字平移契约（82/84 黑名单继承 + 双特权）', () => {
+  const perf = fs.readFileSync(abs('native-scanner/src/perf.rs'), 'utf8');
+  // 5 区域顺序与 PS memory-scripts.js 一致：workingSet(80,1)→modified(80,2)→standby(80,3)→
+  // standbyPriority0(80,4)→combine(87)；82/84 在 27H2 上不可用，白名单必须不含
+  if (!/\("workingSet", 80, 1, 0, "工作集"\)/.test(perf)) throw new Error('workingSet 参数漂移');
+  if (!/\("modified", 80, 2, 0, "修改列表"\)/.test(perf)) throw new Error('modified 参数漂移');
+  if (!/\("standby", 80, 3, 0, "备用列表"\)/.test(perf)) throw new Error('standby 参数漂移');
+  if (!/\("standbyPriority0", 80, 4, 0, "低优先级备用列表"\)/.test(perf)) throw new Error('standbyPriority0 参数漂移');
+  if (!/\("combine", 87, 0, 1, "合并物理内存页"\)/.test(perf)) throw new Error('combine 参数漂移');
+  if (!perf.includes('"SeProfileSingleProcessPrivilege"') || !perf.includes('"SeIncreaseQuotaPrivilege"')) {
+    throw new Error('双特权缺失');
+  }
+  if (/82|84/.test(perf.slice(perf.indexOf('const MEM_ITEMS'), perf.indexOf('unsafe fn enable_privilege')))) {
+    throw new Error('mem-clean 白名单不得含 82/84（27H2 黑名单）');
+  }
+  const main = fs.readFileSync(abs('main.js'), 'utf8');
+  if (!main.includes("['mem-clean', '--items', list.join(',')]")) throw new Error('memory:clean 未接 mem-clean 子命令');
+});
+
+// v3.7.0 议题六 P0：还原方向也要回读（成功 ≠ 已恢复）
+check('v3.7.0 优化项还原后逐项回读（partial 不得销账）', () => {  const main = fs.readFileSync(abs('main.js'), 'utf8');
   for (const needle of ['async function verifyOptionRestored(', 'async function readRegValuesForVerify(']) {
     if (!main.includes(needle)) throw new Error('main.js 缺少 ' + needle);
   }

@@ -834,8 +834,9 @@
               <label class="field-label">块大小<select id="diskBlockSize" class="field-input"><option value="4096">4 KB</option><option value="65536">64 KB</option><option value="1048576" selected>1 MB</option></select></label>
               <!-- v3.7.0 议题四：队列深度与线程数此前是「禁用下拉 + 单个 1 选项」，看着像可配置；
                    实际四个测试循环均为同步单流 I/O，这两个值从未被消费。改为只读文本，不再伪装成选项。 -->
-              <label class="field-label" data-tip="当前实现为单队列单线程 I/O 模型，队列深度固定为 1，不可调整">队列深度<input id="diskQueueDepth" class="field-input" value="1（固定）" readonly /></label>
-              <label class="field-label" data-tip="当前实现为单队列单线程 I/O 模型，线程数固定为 1，不可调整">线程数<input id="diskThreads" class="field-input" value="1（固定）" readonly /></label>
+              <!-- v3.7.1 R1：Rust 原生引擎（OVERLAPPED 并发）下 QD/线程数真实生效；语义=QD 为每线程在途上限 -->
+              <label class="field-label">队列深度<select id="diskQueueDepth" class="field-input"><option value="1" selected>1（单队列）</option><option value="8">8</option><option value="32">32</option></select></label>
+              <label class="field-label">线程数<select id="diskThreads" class="field-input"><option value="1" selected>1</option><option value="4">4</option><option value="8">8</option></select></label>
               <label class="field-label">时长<select id="diskDuration" class="field-input"><option value="4">4 秒</option><option value="8" selected>8 秒</option><option value="16">16 秒</option></select></label>
             </div>
             <p class="benchmark-note">测试会在目标磁盘创建临时文件，完成后自动删除。当前采用单队列单线程模型，块大小用于模拟不同负载。</p>

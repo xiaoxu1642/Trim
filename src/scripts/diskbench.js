@@ -55,11 +55,11 @@
     const rawDuration = Number($('diskDuration')?.value || 8);
     const duration = [4, 8, 16].includes(rawDuration) ? rawDuration : 8;
     const options = {
-      path: $('diskBenchPath')?.value || 'C:\\Users\\16076\\Downloads',
+      path: ($('diskBenchPath')?.value || '').trim(), // 空路径由主进程白名单校验拒绝，不再回落硬编码开发机路径
       blockSize: Number($('diskBlockSize')?.value || 1048576),
-      // 当前实现为真实 QD1/单线程，避免 UI 报告与实际 I/O 模型不一致。
-      queueDepth: 1,
-      threads: 1,
+      // v3.7.1 R1：QD=每线程在途上限、线程数真实生效（Rust OVERLAPPED 并发）；白名单与主进程一致
+      queueDepth: [1, 8, 32].includes(Number($('diskQueueDepth')?.value)) ? Number($('diskQueueDepth').value) : 1,
+      threads: [1, 4, 8].includes(Number($('diskThreads')?.value)) ? Number($('diskThreads').value) : 1,
       duration
     };
     // 订阅后端真实进度
@@ -70,10 +70,12 @@
     }
     try {
       let result = MOCK;
+      let engine = '';
       if (window.api?.diskbench) {
         const response = await window.api.diskbench.run(options);
         if (!response.success) throw new Error(response.message);
         result = response.data;
+        engine = response.engine || '';
       } else {
         // 演示模式：按 3×duration 模拟进度
         const totalMs = duration * 3 * 1000;
@@ -87,9 +89,14 @@
         }
       }
       show(result);
+      if ($('diskBenchStatus')) {
+        // 引擎标识：原生 Rust 引擎结果与旧 PowerShell buffered 记录不可直接对比（nobuf 绕过文件系统缓存）
+        $('diskBenchStatus').textContent = engine === 'rust' ? '测试完成（原生 Rust 引擎）'
+          : engine === 'powershell' ? '测试完成（PowerShell 引擎）' : '测试完成';
+      }
       window.app?.toast('success', '磁盘测速完成，测试文件已清理');
       // 保存历史记录
-      saveHistoryRecord(result, options);
+      saveHistoryRecord(result, options, engine);
     } catch (error) {
       if ($('diskBenchStatus')) $('diskBenchStatus').textContent = '测试失败';
       window.app?.toast('error', `磁盘测速失败：${error.message}`);
@@ -102,7 +109,7 @@
   }
 
   // ==================== 历史记录 ====================
-  async function saveHistoryRecord(result, options) {
+  async function saveHistoryRecord(result, options, engine = '') {
     if (!window.api?.benchHistory) return;
     try {
       await window.api.benchHistory.add({
@@ -116,7 +123,8 @@
         randomRead: result.randomRead,
         randomWrite: result.randomWrite,
         iops: result.iops,
-        latency: result.latency
+        latency: result.latency,
+        engine: engine || undefined // 仅 rust/powershell，主进程白名单校验
       });
     } catch (e) {
       console.error('保存测速历史失败:', e);
@@ -193,7 +201,7 @@
                   <tr data-record-id="${r.id}">
                     <td class="bench-history-time">${formatTime(r.timestamp)}</td>
                     <td class="bench-history-path" data-tip="${escapeHtml(r.path || '')}">${escapeHtml(r.path || '--')}</td>
-                    <td>${formatBlock(r.blockSize)} / QD${r.queueDepth} / ${r.threads}T / ${r.duration}s</td>
+                    <td>${formatBlock(r.blockSize)} / QD${r.queueDepth} / ${r.threads}T / ${r.duration}s${r.engine === 'rust' ? '（原生）' : r.engine === 'powershell' ? '（PS）' : ''}</td>
                     <td class="bench-history-val">${Number(r.sequentialRead).toFixed(1)} MB/s</td>
                     <td class="bench-history-val">${Number(r.sequentialWrite).toFixed(1)} MB/s</td>
                     <td class="bench-history-val">${Number(r.randomRead).toFixed(1)} MB/s</td>

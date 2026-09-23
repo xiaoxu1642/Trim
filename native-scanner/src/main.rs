@@ -20,6 +20,10 @@ use std::sync::Mutex;
 // D:\KaiFa\文件分析\laji\磁盘清理扫描Rust化方案.md（v1.1）
 mod cleanup_scan;
 
+// v3.7.1 Rust 化批次（R1/R2/R3）：diskbench / ov-metrics / net-sample / mem-clean
+// 方案见 update history/9.23/Trim-Rust化方案-R1R2R3-v2-2026-09-23.md（契约优先）
+mod perf;
+
 // ---- 扫描并行参数（P0 批次）----
 /// 目录级分治展开层数。再深单目录已很小，调度开销大于收益。
 const PAR_DEPTH: usize = 3;
@@ -1514,6 +1518,30 @@ fn main() {
             // 清理前占用检测（v3.3.4）：stdin = {files:[{path,id}]}，输出被占用文件与占用进程。
             // 只读探测，不结束任何进程；结束进程由主进程按渲染层确认后执行。
             let code = cleanup_scan::run_checklocked();
+            let _ = std::io::Write::flush(&mut std::io::stdout());
+            std::process::exit(code);
+        }
+        "diskbench" => {
+            // v3.7.1 R1：磁盘测速原生引擎（nobuf 默认，QD=每线程在途上限）
+            let code = perf::run_diskbench(&args[1..]);
+            let _ = std::io::Write::flush(&mut std::io::stdout());
+            std::process::exit(code);
+        }
+        "ov-metrics" => {
+            // v3.7.1 R2b：系统概览高频指标（字段契约 = overview-scripts.js:60-74）
+            let code = perf::run_ov_metrics();
+            let _ = std::io::Write::flush(&mut std::io::stdout());
+            std::process::exit(code);
+        }
+        "net-sample" => {
+            // v3.7.1 R2a：实时网速采样 daemon（每秒一行 JSON，差分在 Rust，管道断裂即退出）
+            let code = perf::run_net_sample(&args[1..]);
+            let _ = std::io::Write::flush(&mut std::io::stdout());
+            std::process::exit(code);
+        }
+        "mem-clean" => {
+            // v3.7.1 R3：内存清理（双特权 + 82/84 黑名单继承 + results[] 契约）
+            let code = perf::run_mem_clean(&args[1..]);
             let _ = std::io::Write::flush(&mut std::io::stdout());
             std::process::exit(code);
         }

@@ -5245,20 +5245,71 @@ handleSafe('system:disk-type', async (event, { refresh = false } = {}) => {
 // 在途去重保证同一时刻最多只有一个 PowerShell 进程在跑（避免进程堆积推高内存）。
 let overviewMetricsCache = null; // { at, data }
 let overviewMetricsInflight = null; // Promise 去重句柄
+// v3.7.1 R2b：一次性运行 finder 子命令并解析最终单行 JSON（通用封装，diskbench 用带进度的专版）
+function runFinderJson(exe, args, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(exe, args, { windowsHide: true });
+    registerBackendChild(child, exe, args);
+    let settled = false, timer = null, out = '', err = '';
+    const finish = (fn, v) => { if (settled) return; settled = true; if (timer) clearTimeout(timer); fn(v); };
+    timer = setTimeout(() => { try { child.kill(); } catch (e) {} finish(reject, new Error('原生采集超时')); }, timeoutMs);
+    child.stdout.on('data', d => { out += d.toString('utf8'); });
+    child.stderr.on('data', d => { err += d.toString('utf8'); });
+    child.on('error', e => finish(reject, e));
+    child.on('exit', code => {
+      const line = out.split(/\r?\n/).filter(l => l.trim().startsWith('{')).pop();
+      if (code === 0 && line) { try { finish(resolve, JSON.parse(line)); return; } catch (e) {} }
+      finish(reject, new Error(err.trim() || `finder ${args[0]} 退出码 ${code}`));
+    });
+  });
+}
+
+// v3.7.1 R2b：Rust 端无状态 → 主进程缓存上一拍 CPU 计数做差分；首拍/计数回绕返回 null（渲染层显示 --）
+let ovCpuPrev = null;
+function cpuPercentFromRaw(raw) {
+  if (!raw || typeof raw.busy !== 'number' || typeof raw.idle !== 'number') return null;
+  const prev = ovCpuPrev;
+  ovCpuPrev = raw;
+  if (!prev) return null;
+  const busyDelta = raw.busy - prev.busy;
+  const idleDelta = raw.idle - prev.idle;
+  if (busyDelta < 0 || idleDelta < 0 || busyDelta + idleDelta <= 0) return null;
+  return Math.min(100, Math.max(0, (busyDelta * 100.0) / (busyDelta + idleDelta)));
+}
+
 async function collectOverviewMetrics() {
   if (overviewMetricsInflight) return overviewMetricsInflight;
   overviewMetricsInflight = (async () => {
-    const scriptPath = writeTempScript(OVERVIEW_SCRIPT.metrics());
+    // v3.7.1 R2b：原生引擎优先（单进程原生采样，替代 pwsh 冷启动）；失败回落 PS。
+    // 整个 body 包 try/finally 清 inflight——Rust 路径提前 return 也必须清，
+    // 否则缓存过期后永远返回首拍的 stale Promise（CPU 恒 null 的真因）
     try {
-      const { stdout, stderr, code } = await runPowerShellFile(scriptPath, { timeout: 60000 });
-      if (code !== 0) throw new Error(stderr || '系统指标采集失败');
-      const data = JSON.parse(stdout.trim());
-      overviewMetricsCache = { at: Date.now(), data };
-      return { success: true, data };
-    } catch (e) {
-      return { success: false, message: e.message };
+      const finderExe = resolveFinderExe();
+      if (finderExe) {
+        try {
+          const data = await runFinderJson(finderExe, ['ov-metrics'], 15000);
+          if (!data || data.success !== true) throw new Error((data && data.message) || '原生采集失败');
+          const cpu = cpuPercentFromRaw(data.cpuRaw);
+          if (cpu !== null) data.cpu = cpu; // 首拍保持 null
+          overviewMetricsCache = { at: Date.now(), data };
+          return { success: true, data, engine: 'rust' };
+        } catch (e) {
+          writeLog('warn', `Rust 系统指标不可用，回落 PowerShell: ${e.message}`);
+        }
+      }
+      const scriptPath = writeTempScript(OVERVIEW_SCRIPT.metrics());
+      try {
+        const { stdout, stderr, code } = await runPowerShellFile(scriptPath, { timeout: 60000 });
+        if (code !== 0) throw new Error(stderr || '系统指标采集失败');
+        const data = JSON.parse(stdout.trim());
+        overviewMetricsCache = { at: Date.now(), data };
+        return { success: true, data, engine: 'powershell' };
+      } catch (e) {
+        return { success: false, message: e.message };
+      } finally {
+        try { fs.unlinkSync(scriptPath); } catch (e) {}
+      }
     } finally {
-      try { fs.unlinkSync(scriptPath); } catch (e) {}
       overviewMetricsInflight = null;
     }
   })();
@@ -5334,6 +5385,46 @@ function getPathFreeBytes(resolved) {
   }
 }
 
+// v3.7.1 R1：finder.exe diskbench 子命令封装——__PROG__ 行转发进度、最终行 JSON 返回。
+// 超时/非零退出/解析失败一律抛错由调用方回落 PS。测试文件清理由 Rust 端自管（DeleteFileW），
+// 被强杀时的残留目录由 onAbortCleanup 兜底（与 PS 路径的 cleanupBenchResidue 同口径）。
+function runFinderDiskbench(event, exe, args, timeoutMs, onAbortCleanup) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(exe, args, { windowsHide: true });
+    registerBackendChild(child, exe, args);
+    let settled = false, timer = null, buf = '', lastJson = '', stderrTxt = '';
+    const finish = (fn, v) => { if (settled) return; settled = true; if (timer) clearTimeout(timer); fn(v); };
+    timer = setTimeout(() => {
+      try { child.kill(); } catch (e) {}
+      try { onAbortCleanup(); } catch (e) {}
+      finish(reject, new Error('磁盘测速超时（原生引擎）'));
+    }, timeoutMs);
+    child.stdout.on('data', d => {
+      buf += d.toString('utf8');
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).replace(/\r$/, '');
+        buf = buf.slice(nl + 1);
+        const m = /^\s*__PROG__(.+)$/.exec(line);
+        if (m) {
+          try { if (!event.sender.isDestroyed()) event.sender.send('diskbench:progress', JSON.parse(m[1])); } catch (e) {}
+        } else if (line.trim().startsWith('{')) {
+          lastJson = line.trim();
+        }
+      }
+    });
+    child.stderr.on('data', d => { stderrTxt += d.toString('utf8'); });
+    child.on('error', e => finish(reject, e));
+    child.on('exit', code => {
+      if (code === 0 && lastJson) {
+        try { finish(resolve, JSON.parse(lastJson)); return; } catch (e) {}
+      }
+      try { onAbortCleanup(); } catch (e) {}
+      finish(reject, new Error(stderrTxt.trim() || `finder diskbench 退出码 ${code}`));
+    });
+  });
+}
+
 handleSafe('diskbench:run', async (event, options = {}) => {
   const requestedPath = String(options?.path || '').trim();
   if (!requestedPath || !fs.existsSync(requestedPath)) return { success: false, message: '测速路径不存在' };
@@ -5363,16 +5454,14 @@ handleSafe('diskbench:run', async (event, options = {}) => {
   const safeOptions = {
     path: resolved,
     blockSize: [4096, 65536, 1048576].includes(Number(options?.blockSize)) ? Number(options.blockSize) : 1048576,
-    // v3.7.0 议题四：这两项是**字面常量**，不是从 options 取值。当前 PowerShell 测速循环
-    // 为同步单流 I/O，QD 与线程数均无法调节；此处保留 pass-through 仅作为结果 JSON 的标签，
-    // 不参与任何 I/O 行为（diskbench-scripts.js 也只是把它们原样回写进结果）。
-    // 若将来真做并发，必须同步放开 main.js 的白名单校验与 PS 侧循环，否则就是 UI 撒谎。
-    queueDepth: 1,
-    threads: 1,
-    duration: [4, 8, 16].includes(Number(options?.duration)) ? Number(options.duration) : 8
+    // v3.7.1 R1（Rust 引擎）：QD=每线程在途上限、线程数真实生效（OVERLAPPED 并发）。
+    // 白名单与 finder 侧一致；PS 回落路径是同步单流 I/O，回落时强制 QD1/T1 保持诚实。
+    queueDepth: [1, 8, 32].includes(Number(options?.queueDepth)) ? Number(options.queueDepth) : 1,
+    threads: [1, 4, 8].includes(Number(options?.threads)) ? Number(options.threads) : 1,
+    duration: [4, 8, 16].includes(Number(options?.duration)) ? Number(options.duration) : 8,
+    // R1 拍板：nobuf 默认（绕过文件系统缓存，测设备真实吞吐）；结果带 ioMode 标识
+    ioMode: options?.ioMode === 'buf' ? 'buf' : 'nobuf'
   };
-  const scriptPath = writeTempScript(DISKBENCH_SCRIPT.run(safeOptions));
-  // 4 个测试阶段（seqwrite/seqread/randread/randwrite）各跑 duration 秒，另留启动与缓冲清理余量
   const benchTimeoutMs = Number(safeOptions.duration) * 1000 * 4 + 60000;
   const resultLines = [];
   let outputBuffer = '';
@@ -5391,6 +5480,29 @@ handleSafe('diskbench:run', async (event, options = {}) => {
       writeLog('error', `磁盘测速残留清理失败: ${residueDir} -> ${e.message}`);
     }
   };
+  // v3.7.1 R1：原生引擎优先（无 pwsh 冷启动、真实并发）；任何失败回落 PowerShell。
+  // 放在 cleanupBenchResidue 之后、PS 脚本生成之前——回落时才按诚实化的 QD1/T1 生成脚本。
+  const finderExe = resolveFinderExe();
+  if (finderExe) {
+    try {
+      const benchArgs = [
+        'diskbench', '--path', resolved,
+        '--block-bytes', String(safeOptions.blockSize),
+        '--duration', String(safeOptions.duration),
+        '--qd', String(safeOptions.queueDepth),
+        '--threads', String(safeOptions.threads),
+        '--mode', safeOptions.ioMode
+      ];
+      const data = await runFinderDiskbench(event, finderExe, benchArgs, benchTimeoutMs, cleanupBenchResidue);
+      return { success: data.measured === true, data, engine: 'rust' };
+    } catch (e) {
+      writeLog('warn', `Rust 磁盘测速不可用，回落 PowerShell 引擎: ${e.message}`);
+      // 回落诚实化：PS 引擎是单队列单线程，强制与实际行为一致
+      safeOptions.queueDepth = 1;
+      safeOptions.threads = 1;
+    }
+  }
+  const scriptPath = writeTempScript(DISKBENCH_SCRIPT.run(safeOptions));
   try {
     const { stdout, stderr, code } = await runPowerShellFile(scriptPath, {
       timeout: benchTimeoutMs,
@@ -5419,7 +5531,7 @@ handleSafe('diskbench:run', async (event, options = {}) => {
       data = JSON.parse(last);
     }
     if (data.measured !== true) cleanupBenchResidue(); // 测量未完成也残留清理（同异常路径口径）
-    return { success: data.measured === true, data };
+    return { success: data.measured === true, data, engine: 'powershell' };
   } catch (e) {
     cleanupBenchResidue(); // 超时（runPowerShellFile 拒绝）与 JSON 解析失败都落到这里
     return { success: false, message: e.message };
@@ -5473,6 +5585,11 @@ handleSafe('bench-history:add', (event, { record } = {}) => {
     if (record.path !== undefined) {
       if (typeof record.path !== 'string' || record.path.length > 1024) return { success: false, message: '路径字段不合法' };
       clean.path = record.path;
+    }
+    // v3.7.1 R1：引擎标识（rust/powershell）——历史记录不跨引擎换算，仅作对比参考
+    if (record.engine !== undefined) {
+      if (record.engine !== 'rust' && record.engine !== 'powershell') return { success: false, message: '引擎标识不合法' };
+      clean.engine = record.engine;
     }
     if (clean.sequentialRead === undefined && clean.sequentialWrite === undefined) {
       return { success: false, message: '缺少测速结果数值' };
@@ -5734,20 +5851,39 @@ function stopRealtimeSampler() {
 function ensureRealtimeSampler() {
   rtSampler.lastRequestAt = Date.now();
   if (rtSampler.child) return;
-  let executable;
-  try {
-    executable = resolvePowerShell7Path();
-  } catch (err) {
-    writeLog('error', err.message);
-    return;
+  // v3.7.1 R2a：finder 常驻 daemon 优先（原生 GetIfTable2 采样，替代 pwsh 常驻进程，
+  // 进程创建数不变、CPU/内存双降；行协议与 pwsh 流式脚本一致）；失败回落 pwsh
+  const finderExe = resolveFinderExe();
+  if (finderExe) {
+    try {
+      const child = spawn(finderExe, ['net-sample', '--daemon', '--interval', '1000'], { windowsHide: true });
+      rtSampler.child = child;
+      rtSampler.buf = '';
+      registerBackendChild(child, finderExe, ['net-sample', '--daemon']);
+      attachRealtimeLineParser(child);
+      child.on('close', () => {
+        if (rtSampler.child === child) {
+          rtSampler.child = null;
+          rtSampler.latest = null;
+        }
+      });
+      child.on('error', err => {
+        writeLog('warn', `原生 net-sample daemon 不可用，回落 pwsh 采样器: ${err.message}`);
+        if (rtSampler.child === child) rtSampler.child = null;
+        spawnPwshRealtimeSampler();
+      });
+      startRealtimeIdleTimer();
+      writeLog('info', '实时网速采样器启动（原生 net-sample daemon）');
+      return;
+    } catch (e) {
+      writeLog('warn', `原生 net-sample daemon 启动失败，回落 pwsh 采样器: ${e.message}`);
+    }
   }
-  const child = spawn(executable, [
-    '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-    '-Command', REALTIME_STREAM_SCRIPT
-  ], { windowsHide: true });
-  rtSampler.child = child;
-  rtSampler.buf = '';
-  registerBackendChild(child, executable, ['-Command', 'realtime-stream']);
+  spawnPwshRealtimeSampler();
+}
+
+// 行解析（Rust daemon 与 pwsh 流式脚本共用同一协议：每秒一行 {"t",adapters:[...]}）
+function attachRealtimeLineParser(child) {
   child.stdout.on('data', d => {
     rtSampler.buf += d.toString('utf8');
     let idx;
@@ -5763,6 +5899,32 @@ function ensureRealtimeSampler() {
       } catch (e) { /* 非完整 JSON 行，忽略 */ }
     }
   });
+}
+
+// 空闲自动回收：连续 30s 无采样请求则结束常驻进程（离开测速页后不占资源）
+function startRealtimeIdleTimer() {
+  if (rtSampler.idleTimer) clearInterval(rtSampler.idleTimer);
+  rtSampler.idleTimer = setInterval(() => {
+    if (Date.now() - rtSampler.lastRequestAt > 30000) stopRealtimeSampler();
+  }, 10000);
+}
+
+function spawnPwshRealtimeSampler() {
+  let executable;
+  try {
+    executable = resolvePowerShell7Path();
+  } catch (err) {
+    writeLog('error', err.message);
+    return;
+  }
+  const child = spawn(executable, [
+    '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+    '-Command', REALTIME_STREAM_SCRIPT
+  ], { windowsHide: true });
+  rtSampler.child = child;
+  rtSampler.buf = '';
+  registerBackendChild(child, executable, ['-Command', 'realtime-stream']);
+  attachRealtimeLineParser(child);
   child.on('close', () => {
     if (rtSampler.child === child) {
       rtSampler.child = null;
@@ -5773,11 +5935,7 @@ function ensureRealtimeSampler() {
     writeLog('error', `实时网速采样进程启动失败: ${err.message}`);
     if (rtSampler.child === child) rtSampler.child = null;
   });
-  // 空闲自动回收：连续 30s 无采样请求则结束常驻进程（离开测速页后不占资源）
-  if (rtSampler.idleTimer) clearInterval(rtSampler.idleTimer);
-  rtSampler.idleTimer = setInterval(() => {
-    if (Date.now() - rtSampler.lastRequestAt > 30000) stopRealtimeSampler();
-  }, 10000);
+  startRealtimeIdleTimer();
   writeLog('info', '实时网速流式采样器启动');
 }
 
@@ -5948,6 +6106,19 @@ handleSafe('memory:clean', async (event, { items = [] } = {}) => {
   // 与顽固专杀/自启阻断（L5454/L5479）同口径。
   if (!(await isAdmin())) {
     return { success: false, needAdmin: true, message: '内存清理需要管理员权限，请先提权' };
+  }
+  // v3.7.1 R3：原生引擎优先（双特权 + 5 区域逐字平移 PS 语义，含 82/84 黑名单——
+  // Rust 侧白名单本身就不含这两项）；任何失败回落 PowerShell
+  const finderExe = resolveFinderExe();
+  if (finderExe) {
+    try {
+      const data = await runFinderJson(finderExe, ['mem-clean', '--items', list.join(',')], 30000);
+      if (!data || !Array.isArray(data.results)) throw new Error('原生清理返回格式异常');
+      const failed = data.results.filter(item => item && item.ok === false).length;
+      return { success: failed === 0, data, engine: 'rust' };
+    } catch (e) {
+      writeLog('warn', `Rust 内存清理不可用，回落 PowerShell: ${e.message}`);
+    }
   }
   const scriptPath = writeTempScript(MEMORY_SCRIPT.cleanScript(list));
   try {
