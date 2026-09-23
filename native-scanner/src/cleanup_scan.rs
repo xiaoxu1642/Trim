@@ -1387,11 +1387,21 @@ fn get_file_key_deletable(rule: &Json, global_rows: &mut usize) -> FkResult {
     }
 
     *global_rows = acc.global_rows;
+    // v3.7.2 短名口径对齐（P3 双引擎对拍）：PS 侧枚举出口（Get-ChildItem /
+    // FileSystemEnumerable 的 ToFullPath）会把磁盘上已存在的短名组件展开成长名，
+    // Rust read_dir 保留原样。PLANFILE 喂给 PS 执行阶段的保护闸，两侧字符串必须
+    // 同口径——统一在枚举出口过 GetLongPathNameW 展开；目标不存在的原样保留。
+    let file_count = acc.files.len() as i64;
+    let files = acc
+        .files
+        .into_iter()
+        .map(|(p, sz)| (crate::to_long_path(&p), sz))
+        .collect();
     FkResult {
         total_size: acc.total_size,
-        count: acc.files.len() as i64,
+        count: file_count,
         locked: acc.total_count - acc.deletable_count,
-        files: acc.files,
+        files,
         truncated: acc.truncated,
     }
 }

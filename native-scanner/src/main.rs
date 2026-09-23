@@ -1270,7 +1270,8 @@ fn protect_roots() -> &'static ProtectRoots {
 }
 
 // 与 JS normalizeForCompare 对齐的短名 fail-closed：组件含 `~\d`（8.3 短名）即拒。
-// .NET GetFullPath 会把短名展开成磁盘长名、词法归一化不会，只有进比较前就拒两侧才等价。
+// v3.7.2：调用方（is_protected_path）已先用 to_long_path 触盘展开，能走到这里的
+// 残留短名 = 磁盘上不存在（或非本地盘符路径），fail-closed 判拒与 JS/PS 同口径。
 fn contains_short_name(norm: &str) -> bool {
     let mut pending_tilde = false;
     for c in norm.chars() {
@@ -1286,8 +1287,46 @@ fn contains_short_name(norm: &str) -> bool {
     false
 }
 
+/// v3.7.2 受保护路径误杀修复：8.3 短名展开为磁盘上的长名（GetLongPathNameW）。
+/// 与 PS 侧 [IO.Path]::GetFullPath / JS 侧 fs.realpathSync.native 同语义：
+/// 路径（或其已存在前缀）在磁盘上存在 → 返回长名；目标不存在（API 返回 0）→
+/// 原样返回，由调用方保留「~数字 fail-closed」判定。
+/// 注意 std::fs::canonicalize 会追加 \\?\ 前缀，与 P3 字符串口径冲突，不能直接用。
+#[cfg(windows)]
+pub fn to_long_path(p: &str) -> String {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    #[link(name = "kernel32")]
+    #[allow(non_snake_case)]
+    extern "system" {
+        fn GetLongPathNameW(lpszShortPath: *const u16, lpszLongPath: *mut u16, cchBuffer: u32) -> u32;
+    }
+    let wide: Vec<u16> = OsStr::new(p).encode_wide().chain(std::iter::once(0)).collect();
+    let mut buf: Vec<u16> = vec![0u16; wide.len().max(1024)];
+    loop {
+        let n = unsafe { GetLongPathNameW(wide.as_ptr(), buf.as_mut_ptr(), buf.len() as u32) };
+        if n == 0 {
+            return p.to_string(); // 不存在/无权限 → 原样返回（短名组件由 fail-closed 兜底）
+        }
+        if (n as usize) <= buf.len() {
+            buf.truncate(n as usize);
+            while buf.last() == Some(&0) { buf.pop(); }
+            return String::from_utf16_lossy(&buf);
+        }
+        buf.resize(n as usize, 0); // 缓冲不足，按返回长度重试
+    }
+}
+
+#[cfg(not(windows))]
+pub fn to_long_path(p: &str) -> String {
+    p.to_string()
+}
+
 fn is_protected_path(p: &str) -> bool {
-    let norm = lexically_normalize(p);
+    // v3.7.2：先触盘展开短名再归一化——磁盘上存在的短名（运行时环境喂进来的
+    // %TEMP% 类路径）展开后正常参与 subtree/exact/anyDrive 判定；展开不掉
+    // （目标不存在）原样返回，contains_short_name 仍 fail-closed。
+    let norm = lexically_normalize(&to_long_path(p));
     if norm.is_empty() {
         return true;
     }

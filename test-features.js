@@ -613,6 +613,21 @@ check('保护清单单一来源且双语义正确（D18）', () => {
   ];
   const over = mustAllow.filter((p) => P.isPathProtected(p));
   if (over.length) throw new Error('应放被误拒（subtree 过宽回潮）：' + over.join(' | '));
+  // v3.7.2 受保护路径误杀修复回归：运行时合法短名（本机 TEMP 常为 8.3 短名）
+  // 必须触盘展开后放行，且与长名形式归一化到同一口径（tempFiles 误杀根因）
+  const tmp = require('os').tmpdir();
+  if (P.isPathProtected(tmp)) throw new Error('TEMP（含短名形式）被误判受保护（tempFiles 误杀回归）：' + tmp);
+  if (/~\d/.test(tmp)) {
+    const nShort = P.normalizeForCompare(tmp);
+    const nLong = P.normalizeForCompare(fs.realpathSync.native(tmp));
+    if (!nShort.ok || !nLong.ok || nShort.low !== nLong.low) {
+      throw new Error('短名 TEMP 未与长名归一化同口径: ' + JSON.stringify({ short: nShort, long: nLong }));
+    }
+  }
+  // 展开不掉的短名（磁盘上不存在该组件）仍 fail-closed——安全语义不放松
+  if (!P.isPathProtected('C:\\__trim_no_such_dir__\\short~9\\f.txt')) {
+    throw new Error('不存在的短名路径未 fail-closed');
+  }
   // 刻意决策：内置 recycleBin 规则的 pathPs 就是 C:\$Recycle.Bin，收录等于砍掉用户可见功能。
   // 若后续 D19 改用 Clear-RecycleBin / 逐 SID 子目录，需连同本断言一并改判。
   if (P.isPathProtected('C:\\$Recycle.Bin')) {
@@ -700,7 +715,9 @@ check('保护判定 JS/Rust 同口径对拍（FD-2）', () => {
     'D:\\System Volume Information', path.join(process.env.APPDATA, 'Trim'),
     path.join(process.env.WINDIR, 'System32', 'config'),
     path.join(process.env.USERPROFILE, 'Downloads', 'cleanup-test.dat'),
-    '\\\\?\\' + process.env.WINDIR, '\\\\server\\share\\foo.dat'
+    '\\\\?\\' + process.env.WINDIR, '\\\\server\\share\\foo.dat',
+    // v3.7.2 短名展开回归：合法短名应放行；不存在的短名组件仍 fail-closed
+    require('os').tmpdir(), 'C:\\__trim_no_such_dir__\\short~9\\f.txt'
   ];
   const jsFlags = vectors.map((v) => (P.isPathProtected(v) ? 1 : 0));
   const { spawnSync } = require('child_process');
@@ -868,14 +885,18 @@ check('端到端：DLL ListDeletable 剔除被占用文件（D7）', () => {
       "$ErrorActionPreference = 'Stop'\n" +
       'Add-Type -Path ' + lit(FASTSIZE_DLL) + '\n' +
       '$dir = ' + lit(dir) + '\n' +
+      // v3.7.2 短名口径对齐：ListDeletable（FileSystemEnumerable ToFullPath）输出
+      // 磁盘长名；探针目录来自 os.tmpdir()，本机为 8.3 短名，包含性比对必须用
+      // GetFullPath 展开后的长名口径，否则短名探针串永远匹配不上长名引擎输出
+      "$dirLong = [System.IO.Path]::GetFullPath($dir)\n" +
       "$h = [System.IO.File]::Open((Join-Path $dir 'c.tmp'), 'Open', 'Read', 'None')\n" +
       "$r = [TrimFastSize]::ListDeletable($dir, '*')\n" +
       "$paths = @($r.Files | ForEach-Object { [string]$_.Path })\n" +
       '$sum = 0L; foreach ($f in @($r.Files)) { $sum += [long]$f.Size }\n' +
       '$h.Dispose()\n' +
       "[pscustomobject]@{ n=[int]@($r.Files).Count; total=[long]$r.TotalCount; sum=$sum; " +
-      'hasLocked=[int]([bool]($paths -contains (Join-Path $dir \'c.tmp\'))); ' +
-      'hasA=[int]([bool]($paths -contains (Join-Path $dir \'a.tmp\'))) } | ConvertTo-Json -Compress\n';
+      'hasLocked=[int]([bool]($paths -contains (Join-Path $dirLong \'c.tmp\'))); ' +
+      'hasA=[int]([bool]($paths -contains (Join-Path $dirLong \'a.tmp\'))) } | ConvertTo-Json -Compress\n';
     const r = lastJsonLine(runPs(ps));
     if (r.n !== 2 || r.total !== 3) throw new Error('可删/总数应为 2/3，实际 ' + r.n + '/' + r.total);
     if (r.sum !== 3000) throw new Error('可删字节应为 3000，实际 ' + r.sum);

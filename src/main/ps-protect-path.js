@@ -54,15 +54,42 @@
 
 const path = require('path');
 const os = require('os');
+const fs = require('fs');
 
 // ---------------------------------------------------------------------------
 // 路径归一化：判定前两侧都走同一套规则（JS 与 PS 实现必须逐条对应）
 //   1) 空串/纯空白 → 视为受保护（fail-closed，拒绝删除未知目标）
 //   2) 解析为绝对路径（顺带折叠 . 与 ..，堵掉 C:\Windows\..\Windows 之类写法）
-//   3) 去掉尾部空白与点号（Win32 路径比较会忽略它们，不能靠这个绕过）
-//   4) 去掉尾部分隔符，盘符根归一为 "C:" 后单独判拒
-//   5) 统一小写（Windows 路径大小写不敏感；JS toLowerCase 与 PS ToLowerInvariant 等价）
+//   3) 8.3 短名先触盘展开再判定（v3.7.2 受保护路径误杀修复）：
+//      运行时环境会把合法短名喂进来（本机 TEMP=C:\Users\ADMINI~1\...，tempFiles
+//      规则求值即命中），磁盘上存在的短名组件展开为长名后正常参与判定；
+//      展开不掉（目标/前缀不存在）保留 fail-closed。
+//   4) 去掉尾部空白与点号（Win32 路径比较会忽略它们，不能靠这个绕过）
+//   5) 去掉尾部分隔符，盘符根归一为 "C:" 后单独判拒
+//   6) 统一小写（Windows 路径大小写不敏感；JS toLowerCase 与 PS ToLowerInvariant 等价）
 // ---------------------------------------------------------------------------
+
+// 8.3 短名展开（v3.7.2）：fs.realpathSync.native 在 Windows 走 GetFinalPathNameByHandle，
+// 能把磁盘上已存在的短名组件展开为长名（与 PS 侧 [IO.Path]::GetFullPath 的展开语义对齐：
+// 已存在组件展开、不存在组件原样保留）。整条路径不存在时退化为「最深已存在祖先展开 +
+// 保留剩余段」。任何一步失败都返回空串，由调用方保持 fail-closed。
+// 仅处理本地盘符路径：UNC / 相对路径不做触盘展开（宁可多拦不误放）。
+function expandShortPathWin(p) {
+  if (!/^[A-Za-z]:[\\/]/.test(p)) return '';
+  try {
+    return fs.realpathSync.native(p);
+  } catch (e) { /* 末端不存在，向下找已存在祖先 */ }
+  const segs = p.split(/[\\/]+/).filter(Boolean);
+  for (let i = segs.length - 2; i >= 1; i--) {
+    try {
+      const long = fs.realpathSync.native(segs.slice(0, i + 1).join('\\'));
+      const rest = segs.slice(i + 1);
+      return rest.length ? long.replace(/[\\/]+$/, '') + '\\' + rest.join('\\') : long;
+    } catch (e) { /* 继续向上找 */ }
+  }
+  return '';
+}
+
 function normalizeForCompare(p) {
   let s = String(p == null ? '' : p).trim();
   if (!s) return { ok: false, low: '' };
@@ -72,14 +99,17 @@ function normalizeForCompare(p) {
   // 裸盘符 "C:" 必须在 resolve 之前拦下：Node 的 path.resolve 会把它当「驱动器相对路径」
   // 拼上当前工作目录（结果随 CWD 变化），而 .NET 的 GetFullPath 原样返回，两侧会分歧。
   if (/^[A-Za-z]:$/.test(s)) return { ok: true, low: s.toLowerCase(), driveRoot: true };
-  // 8.3 短名提前 fail-closed（与 PS 侧 Resolve-TFPathKey 同位置）：.NET 的 GetFullPath
-  // 会把短名展开成磁盘上的长名、Node 不会，只有「进解析前就拒」两侧才可能逐字等价。
-  // 注意 resolve 会折叠 .. ，所以 C:\a~1\..\Windows 这类写法若只查解析结果会漏判。
-  if (/~\d/.test(s)) return { ok: false, low: '', shortName: true };
   try {
     s = path.resolve(s);
   } catch (e) {
     return { ok: false, low: '' };
+  }
+  // 8.3 短名：先触盘展开（合法短名放行、口径与 PS 侧 GetFullPath 对齐），展开不掉才拒。
+  // 展开必须发生在 resolve 之后：resolve 折叠 .. 与 PS GetFullPathName 的折叠行为一致，
+  // 两侧对「短名 + ..」混写的折叠结果相同（折叠后短名消失与 Win32 逐段解析语义等价）。
+  if (/~\d/.test(s)) {
+    const ex = expandShortPathWin(s);
+    if (ex) s = ex; else return { ok: false, low: '', shortName: true };
   }
   s = s.replace(/[ .]+$/, '');
   while (s.length > 1 && (s.endsWith('\\') || s.endsWith('/'))) {
@@ -87,7 +117,8 @@ function normalizeForCompare(p) {
   }
   if (/^[A-Za-z]:$/.test(s)) return { ok: true, low: s.toLowerCase(), driveRoot: true };
   const low = s.toLowerCase().replace(/\//g, '\\');
-  // 解析后仍含短名同样拒（PS 侧对应 GetFullPath 之后的第二次判定）
+  // 展开/归一后仍含短名（磁盘上不存在的短名组件，与 PS 侧 GetFullPath 之后的第二次
+  // 判定同位）同样 fail-closed
   if (/~\d/.test(low)) return { ok: false, low: '', shortName: true };
   return { ok: true, low, driveRoot: false };
 }
@@ -230,18 +261,21 @@ function Resolve-TFPathKey {
   # 裸盘符提前拦下，与 JS 侧 normalizeForCompare 同位置判定（.NET 对裸盘符的处理
   # 与 Node 的 path.resolve 不同口径，交给下游解析会两侧分歧）
   if ($s -match '^[A-Za-z]:$') { return $s.ToLowerInvariant() }
-  # 8.3 短名提前 fail-closed：.NET 的 GetFullPath 会真的把短名展开成磁盘上的长名
-  # （Node 的 path.resolve 不会），展开后短名消失，两侧口径就会漂。
-  # 全量内置规则里没有任何含波浪号的写法，出现一律判受保护（宁可多拦不误放）。
-  if ($s -match '~[0-9]') { return '' }
   $n = ''
+  # v3.7.2 受保护路径误杀修复：先 GetFullPath 再判短名。
+  # .NET GetFullPath（GetFullPathNameW）会把磁盘上已存在的短名组件展开成长名——
+  # 运行时环境喂进来的合法短名（本机 TEMP=C:\Users\ADMINI~1\...，tempFiles 规则
+  # 求值即命中）借此正常放行；展开不掉（目标不存在，字符串原样保留）时，
+  # 下方解析后的第二次 ~数字 判定仍 fail-closed。旧逻辑「进解析前见 ~ 就拒」
+  # 对「规则以字面路径出现」的假设成立，但对 $env:TEMP 这类运行时展开是误杀。
   try { $n = [System.IO.Path]::GetFullPath($s) } catch { return '' }
   $n = $n.TrimEnd(' ', '.')
   while ($n.Length -gt 1 -and ($n.EndsWith($bs) -or $n.EndsWith('/'))) {
     $n = $n.Substring(0, $n.Length - 1)
   }
   $low = $n.ToLowerInvariant()
-  # 解析后仍含短名（目标不存在时 GetFullPath 不展开）同样 fail-closed
+  # 解析/展开后仍含短名（该短名组件在磁盘上不存在，GetFullPathName 原样保留）
+  # 同样 fail-closed：宁可多拦不误放
   if ($low -match '~[0-9]') { return '' }
   return $low
 }
